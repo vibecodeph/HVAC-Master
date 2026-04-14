@@ -1,0 +1,238 @@
+{
+  "entities": {
+    "Item": {
+      "title": "Item",
+      "description": "A tool or material in the inventory.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "description": { "type": "string" },
+        "categoryId": { "type": "string" },
+        "subcategoryId": { "type": "string" },
+        "uomId": { "type": "string" },
+        "tags": { "type": "array", "items": { "type": "string" } },
+        "isTool": { "type": "boolean" },
+        "isActive": { "type": "boolean" },
+        "averageCost": { "type": "number" },
+        "totalQuantity": { "type": "number" },
+        "reorderLevel": { "type": "number" },
+        "preferredSupplierId": { "type": "string" },
+        "variantAttributes": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": { "type": "string" },
+              "values": { "type": "array", "items": { "type": "string" } }
+            }
+          }
+        },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["name", "uomId", "isTool"]
+    },
+    "Category": {
+      "title": "Category",
+      "description": "A grouping for items.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "parentId": { "type": "string" }
+      },
+      "required": ["name"]
+    },
+    "Location": {
+      "title": "Location",
+      "description": "A warehouse, jobsite, or supplier.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "type": { "type": "string", "enum": ["warehouse", "jobsite", "supplier"] },
+        "parentId": { "type": "string" }
+      },
+      "required": ["name", "type"]
+    },
+    "Inventory": {
+      "title": "Inventory",
+      "description": "Current stock level of an item at a location.",
+      "type": "object",
+      "properties": {
+        "itemId": { "type": "string" },
+        "locationId": { "type": "string" },
+        "quantity": { "type": "number" }
+      },
+      "required": ["itemId", "locationId", "quantity"]
+    },
+    "Transaction": {
+      "title": "Transaction",
+      "description": "A record of item movement.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "itemId": { "type": "string" },
+        "fromLocationId": { "type": "string" },
+        "toLocationId": { "type": "string" },
+        "quantity": { "type": "number" },
+        "type": { "type": "string", "enum": ["delivery", "usage", "return", "adjustment"] },
+        "timestamp": { "type": "string", "format": "date-time" },
+        "userId": { "type": "string" },
+        "notes": { "type": "string" }
+      },
+      "required": ["itemId", "quantity", "type", "timestamp", "userId"]
+    },
+    "UOM": {
+      "title": "UOM",
+      "description": "Unit of Measure.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "symbol": { "type": "string" },
+        "baseUomId": { "type": "string" },
+        "conversionFactor": { "type": "number" }
+      },
+      "required": ["name", "symbol"]
+    },
+    "Tag": {
+      "title": "Tag",
+      "description": "A label for items.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" }
+      },
+      "required": ["name"]
+    },
+    "User": {
+      "title": "User",
+      "description": "App user with roles.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "email": { "type": "string" },
+        "role": { "type": "string", "enum": ["admin", "manager", "worker", "engineer", "warehouseman"] },
+        "displayName": { "type": "string" },
+        "assignedLocationIds": { "type": "array", "items": { "type": "string" } }
+      },
+      "required": ["uid", "email", "role"]
+    },
+    "Request": {
+      "title": "Request",
+      "description": "A request for items from a jobsite.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "itemId": { "type": "string" },
+        "variant": { "type": "object" },
+        "requestedQty": { "type": "number" },
+        "approvedQty": { "type": "number" },
+        "deliveredQty": { "type": "number" },
+        "uomId": { "type": "string" },
+        "jobsiteId": { "type": "string" },
+        "sourceLocationId": { "type": "string" },
+        "status": { "type": "string", "enum": ["pending", "approved", "picked", "delivered", "rejected"] },
+        "requestorId": { "type": "string" },
+        "approverId": { "type": "string" },
+        "workerNote": { "type": "string" },
+        "engineerNote": { "type": "string" },
+        "timestamp": { "type": "string", "format": "date-time" },
+        "approvedAt": { "type": "string", "format": "date-time" },
+        "deliveredAt": { "type": "string", "format": "date-time" },
+        "backorderOf": { "type": "string" },
+        "batchId": { "type": "string" }
+      },
+      "required": ["itemId", "requestedQty", "uomId", "jobsiteId", "status", "requestorId", "timestamp"]
+    },
+    "BOQItem": {
+      "title": "BOQItem",
+      "description": "An item in the Bill of Quantities for a jobsite.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "jobsiteId": { "type": "string" },
+        "itemId": { "type": "string" },
+        "targetQuantity": { "type": "number" },
+        "unitPrice": { "type": "number" },
+        "isExtra": { "type": "boolean" },
+        "addedBy": { "type": "string" },
+        "timestamp": { "type": "string", "format": "date-time" }
+      },
+      "required": ["jobsiteId", "itemId", "isExtra", "addedBy", "timestamp"]
+    },
+    "SystemConfig": {
+      "title": "SystemConfig",
+      "description": "Global system settings.",
+      "type": "object",
+      "properties": {
+        "maintenanceMode": { "type": "boolean" },
+        "maintenanceMessage": { "type": "string" },
+        "updatedAt": { "type": "string", "format": "date-time" },
+        "updatedBy": { "type": "string" }
+      },
+      "required": ["maintenanceMode", "updatedAt", "updatedBy"]
+    },
+    "PurchaseOrder": {
+      "title": "PurchaseOrder",
+      "description": "An order for items from a supplier.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "poNumber": { "type": "string" },
+        "supplierId": { "type": "string" },
+        "status": { "type": "string", "enum": ["draft", "sent", "partially_received", "received", "cancelled"] },
+        "paymentStatus": { "type": "string", "enum": ["unpaid", "processing", "prepared", "paid"] },
+        "totalAmount": { "type": "number" },
+        "date": { "type": "string", "format": "date-time" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "createdBy": { "type": "string" }
+      },
+      "required": ["poNumber", "supplierId", "status", "totalAmount", "date", "createdAt", "createdBy"]
+    },
+    "POPayment": {
+      "title": "POPayment",
+      "description": "A payment record for a Purchase Order.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "poId": { "type": "string" },
+        "date": { "type": "string", "format": "date-time" },
+        "amount": { "type": "number" },
+        "grossAmount": { "type": "number" },
+        "cvNumber": { "type": "string" },
+        "chequeNumber": { "type": "string" },
+        "status": { "type": "string", "enum": ["processing", "prepared", "collected"] },
+        "deductions": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "type": { "type": "string" },
+              "amount": { "type": "number" }
+            }
+          }
+        },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "createdBy": { "type": "string" }
+      },
+      "required": ["poId", "date", "amount", "grossAmount", "cvNumber", "status", "createdAt", "createdBy"]
+    }
+  },
+  "firestore": {
+    "items": { "schema": "Item", "description": "Master item list." },
+    "categories": { "schema": "Category", "description": "Item categories." },
+    "locations": { "schema": "Location", "description": "Warehouses and jobsites." },
+    "inventory": { "schema": "Inventory", "description": "Real-time stock levels." },
+    "transactions": { "schema": "Transaction", "description": "Movement logs." },
+    "uoms": { "schema": "UOM", "description": "Units of measure." },
+    "tags": { "schema": "Tag", "description": "Item tags." },
+    "users": { "schema": "User", "description": "User profiles and roles." },
+    "requests": { "schema": "Request", "description": "Item requests and fulfillment." },
+    "boq": { "schema": "BOQItem", "description": "Bill of Quantities per jobsite." },
+    "system": { "schema": "SystemConfig", "description": "Global system configuration." },
+    "purchase_orders": { "schema": "PurchaseOrder", "description": "Purchase orders for suppliers." },
+    "purchase_orders/{poId}/payments": { "schema": "POPayment", "description": "Payments for a specific purchase order." }
+  }
+}

@@ -1,0 +1,5 @@
+{
+  "name": "HVAC Inventory Master",
+  "description": "Real-time inventory and tool tracking for HVAC contractors across warehouses and jobsites.",
+  "requestFramePermissions": []
+}

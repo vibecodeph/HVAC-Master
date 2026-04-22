@@ -147,7 +147,7 @@ export const SettingsView = () => {
           </div>
         )}
 
-        {profile?.role === 'admin' && profile?.email === 'vibecodeph@gmail.com' && (
+        {profile?.role === 'admin' && (
           <div className="space-y-2">
             <h3 className="text-xs font-bold text-red-400 uppercase tracking-widest px-2">Danger Zone</h3>
             <Card className="p-4 bg-red-50 border-red-100">

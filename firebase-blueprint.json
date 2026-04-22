@@ -169,6 +169,7 @@
       "properties": {
         "maintenanceMode": { "type": "boolean" },
         "maintenanceMessage": { "type": "string" },
+        "adminEmails": { "type": "array", "items": { "type": "string" } },
         "updatedAt": { "type": "string", "format": "date-time" },
         "updatedBy": { "type": "string" }
       },

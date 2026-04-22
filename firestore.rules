@@ -92,17 +92,13 @@ service cloud.firestore {
     }
 
     function isAdmin() {
-      return isAuthenticated() &&
-        (
-          (request.auth.token.email != null && (
-            request.auth.token.email.lower() == "vibecodeph@gmail.com" ||
-            request.auth.token.email.lower() == "eadelacruz@gmail.com" ||
-            request.auth.token.email.lower() == "freepinoy@gmail.com"
-          )) ||
-          request.auth.uid == "9mpLVchwVTTI1AMrGtW8PGJkagx2" ||
-          (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
-           get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('role', '') == 'admin')
-        );
+      return isAuthenticated() && (
+        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
+         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('role', '') == 'admin') ||
+        (exists(/databases/$(database)/documents/system/config) && 
+         request.auth.token.email != null &&
+         request.auth.token.email.lower() in get(/databases/$(database)/documents/system/config).data.get('adminEmails', []))
+      );
     }
 
     function isApproved() {
@@ -367,6 +363,7 @@ service cloud.firestore {
       return hasRequiredFields(['maintenanceMode', 'updatedAt', 'updatedBy']) &&
              data.maintenanceMode is bool &&
              (!('maintenanceMessage' in data) || (data.maintenanceMessage is string && data.maintenanceMessage.size() <= 1000)) &&
+             (!('adminEmails' in data) || (data.adminEmails is list && data.adminEmails.size() <= 50)) &&
              data.updatedAt is timestamp &&
              data.updatedBy is string;
     }
@@ -519,7 +516,9 @@ service cloud.firestore {
 
     match /system/{configId} {
       allow read: if true;
-      allow write: if isAdmin() && isValidSystemConfig(request.resource.data);
+      allow create: if isAuthenticated() && !exists(/databases/$(database)/documents/system/config) && isValidSystemConfig(request.resource.data);
+      allow update: if isAdmin() && isValidSystemConfig(request.resource.data);
+      allow delete: if false;
     }
 
     match /purchase_orders/{poId} {

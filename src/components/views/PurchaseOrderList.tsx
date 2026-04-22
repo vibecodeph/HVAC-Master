@@ -1,10 +1,11 @@
-import React, { useState, useMemo } from 'react';
-import { Plus, Search, FileText, Calendar, User, ChevronRight, Filter, MoreVertical, Edit2, Trash2, ExternalLink, Package } from 'lucide-react';
+import React, { useState, useMemo, useRef } from 'react';
+import { Plus, Search, FileText, Calendar, User, ChevronRight, Filter, MoreVertical, Edit2, Trash2, ExternalLink, Package, Download, Upload, Loader2, AlertCircle, CheckCircle2 } from 'lucide-react';
 import { PurchaseOrder, Location, Item, UOM, UserProfile } from '../../types';
 import { deletePurchaseOrder } from '../../services/inventoryService';
 import { cn } from '../../lib/utils';
 import { format } from 'date-fns';
 import { CreditCard, DollarSign } from 'lucide-react';
+import { exportPurchaseOrdersToCSV, importPurchaseOrdersFromCSV } from '../../services/csvService';
 
 interface PurchaseOrderListProps {
   purchaseOrders: PurchaseOrder[];
@@ -19,6 +20,10 @@ interface PurchaseOrderListProps {
 export const PurchaseOrderList = ({ purchaseOrders, locations, items, uoms, profile, onAdd, onEdit }: PurchaseOrderListProps) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('all');
+  const [isImporting, setIsImporting] = useState(false);
+  const [importProgress, setImportProgress] = useState({ current: 0, total: 0 });
+  const [importResult, setImportResult] = useState<{ success: number; errors: string[] } | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const filteredPOs = useMemo(() => {
     return purchaseOrders
@@ -61,20 +66,125 @@ export const PurchaseOrderList = ({ purchaseOrders, locations, items, uoms, prof
     setDeletingId(null);
   };
 
+  const handleExport = () => {
+    exportPurchaseOrdersToCSV(purchaseOrders, locations, items, uoms);
+  };
+
+  const handleImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setIsImporting(true);
+    setImportResult(null);
+    setImportProgress({ current: 0, total: 0 });
+
+    try {
+      const result = await importPurchaseOrdersFromCSV(file, items, locations, uoms, (current, total) => {
+        setImportProgress({ current, total });
+      });
+      setImportResult(result);
+    } catch (error) {
+      console.error('Import failed:', error);
+      setImportResult({ success: 0, errors: ['Failed to parse CSV file.'] });
+    } finally {
+      setIsImporting(false);
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    }
+  };
+
   return (
     <div className="space-y-6">
+      <input 
+        type="file"
+        ref={fileInputRef}
+        onChange={handleImport}
+        accept=".csv"
+        className="hidden"
+      />
+
       <div className="flex items-center justify-between">
         <div>
           <h2 className="text-2xl font-black text-gray-900 tracking-tight">Purchase Orders</h2>
           <p className="text-xs font-bold text-gray-400 uppercase tracking-widest">Manage supplier orders</p>
         </div>
-        <button 
-          onClick={onAdd}
-          className="p-4 bg-blue-600 text-white rounded-2xl shadow-lg shadow-blue-200 active:scale-95 transition-transform"
-        >
-          <Plus size={24} />
-        </button>
+        <div className="flex items-center space-x-3">
+          <button 
+            onClick={handleExport}
+            title="Export to CSV"
+            className="p-4 bg-white text-gray-600 rounded-2xl shadow-sm border border-gray-100 active:scale-95 transition-transform"
+          >
+            <Download size={24} />
+          </button>
+          <button 
+            onClick={() => fileInputRef.current?.click()}
+            title="Import from CSV"
+            className="p-4 bg-white text-gray-600 rounded-2xl shadow-sm border border-gray-100 active:scale-95 transition-transform"
+          >
+            <Upload size={24} />
+          </button>
+          <button 
+            onClick={onAdd}
+            className="p-4 bg-blue-600 text-white rounded-2xl shadow-lg shadow-blue-200 active:scale-95 transition-transform"
+          >
+            <Plus size={24} />
+          </button>
+        </div>
       </div>
+
+      {isImporting && (
+        <div className="p-6 bg-blue-50 border border-blue-100 rounded-3xl flex items-center space-x-4 animate-pulse">
+          <Loader2 className="text-blue-500 animate-spin" size={24} />
+          <div>
+            <p className="text-sm font-black text-blue-900 uppercase tracking-widest">Importing Purchase Orders...</p>
+            <p className="text-[10px] font-bold text-blue-400">Processed {importProgress.current} of {importProgress.total} orders</p>
+          </div>
+        </div>
+      )}
+
+      {importResult && (
+        <div className={cn(
+          "p-6 rounded-3xl border flex flex-col space-y-4",
+          importResult.errors.length > 0 ? "bg-red-50 border-red-100" : "bg-green-50 border-green-100"
+        )}>
+          <div className="flex items-center justify-between">
+            <div className="flex items-center space-x-3">
+              {importResult.errors.length > 0 ? (
+                <AlertCircle className="text-red-500" size={24} />
+              ) : (
+                <CheckCircle2 className="text-green-500" size={24} />
+              )}
+              <div>
+                <p className={cn(
+                  "text-sm font-black uppercase tracking-widest",
+                  importResult.errors.length > 0 ? "text-red-900" : "text-green-900"
+                )}>
+                  Import {importResult.errors.length > 0 ? 'Completed with Errors' : 'Successful'}
+                </p>
+                <p className={cn(
+                  "text-[10px] font-bold",
+                  importResult.errors.length > 0 ? "text-red-400" : "text-green-400"
+                )}>
+                  {importResult.success} orders imported successfully
+                </p>
+              </div>
+            </div>
+            <button 
+              onClick={() => setImportResult(null)}
+              className="text-xs font-black uppercase tracking-widest opacity-50 hover:opacity-100"
+            >
+              Dismiss
+            </button>
+          </div>
+          
+          {importResult.errors.length > 0 && (
+            <div className="max-h-32 overflow-y-auto bg-white/50 rounded-xl p-3 space-y-1">
+              {importResult.errors.map((err, i) => (
+                <p key={i} className="text-[10px] font-medium text-red-600 truncate">{err}</p>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
 
       <div className="flex space-x-3">
         <div className="relative flex-1">

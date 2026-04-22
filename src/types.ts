@@ -68,6 +68,8 @@ export interface Item {
   requireVariant?: boolean; // If true, variant selection is mandatory for transactions
   variantConfigs?: VariantConfig[]; // Variant-specific reorder levels and costs
   components?: ItemComponent[]; // If present, this is a composite item (kit)
+  requireCustomSpec?: boolean; // If true, custom specification is mandatory
+  customSpecLabel?: string; // Label for the custom spec field (e.g., "Size", "Length")
   createdAt: Timestamp;
 }
 
@@ -101,6 +103,7 @@ export interface Inventory {
   itemId: string;
   locationId: string;
   variant?: Record<string, string>; // e.g., { "Color": "Red", "Size": "L" }
+  customSpec?: string;
   serialNumber?: string;
   propertyNumber?: string;
   quantity: number;
@@ -110,6 +113,7 @@ export interface Transaction {
   id: string;
   itemId: string;
   variant?: Record<string, string>;
+  customSpec?: string;
   serialNumber?: string;
   propertyNumber?: string;
   fromLocationId?: string;
@@ -137,6 +141,7 @@ export interface Request {
   id: string;
   itemId: string;
   variant?: Record<string, string>;
+  customSpec?: string;
   requestedQty: number;
   approvedQty?: number;
   deliveredQty?: number;
@@ -158,6 +163,12 @@ export interface Request {
   backorderOf?: string; // Original request ID if this is a backorder
   batchId?: string; // Grouped delivery ID
   serialNumbers?: string[]; // Selected serial numbers for tools
+  adjustmentHistory?: {
+    oldQty: number;
+    newQty: number;
+    timestamp: string;
+    userId: string;
+  }[];
 }
 
 export interface UOM {
@@ -180,6 +191,7 @@ export interface BOQItem {
   jobsiteId: string;
   itemId: string;
   variant?: Record<string, string>;
+  customSpec?: string;
   targetQuantity?: number;
   currentQuantity: number;
   unitPrice?: number;

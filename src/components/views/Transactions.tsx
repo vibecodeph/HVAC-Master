@@ -218,36 +218,45 @@ export const Transactions = () => {
     <div className="pb-20">
       <Header title="Move Items" />
       <div className="p-4 space-y-6">
-        <div className="grid grid-cols-2 gap-4">
+        {/* Action Tabs */}
+        <div className="flex items-center space-x-2 bg-gray-100/50 p-1.5 rounded-[2rem] overflow-x-auto no-scrollbar">
           {(profile?.role === 'admin' || profile?.role === 'warehouseman') && (
             <button 
               onClick={() => openTransfer('delivery')}
-              className="p-6 bg-blue-600 rounded-3xl text-white flex flex-col items-center space-y-3 active:scale-95 transition-transform"
+              className={cn(
+                "flex-1 min-w-[100px] py-3.5 px-6 rounded-[1.8rem] text-[10px] font-black uppercase tracking-widest transition-all whitespace-nowrap",
+                "bg-white text-blue-600 shadow-sm active:scale-95"
+              )}
             >
-              <Truck size={32} />
-              <span className="text-sm font-bold">Delivery</span>
+              Delivery
             </button>
           )}
           <button 
             onClick={() => openTransfer('usage')}
-            className="p-6 bg-orange-600 rounded-3xl text-white flex flex-col items-center space-y-3 active:scale-95 transition-transform"
+            className={cn(
+              "flex-1 min-w-[100px] py-3.5 px-6 rounded-[1.8rem] text-[10px] font-black uppercase tracking-widest transition-all whitespace-nowrap",
+              "text-gray-400 hover:text-orange-600 active:scale-95"
+            )}
           >
-            <Wrench size={32} />
-            <span className="text-sm font-bold">Usage</span>
+            Usage
           </button>
           <button 
             onClick={() => openTransfer('return')}
-            className="p-6 bg-green-600 rounded-3xl text-white flex flex-col items-center space-y-3 active:scale-95 transition-transform"
+            className={cn(
+              "flex-1 min-w-[100px] py-3.5 px-6 rounded-[1.8rem] text-[10px] font-black uppercase tracking-widest transition-all whitespace-nowrap",
+              "text-gray-400 hover:text-green-600 active:scale-95"
+            )}
           >
-            <ArrowLeftRight size={32} />
-            <span className="text-sm font-bold">Return</span>
+            Return
           </button>
           <button 
             onClick={() => openTransfer('adjustment')}
-            className="p-6 bg-gray-900 rounded-3xl text-white flex flex-col items-center space-y-3 active:scale-95 transition-transform"
+            className={cn(
+              "flex-1 min-w-[100px] py-3.5 px-6 rounded-[1.8rem] text-[10px] font-black uppercase tracking-widest transition-all whitespace-nowrap",
+              "text-gray-400 hover:text-gray-900 active:scale-95"
+            )}
           >
-            <History size={32} />
-            <span className="text-sm font-bold">Adjust</span>
+            Adjustment
           </button>
         </div>
 

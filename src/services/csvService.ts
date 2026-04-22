@@ -1,7 +1,8 @@
 import Papa from 'papaparse';
-import { Item, Category, UOM, BOQItem } from '../types';
-import { addItem, updateItem, addCategory, addUOM } from './inventoryService';
+import { Item, Category, UOM, BOQItem, Tag, PurchaseOrder, PurchaseOrderItem, Location } from '../types';
+import { addItem, updateItem, addPurchaseOrder, updatePurchaseOrder } from './inventoryService';
 import { Timestamp } from 'firebase/firestore';
+import { format, parse, isValid } from 'date-fns';
 
 export interface CSVItemRow {
   ID?: string;
@@ -18,15 +19,230 @@ export interface CSVItemRow {
   'Require Variant'?: string;
   'Variant Attributes'?: string;
   'Variant Configurations'?: string;
+  'Require Custom Spec'?: string;
+  'Custom Spec Label'?: string;
 }
 
 export interface CSVBOQRow {
   'Item Name': string;
   'Variant'?: string;
+  'Custom Spec'?: string;
   'Target Quantity': string;
   'Unit Price'?: string;
   'Is Extra': string;
 }
+
+export interface CSVPOItemRow {
+  'PO Number': string;
+  'Date': string;
+  'Supplier': string;
+  'Status': string;
+  'Payment Status'?: string;
+  'Total Amount'?: string;
+  'Notes'?: string;
+  'Item Name': string;
+  'Variant'?: string;
+  'Quantity': string;
+  'UOM': string;
+  'Unit Price': string;
+  'Received Qty'?: string;
+  'Item Note'?: string;
+}
+
+export const exportPurchaseOrdersToCSV = (
+  purchaseOrders: PurchaseOrder[],
+  locations: Location[],
+  items: Item[],
+  uoms: UOM[]
+) => {
+  const data: CSVPOItemRow[] = [];
+
+  purchaseOrders.forEach(po => {
+    const supplier = locations.find(l => l.id === po.supplierId);
+    let dateStr = '';
+    if (po.date) {
+      try {
+        const d = po.date.toDate();
+        dateStr = format(d, 'yyyy-MM-dd');
+      } catch (e) {
+        console.error('Error formatting date:', e);
+      }
+    }
+
+    po.items.forEach(poItem => {
+      const item = items.find(i => i.id === poItem.itemId);
+      const uom = uoms.find(u => u.id === poItem.uomId);
+      const variantStr = poItem.variant ? `[${Object.entries(poItem.variant).map(([k, v]) => `${k}:${v}`).join(', ')}]` : '';
+
+      data.push({
+        'PO Number': po.poNumber,
+        'Date': dateStr,
+        'Supplier': supplier?.name || po.supplierId,
+        'Status': po.status,
+        'Payment Status': po.paymentStatus || 'unpaid',
+        'Total Amount': po.totalAmount.toString(),
+        'Notes': po.notes || '',
+        'Item Name': item?.name || poItem.itemId,
+        'Variant': variantStr,
+        'Quantity': poItem.quantity.toString(),
+        'UOM': uom?.symbol || poItem.uomId,
+        'Unit Price': poItem.unitPrice.toString(),
+        'Received Qty': (poItem.receivedQuantity || 0).toString(),
+        'Item Note': poItem.note || ''
+      });
+    });
+  });
+
+  const csv = Papa.unparse(data);
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+  const link = document.createElement('a');
+  const url = URL.createObjectURL(blob);
+  link.setAttribute('href', url);
+  link.setAttribute('download', `purchase_orders_export_${new Date().toISOString().split('T')[0]}.csv`);
+  link.style.visibility = 'hidden';
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+};
+
+export const importPurchaseOrdersFromCSV = async (
+  file: File,
+  items: Item[],
+  locations: Location[],
+  uoms: UOM[],
+  onProgress?: (current: number, total: number) => void
+) => {
+  return new Promise<{ success: number; errors: string[] }>((resolve, reject) => {
+    Papa.parse(file, {
+      header: true,
+      skipEmptyLines: true,
+      complete: async (results) => {
+        const rows = results.data as CSVPOItemRow[];
+        let successCount = 0;
+        const errors: string[] = [];
+
+        // Group rows by PO Number
+        const poGroups = rows.reduce((acc, row) => {
+          const poNumber = row['PO Number']?.trim();
+          if (!poNumber) return acc;
+          if (!acc[poNumber]) acc[poNumber] = [];
+          acc[poNumber].push(row);
+          return acc;
+        }, {} as Record<string, CSVPOItemRow[]>);
+
+        const poNumbers = Object.keys(poGroups);
+        const itemMap = new Map<string, string>();
+        items.forEach(i => itemMap.set(i.name.toLowerCase().trim(), i.id));
+
+        const supplierMap = new Map<string, string>();
+        locations.filter(l => l.type === 'supplier').forEach(l => supplierMap.set(l.name.toLowerCase().trim(), l.id));
+
+        const uomMap = new Map<string, string>();
+        uoms.forEach(u => uomMap.set(u.symbol.toLowerCase().trim(), u.id));
+
+        for (let i = 0; i < poNumbers.length; i++) {
+          const poNumber = poNumbers[i];
+          const group = poGroups[poNumber];
+          const firstRow = group[0];
+
+          try {
+            // 1. Resolve Supplier
+            const supplierName = firstRow.Supplier?.trim().toLowerCase();
+            const supplierId = supplierMap.get(supplierName) || firstRow.Supplier;
+            if (!supplierId) {
+              errors.push(`PO ${poNumber}: Supplier "${firstRow.Supplier}" not found.`);
+              continue;
+            }
+
+            // 2. Parse Items
+            const poItems: PurchaseOrderItem[] = [];
+            let totalAmount = 0;
+
+            for (const row of group) {
+              const itemName = row['Item Name']?.trim().toLowerCase();
+              const itemId = itemMap.get(itemName);
+              if (!itemId) {
+                errors.push(`PO ${poNumber}: Item "${row['Item Name']}" not found.`);
+                continue;
+              }
+
+              const uomSymbol = row.UOM?.trim().toLowerCase();
+              const uomId = uomMap.get(uomSymbol) || row.UOM;
+
+              let variant: Record<string, string> | undefined = undefined;
+              if (row.Variant) {
+                const vMatch = row.Variant.match(/\[(.*)\]/);
+                if (vMatch) {
+                  variant = {};
+                  vMatch[1].split(',').forEach(pair => {
+                    const [k, v] = pair.split(':');
+                    if (k && v) variant![k.trim()] = v.trim();
+                  });
+                }
+              }
+
+              const qty = parseFloat(row.Quantity) || 0;
+              const price = parseFloat(row['Unit Price']) || 0;
+              const subtotal = qty * price;
+
+              poItems.push({
+                itemId,
+                variant,
+                quantity: qty,
+                uomId: uomId || '',
+                unitPrice: price,
+                totalPrice: subtotal,
+                receivedQuantity: parseFloat(row['Received Qty'] || '0') || 0,
+                note: row['Item Note'] || ''
+              });
+
+              totalAmount += subtotal;
+            }
+
+            if (poItems.length === 0) continue;
+
+            let poDate = Timestamp.now();
+            if (firstRow.Date) {
+              const dateStr = firstRow.Date.trim();
+              // Try parsing as yyyy-MM-dd first (our export format)
+              let d = parse(dateStr, 'yyyy-MM-dd', new Date());
+              
+              if (!isValid(d)) {
+                // If not yyyy-MM-dd, fall back to native Date parsing
+                // which handles common formats like MM/DD/YYYY or DD/MM/YYYY depending on browser/locale
+                d = new Date(dateStr);
+              }
+
+              if (isValid(d)) {
+                poDate = Timestamp.fromDate(d);
+              }
+            }
+
+            const poData: any = {
+              poNumber,
+              supplierId,
+              date: poDate,
+              status: (firstRow.Status?.toLowerCase() || 'sent') as any,
+              paymentStatus: (firstRow['Payment Status']?.toLowerCase() || 'unpaid') as any,
+              notes: firstRow.Notes || '',
+              items: poItems,
+              totalAmount: parseFloat((firstRow['Total Amount'] || '').toString().replace(/,/g, '')) || totalAmount
+            };
+
+            await addPurchaseOrder(poData);
+            successCount++;
+            if (onProgress) onProgress(i + 1, poNumbers.length);
+          } catch (err: any) {
+            errors.push(`PO ${poNumber}: ${err.message}`);
+          }
+        }
+
+        resolve({ success: successCount, errors });
+      },
+      error: (error) => reject(error)
+    });
+  });
+};
 
 export const exportItemsToCSV = (
   items: Item[],
@@ -60,7 +276,9 @@ export const exportItemsToCSV = (
         if (config.averageCost !== undefined) dataParts.push(`Cost:${config.averageCost}`);
         if (config.reorderLevel !== undefined) dataParts.push(`Reorder:${config.reorderLevel}`);
         return `[${variantStr}] -> ${dataParts.join(', ')}`;
-      }).join(' | ')
+      }).join(' | '),
+      'Require Custom Spec': item.requireCustomSpec ? 'TRUE' : 'FALSE',
+      'Custom Spec Label': item.customSpecLabel || ''
     };
   });
 
@@ -88,6 +306,7 @@ export const exportJobsiteBOQToCSV = (
     return {
       'Item Name': item?.name || 'Unknown Item',
       'Variant': variantStr,
+      'Custom Spec': boq.customSpec || '',
       'Target Quantity': boq.targetQuantity || 0,
       'Unit Price': boq.unitPrice || 0,
       'Is Extra': boq.isExtra ? 'TRUE' : 'FALSE'
@@ -110,6 +329,7 @@ export const importItemsFromCSV = async (
   file: File,
   categories: Category[],
   uoms: UOM[],
+  tags: Tag[],
   onProgress?: (current: number, total: number) => void
 ) => {
   return new Promise<{ success: number; errors: string[] }>((resolve, reject) => {
@@ -121,12 +341,22 @@ export const importItemsFromCSV = async (
         let successCount = 0;
         const errors: string[] = [];
 
-        // Pre-cache categories and uoms for faster lookup/creation
-        const categoryMap = new Map<string, string>(); // name -> id
-        categories.forEach(c => categoryMap.set(c.name.toLowerCase(), c.id));
+        // Pre-cache categories, uoms, and tags for faster lookup
+        const categoryMap = new Map<string, string>(); // name -> id (top-level)
+        const subcategoryMap = new Map<string, string>(); // parentId:name -> id
+        
+        categories.forEach(c => {
+          if (!c.parentId) {
+            categoryMap.set(c.name.toLowerCase(), c.id);
+          } else {
+            subcategoryMap.set(`${c.parentId}:${c.name.toLowerCase()}`, c.id);
+          }
+        });
 
         const uomMap = new Map<string, string>(); // symbol -> id
         uoms.forEach(u => uomMap.set(u.symbol.toLowerCase(), u.id));
+
+        const tagSet = new Set(tags.map(t => t.name.toLowerCase()));
 
         for (let i = 0; i < rows.length; i++) {
           const row = rows[i];
@@ -144,9 +374,8 @@ export const importItemsFromCSV = async (
               if (categoryMap.has(lowerCatName)) {
                 categoryId = categoryMap.get(lowerCatName)!;
               } else {
-                const newCatId = await addCategory({ name: catName }) as string;
-                categoryId = newCatId;
-                categoryMap.set(lowerCatName, newCatId);
+                errors.push(`Row ${i + 1} (${row.Name}): Category "${catName}" does not exist.`);
+                continue;
               }
             }
 
@@ -155,15 +384,13 @@ export const importItemsFromCSV = async (
             if (row.Subcategory && categoryId) {
               const subCatName = row.Subcategory.trim();
               const lowerSubCatName = subCatName.toLowerCase();
+              const subKey = `${categoryId}:${lowerSubCatName}`;
               
-              // We need a way to find subcategories specifically under this parent
-              const existingSub = categories.find(c => c.parentId === categoryId && c.name.toLowerCase() === lowerSubCatName);
-              
-              if (existingSub) {
-                subcategoryId = existingSub.id;
+              if (subcategoryMap.has(subKey)) {
+                subcategoryId = subcategoryMap.get(subKey)!;
               } else {
-                const newSubId = await addCategory({ name: subCatName, parentId: categoryId }) as string;
-                subcategoryId = newSubId;
+                errors.push(`Row ${i + 1} (${row.Name}): Subcategory "${subCatName}" does not exist under category "${row.Category}".`);
+                continue;
               }
             }
 
@@ -174,12 +401,19 @@ export const importItemsFromCSV = async (
             if (uomMap.has(lowerUomSymbol)) {
               uomId = uomMap.get(lowerUomSymbol)!;
             } else {
-              const newUomId = await addUOM({ name: uomSymbol, symbol: uomSymbol }) as string;
-              uomId = newUomId;
-              uomMap.set(lowerUomSymbol, newUomId);
+              errors.push(`Row ${i + 1} (${row.Name}): UOM "${uomSymbol}" does not exist.`);
+              continue;
             }
 
-            // 4. Prepare Item Data
+            // 4. Resolve Tags
+            const rowTags = row.Tags ? row.Tags.split(',').map(t => t.trim()).filter(t => t) : [];
+            const invalidTags = rowTags.filter(t => !tagSet.has(t.toLowerCase()));
+            if (invalidTags.length > 0) {
+              errors.push(`Row ${i + 1} (${row.Name}): Tags [${invalidTags.join(', ')}] do not exist.`);
+              continue;
+            }
+
+            // 5. Prepare Item Data
             const itemData: any = {
               name: row.Name.trim(),
               description: row.Description?.trim() || '',
@@ -189,9 +423,11 @@ export const importItemsFromCSV = async (
               isTool: row['Is Tool']?.toUpperCase() === 'TRUE',
               isActive: row['Is Active']?.toUpperCase() !== 'FALSE', // Default to true
               requireVariant: row['Require Variant']?.toUpperCase() === 'TRUE',
+              requireCustomSpec: row['Require Custom Spec']?.toUpperCase() === 'TRUE',
+              customSpecLabel: row['Custom Spec Label']?.trim() || '',
               averageCost: parseFloat(row['Average Cost'] || '0') || 0,
               reorderLevel: parseFloat(row['Reorder Level'] || '0') || 0,
-              tags: row.Tags ? row.Tags.split(',').map(t => t.trim()).filter(t => t) : [],
+              tags: rowTags,
             };
 
             // 5. Parse Variants
@@ -322,11 +558,13 @@ export const importJobsiteBOQFromCSV = async (
             const targetQtyRaw = getVal('Target Quantity');
             const unitPriceRaw = getVal('Unit Price');
             const isExtraRaw = getVal('Is Extra');
+            const customSpecRaw = getVal('Custom Spec');
 
             newBOQItems.push({
               jobsiteId,
               itemId: item.id,
               variant,
+              customSpec: customSpecRaw?.toString().trim() || undefined,
               targetQuantity: parseFloat(targetQtyRaw || '0') || 0,
               currentQuantity: 0,
               unitPrice: parseFloat(unitPriceRaw || '0') || 0,

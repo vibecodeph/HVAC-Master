@@ -40,7 +40,7 @@ export const RBACDashboard = () => {
     ],
     manager: [
       'view_inventory', 'create_requests', 'approve_requests', 
-      'receive_requests', 'manage_metadata', 'manage_po', 'manage_payments',
+      'receive_requests', 'manage_po', 'manage_payments',
       'bulk_receive', 'view_transactions', 'view_costs'
     ],
     engineer: [
@@ -49,7 +49,7 @@ export const RBACDashboard = () => {
     ],
     warehouseman: [
       'view_inventory', 'create_requests', 'fulfill_requests', 'receive_requests', 
-      'manage_metadata', 'bulk_receive', 'view_transactions', 'view_costs'
+      'bulk_receive', 'view_transactions', 'view_costs'
     ],
     worker: [
       'view_inventory', 'create_requests', 'receive_requests', 'view_transactions'
@@ -112,10 +112,10 @@ export const RBACDashboard = () => {
           <h3 className="text-xs font-bold text-gray-400 uppercase tracking-widest px-1">Role Definitions</h3>
           <div className="grid grid-cols-1 gap-3">
             {[
-              { role: 'Admin', desc: 'Full system access, user management, and bulk data clearing capabilities.' },
+              { role: 'Admin', desc: 'Full system access, user management, metadata management (Categories, UOM, Tags), and bulk data clearing capabilities.' },
               { role: 'Manager', desc: 'Full operational access including PO management, payments, and bulk receiving.' },
               { role: 'Engineer', desc: 'Can request items and approve requests for their assigned jobsites.' },
-              { role: 'Warehouseman', desc: 'Can fulfill requests, manage metadata, and perform bulk receiving from POs.' },
+              { role: 'Warehouseman', desc: 'Can fulfill requests and perform bulk receiving from POs.' },
               { role: 'Worker', desc: 'Can request items from assigned jobsites. Requires admin approval after registration.' },
             ].map(r => (
               <Card key={r.role} className="p-4 bg-white">

@@ -4,11 +4,11 @@ import { useAuth, useData } from '../../App';
 import { Navigate, useNavigate } from 'react-router-dom';
 
 export const MaintenanceMode = () => {
-  const { profile, logout } = useAuth();
+  const { user, profile, logout } = useAuth();
   const { systemConfig } = useData();
   const navigate = useNavigate();
 
-  if (!systemConfig?.maintenanceMode || profile?.role === 'admin') {
+  if (!systemConfig?.maintenanceMode || profile?.role === 'admin' || user?.email === 'vibecodeph@gmail.com') {
     return <Navigate to="/" replace />;
   }
 

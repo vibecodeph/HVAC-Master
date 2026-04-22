@@ -34,19 +34,31 @@ export const Login = () => {
       )}
 
       {authError && (
-        <div className="mb-6 p-4 bg-red-50 rounded-2xl border border-red-100 text-left max-w-xs">
-          <p className="text-[10px] font-black text-red-900 uppercase tracking-widest mb-1">Sign-in Error</p>
-          <p className="text-[10px] text-red-700 font-bold leading-relaxed mb-2">
+        <div className="mb-6 p-4 bg-red-50 rounded-2xl border border-red-100 text-left max-w-xs relative animate-in fade-in slide-in-from-top-2 duration-300">
+          {authError !== 'Sign-in was cancelled.' && (
+            <p className="text-[10px] font-black text-red-900 uppercase tracking-widest mb-1">Sign-in Error</p>
+          )}
+          <p className="text-[10px] text-red-700 font-bold leading-relaxed mb-1">
             {authError}
           </p>
-          <p className="text-[9px] text-red-600 font-medium leading-tight">
-            Tip: If popups are failing, try opening the application in a new tab or check your browser's popup blocker settings.
-          </p>
+          {authError !== 'Sign-in was cancelled.' && (
+            <div className="mt-3 space-y-3">
+              <p className="text-[9px] text-red-600 font-medium leading-tight italic">
+                Tip: If popups are failing, try the redirect method or open in a new tab.
+              </p>
+              <button 
+                onClick={() => signIn('redirect')}
+                className="w-full py-2 px-3 bg-white border border-red-200 text-red-600 rounded-xl text-[10px] font-black uppercase tracking-wider active:scale-95 transition-transform"
+              >
+                Try Redirect Method
+              </button>
+            </div>
+          )}
         </div>
       )}
 
       <button 
-        onClick={signIn}
+        onClick={() => signIn('popup')}
         disabled={isSigningIn}
         className="w-full max-w-xs py-4 bg-gray-900 text-white rounded-2xl font-bold flex items-center justify-center space-x-3 shadow-xl active:scale-95 transition-transform disabled:opacity-50"
       >

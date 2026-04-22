@@ -7,6 +7,7 @@ import {
   getDocs, 
   query, 
   where, 
+  and,
   onSnapshot, 
   Timestamp, 
   runTransaction,
@@ -26,18 +27,18 @@ import { Item, Category, Location, Inventory, Transaction, UOM, Tag, UserProfile
 const getCollection = (name: string) => collection(db, name);
 
 const cleanData = (data: any): any => {
+  if (data === undefined) return null;
   if (data === null || typeof data !== 'object') return data;
   
   // If it's a Date, return as is
   if (data instanceof Date) return data;
 
   // If it's a Firestore special object (Timestamp, FieldValue, etc.), return as is
-  // We check for toDate (Timestamp) or if it's not a plain object (FieldValue and others)
   if (typeof data.toDate === 'function' || data instanceof Timestamp) {
     return data;
   }
 
-  if (Array.isArray(data)) return data.map(cleanData);
+  if (Array.isArray(data)) return data.map(cleanData).filter(v => v !== undefined && v !== null);
   
   // Check if it's a plain object. If not, it's likely a Firestore internal class instance
   const proto = Object.getPrototypeOf(data);
@@ -47,8 +48,11 @@ const cleanData = (data: any): any => {
 
   const clean: any = {};
   for (const key in data) {
-    if (Object.prototype.hasOwnProperty.call(data, key) && data[key] !== undefined) {
-      clean[key] = cleanData(data[key]);
+    if (Object.prototype.hasOwnProperty.call(data, key)) {
+      const val = cleanData(data[key]);
+      if (val !== undefined && val !== null) {
+        clean[key] = val;
+      }
     }
   }
   return clean;
@@ -87,7 +91,7 @@ export const recordTransaction = async (transaction: Omit<Transaction, 'id' | 'u
   if (!userId) throw new Error('User not authenticated');
 
   const { 
-    itemId, variant, serialNumber, propertyNumber, 
+    itemId, variant, customSpec, serialNumber, propertyNumber, 
     fromLocationId, toLocationId, quantity, uomId, 
     conversionFactor, baseQuantity, type, notes, 
     totalPrice, unitPrice, poNumber, poId, supplierInvoice, supplierDR,
@@ -107,6 +111,7 @@ export const recordTransaction = async (transaction: Omit<Transaction, 'id' | 'u
   };
 
   if (variant) transactionData.variant = variant;
+  if (customSpec) transactionData.customSpec = customSpec;
   if (serialNumber) transactionData.serialNumber = serialNumber;
   if (propertyNumber) transactionData.propertyNumber = propertyNumber;
   if (fromLocationId) transactionData.fromLocationId = fromLocationId;
@@ -119,7 +124,7 @@ export const recordTransaction = async (transaction: Omit<Transaction, 'id' | 'u
   if (supplierInvoice) transactionData.supplierInvoice = supplierInvoice;
   if (supplierDR) transactionData.supplierDR = supplierDR;
 
-  const getInventoryRef = (itemId: string, locationId: string, variant?: Record<string, string>, serialNumber?: string, propertyNumber?: string) => {
+  const getInventoryRef = (itemId: string, locationId: string, variant?: Record<string, string>, serialNumber?: string, propertyNumber?: string, customSpec?: string) => {
     let id = `${itemId}_${locationId}`;
     if (variant && Object.keys(variant).length > 0) {
       const sortedVariant = Object.keys(variant).sort().reduce((acc, key) => {
@@ -129,6 +134,9 @@ export const recordTransaction = async (transaction: Omit<Transaction, 'id' | 'u
       const variantStr = JSON.stringify(sortedVariant);
       const variantHash = encodeURIComponent(variantStr).replace(/%/g, '_').replace(/\./g, '-');
       id += `_${variantHash}`;
+    }
+    if (customSpec) {
+      id += `_SPEC-${encodeURIComponent(customSpec).replace(/%/g, '_')}`;
     }
     if (serialNumber) {
       id += `_SN-${encodeURIComponent(serialNumber).replace(/%/g, '_')}`;
@@ -143,7 +151,36 @@ export const recordTransaction = async (transaction: Omit<Transaction, 'id' | 'u
   };
 
   try {
+    // PRE-FETCH BOQ IDs (Queries not allowed in transactions)
+    let boqToId: string | null = null;
+    let boqFromId: string | null = null;
+
+    const findBoq = async (locId: string) => {
+      const q = query(collection(db, 'boq'), where('jobsiteId', '==', locId), where('itemId', '==', itemId));
+      const snap = await getDocs(q);
+      const match = snap.docs.find(d => JSON.stringify(d.data().variant || {}) === JSON.stringify(variant || {}));
+      return match?.id || null;
+    };
+
+    if (toLocationId) {
+      const locSnap = await getDoc(doc(db, 'locations', toLocationId));
+      if (locSnap.exists() && locSnap.data().type === 'jobsite') {
+        boqToId = await findBoq(toLocationId);
+      }
+    }
+    if (fromLocationId) {
+      const locSnap = await getDoc(doc(db, 'locations', fromLocationId));
+      if (locSnap.exists() && locSnap.data().type === 'jobsite') {
+        boqFromId = await findBoq(fromLocationId);
+      }
+    }
+
+    const boqToRef = boqToId ? doc(db, 'boq', boqToId) : null;
+    const boqFromRef = boqFromId ? doc(db, 'boq', boqFromId) : null;
+
     await runTransaction(db, async (dbTransaction) => {
+      const boqToDoc = boqToRef ? await dbTransaction.get(boqToRef) : null;
+      const boqFromDoc = boqFromRef ? await dbTransaction.get(boqFromRef) : null;
       let fromInvDoc = null;
       let toInvDoc = null;
       let fromInvRef = null;
@@ -152,7 +189,7 @@ export const recordTransaction = async (transaction: Omit<Transaction, 'id' | 'u
       let poRef = null;
 
       if (fromLocationId) {
-        fromInvRef = getInventoryRef(itemId, fromLocationId, variant, serialNumber, propertyNumber);
+        fromInvRef = getInventoryRef(itemId, fromLocationId, variant, serialNumber, propertyNumber, customSpec);
         fromInvDoc = await dbTransaction.get(fromInvRef);
       }
 
@@ -166,7 +203,7 @@ export const recordTransaction = async (transaction: Omit<Transaction, 'id' | 'u
       const toIsWarehouse = toLocDoc?.exists() && toLocDoc.data()?.type === 'warehouse';
 
       if (toLocationId) {
-        toInvRef = getInventoryRef(itemId, toLocationId, variant, serialNumber, propertyNumber);
+        toInvRef = getInventoryRef(itemId, toLocationId, variant, serialNumber, propertyNumber, customSpec);
         toInvDoc = await dbTransaction.get(toInvRef);
       }
 
@@ -305,6 +342,7 @@ export const recordTransaction = async (transaction: Omit<Transaction, 'id' | 'u
           itemId: itemId,
           locationId: fromLocationId,
           variant: variant && Object.keys(variant).length > 0 ? variant : null,
+          customSpec: customSpec || null,
           serialNumber: serialNumber || null,
           propertyNumber: propertyNumber || null,
           quantity: currentQty - baseQuantity
@@ -318,10 +356,21 @@ export const recordTransaction = async (transaction: Omit<Transaction, 'id' | 'u
           itemId: itemId,
           locationId: toLocationId,
           variant: variant && Object.keys(variant).length > 0 ? variant : null,
+          customSpec: customSpec || null,
           serialNumber: serialNumber || null,
           propertyNumber: propertyNumber || null,
           quantity: currentQty + baseQuantity
         }, { merge: true });
+      }
+
+      // 4. BOQ QUANTITY UPDATE
+      if (boqToRef && boqToDoc?.exists()) {
+        const current = boqToDoc.data()?.currentQuantity || 0;
+        dbTransaction.update(boqToRef, { currentQuantity: current + baseQuantity });
+      }
+      if (boqFromRef && boqFromDoc?.exists()) {
+        const current = boqFromDoc.data()?.currentQuantity || 0;
+        dbTransaction.update(boqFromRef, { currentQuantity: Math.max(0, current - baseQuantity) });
       }
     });
   } catch (error) {
@@ -494,7 +543,7 @@ export const updateTransaction = async (id: string, oldTransaction: Transaction,
 
   const { timestamp } = newTransactionData;
 
-  const getInventoryRef = (itemId: string, locationId: string, variant?: Record<string, string>, serialNumber?: string) => {
+  const getInventoryRef = (itemId: string, locationId: string, variant?: Record<string, string>, serialNumber?: string, propertyNumber?: string, customSpec?: string) => {
     let id = `${itemId}_${locationId}`;
     if (variant && Object.keys(variant).length > 0) {
       const sortedVariant = Object.keys(variant).sort().reduce((acc, key) => {
@@ -505,8 +554,14 @@ export const updateTransaction = async (id: string, oldTransaction: Transaction,
       const variantHash = encodeURIComponent(variantStr).replace(/%/g, '_').replace(/\./g, '-');
       id += `_${variantHash}`;
     }
+    if (customSpec) {
+      id += `_SPEC-${encodeURIComponent(customSpec).replace(/%/g, '_')}`;
+    }
     if (serialNumber) {
       id += `_SN-${encodeURIComponent(serialNumber).replace(/%/g, '_')}`;
+    }
+    if (propertyNumber) {
+      id += `_PN-${encodeURIComponent(propertyNumber).replace(/%/g, '_')}`;
     }
     if (id.length > 1000) id = id.substring(0, 1000);
     return doc(db, 'inventory', id);
@@ -516,12 +571,12 @@ export const updateTransaction = async (id: string, oldTransaction: Transaction,
     await runTransaction(db, async (dbTransaction) => {
       // 1. GATHER DATA (READS)
       // Old refs
-      const oldFromRef = oldTransaction.fromLocationId ? getInventoryRef(oldTransaction.itemId, oldTransaction.fromLocationId, oldTransaction.variant, oldTransaction.serialNumber) : null;
-      const oldToRef = oldTransaction.toLocationId ? getInventoryRef(oldTransaction.itemId, oldTransaction.toLocationId, oldTransaction.variant, oldTransaction.serialNumber) : null;
+      const oldFromRef = oldTransaction.fromLocationId ? getInventoryRef(oldTransaction.itemId, oldTransaction.fromLocationId, oldTransaction.variant, oldTransaction.serialNumber, oldTransaction.propertyNumber, oldTransaction.customSpec) : null;
+      const oldToRef = oldTransaction.toLocationId ? getInventoryRef(oldTransaction.itemId, oldTransaction.toLocationId, oldTransaction.variant, oldTransaction.serialNumber, oldTransaction.propertyNumber, oldTransaction.customSpec) : null;
       
       // New refs
-      const newFromRef = newTransactionData.fromLocationId ? getInventoryRef(newTransactionData.itemId, newTransactionData.fromLocationId, newTransactionData.variant, newTransactionData.serialNumber) : null;
-      const newToRef = newTransactionData.toLocationId ? getInventoryRef(newTransactionData.itemId, newTransactionData.toLocationId, newTransactionData.variant, newTransactionData.serialNumber) : null;
+      const newFromRef = newTransactionData.fromLocationId ? getInventoryRef(newTransactionData.itemId, newTransactionData.fromLocationId, newTransactionData.variant, newTransactionData.serialNumber, newTransactionData.propertyNumber, newTransactionData.customSpec) : null;
+      const newToRef = newTransactionData.toLocationId ? getInventoryRef(newTransactionData.itemId, newTransactionData.toLocationId, newTransactionData.variant, newTransactionData.serialNumber, newTransactionData.propertyNumber, newTransactionData.customSpec) : null;
 
       // Fetch all involved inventory docs
       const refsToFetch = [oldFromRef, oldToRef, newFromRef, newToRef].filter((r, i, self) => r && self.findIndex(x => x?.path === r.path) === i);
@@ -688,6 +743,7 @@ export const updateTransaction = async (id: string, oldTransaction: Transaction,
             itemId: data.itemId || (path.split('_')[0].split('/').pop()), 
             locationId: locId,
             variant: data.variant || null,
+            customSpec: data.customSpec || null,
             serialNumber: data.serialNumber || null,
             propertyNumber: data.propertyNumber || null,
             quantity: data.quantity
@@ -728,7 +784,8 @@ export const addItem = async (item: Omit<Item, 'id' | 'createdAt' | 'isActive'>)
       totalQuantity: 0,
       ...item,
       isActive: true,
-      createdAt: serverTimestamp()
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp()
     }));
     return docRef.id;
   } catch (error) {
@@ -737,6 +794,7 @@ export const addItem = async (item: Omit<Item, 'id' | 'createdAt' | 'isActive'>)
 };
 
 export const updateItem = async (id: string, item: Partial<Item>) => {
+  if (!id) throw new Error('Item ID is required for update');
   try {
     const itemRef = doc(db, 'items', id);
     const itemSnap = await getDoc(itemRef);
@@ -748,10 +806,14 @@ export const updateItem = async (id: string, item: Partial<Item>) => {
         isActive: item.isActive ?? true,
         averageCost: item.averageCost ?? 0,
         totalQuantity: item.totalQuantity ?? 0,
-        createdAt: serverTimestamp()
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp()
       }), { merge: true });
     } else {
-      await updateDoc(itemRef, cleanData(item));
+      await updateDoc(itemRef, cleanData({
+        ...item,
+        updatedAt: serverTimestamp()
+      }));
     }
   } catch (error) {
     handleFirestoreError(error, OperationType.UPDATE, 'items');
@@ -1129,16 +1191,41 @@ export const deleteUnplannedStock = async (id: string) => {
 
 // --- Request Operations ---
 
+// --- Helper Functions ---
+
+const getInventoryRef = (itemId: string, locationId: string, variant?: Record<string, string>, serialNumber?: string, customSpec?: string) => {
+  let id = `${itemId}_${locationId}`;
+  if (variant && Object.keys(variant).length > 0) {
+    const sortedVariant = Object.keys(variant).sort().reduce((acc, key) => { acc[key] = variant[key]; return acc; }, {} as any);
+    const variantHash = encodeURIComponent(JSON.stringify(sortedVariant)).replace(/%/g, '_').replace(/\./g, '-');
+    id += `_${variantHash}`;
+  }
+  if (customSpec) {
+    id += `_SPEC-${encodeURIComponent(customSpec).replace(/%/g, '_')}`;
+  }
+  if (serialNumber) {
+    id += `_SN-${encodeURIComponent(serialNumber).replace(/%/g, '_')}`;
+  }
+  return doc(db, 'inventory', id.substring(0, 1000));
+};
+
 export const createRequest = async (request: Omit<Request, 'id' | 'timestamp' | 'status' | 'requestorId'>, requestorName?: string) => {
   const userId = auth.currentUser?.uid;
   if (!userId) throw new Error('User not authenticated');
 
   try {
+    const userDoc = await getDoc(doc(db, 'users', userId));
+    const userProfile = userDoc.exists() ? userDoc.data() as UserProfile : null;
+    const isEngineer = userProfile?.role === 'engineer' || userProfile?.role === 'admin' || userProfile?.role === 'manager';
+
     const docRef = await addDoc(collection(db, 'requests'), {
       ...cleanData(request),
       requestorId: userId,
       requestorName: requestorName || '',
-      status: 'pending',
+      status: isEngineer ? 'approved' : 'pending',
+      approvedAt: isEngineer ? serverTimestamp() : null,
+      approverId: isEngineer ? userId : null,
+      approverName: isEngineer ? requestorName || 'Auto-approved' : null,
       timestamp: serverTimestamp()
     });
     return docRef.id;
@@ -1169,9 +1256,20 @@ export const updateRequest = async (id: string, data: Partial<Request>) => {
 
 export const approveRequest = async (id: string, approvedQty: number, approverId: string, approverName?: string, engineerNote?: string) => {
   try {
-    await updateDoc(doc(db, 'requests', id), {
+    const requestRef = doc(db, 'requests', id);
+    const requestDoc = await getDoc(requestRef);
+    if (!requestDoc.exists()) throw new Error('Request not found');
+    const requestData = requestDoc.data() as Request;
+
+    let finalNote = engineerNote || '';
+    if (approvedQty !== requestData.requestedQty) {
+      const adjustmentNote = `adjusted from ${requestData.requestedQty} to ${approvedQty}`;
+      finalNote = finalNote ? `${finalNote} (${adjustmentNote})` : adjustmentNote;
+    }
+
+    await updateDoc(requestRef, {
       approvedQty,
-      engineerNote: engineerNote || '',
+      engineerNote: finalNote,
       approverId,
       approverName: approverName || '',
       status: 'approved',
@@ -1209,44 +1307,246 @@ export const approveBulkRequests = async (requestIds: string[], approverId: stri
   }
 };
 
-export const recordBulkPick = async (selections: { requestId: string; deliveredQty: number; sourceLocationId: string; variant?: Record<string, string>; backorder?: boolean; serialNumbers?: string[] }[], warehousemanId: string, warehousemanName?: string) => {
+export const recordBulkReceivePO = async (
+  poId: string,
+  receivedItems: { 
+    itemId: string; 
+    variant?: Record<string, string>; 
+    quantity: number; 
+    uomId: string; 
+    unitPrice: number;
+    totalPrice: number;
+    customSpec?: string;
+    serialNumber?: string;
+    propertyNumber?: string;
+    note?: string;
+  }[],
+  userId: string,
+  userName: string,
+  options: {
+    toLocationId: string;
+    date: Date;
+    supplierInvoice?: string;
+    supplierDR?: string;
+    notes?: string;
+  }
+) => {
   try {
     await runTransaction(db, async (dbTransaction) => {
-      // 0. GENERATE DR NUMBER (DR#YY-XXXX)
-      const now = new Date();
-      const yearYY = now.getFullYear().toString().slice(-2);
-      const counterRef = doc(db, 'counters', 'dr_number');
-      const counterDoc = await dbTransaction.get(counterRef);
+      // 1. READS (All reads must be first)
+      const poRef = doc(db, 'purchase_orders', poId);
+      const poDoc = await dbTransaction.get(poRef);
+      if (!poDoc.exists()) throw new Error('Purchase Order not found');
+      const poData = poDoc.data() as PurchaseOrder;
       
-      let nextSeries = 1;
-      if (counterDoc.exists()) {
-        const data = counterDoc.data();
-        if (data.year === yearYY) {
-          nextSeries = (data.lastSeries || 0) + 1;
+      const toLocRef = doc(db, 'locations', options.toLocationId);
+      const toLocDoc = await dbTransaction.get(toLocRef);
+      const toIsInternal = toLocDoc.exists() && (toLocDoc.data().type === 'warehouse' || toLocDoc.data().type === 'jobsite');
+
+      const itemIds = Array.from(new Set(receivedItems.map(i => i.itemId)));
+      const itemDataMap: Record<string, Item> = {};
+      for (const id of itemIds) {
+        const snap = await dbTransaction.get(doc(db, 'items', id));
+        if (snap.exists()) itemDataMap[id] = snap.data() as Item;
+      }
+
+      const invDataMap: Record<string, { quantity: number; ref: any }> = {};
+      for (const receive of receivedItems) {
+        if (receive.quantity <= 0) continue;
+        const invRef = getInventoryRef(receive.itemId, options.toLocationId, receive.variant, receive.serialNumber, receive.customSpec);
+        const invPath = invRef.path;
+        if (!invDataMap[invPath]) {
+          const snap = await dbTransaction.get(invRef);
+          invDataMap[invPath] = {
+            quantity: (snap.exists() ? snap.data()?.quantity : 0) || 0,
+            ref: invRef
+          };
         }
       }
+
+      // 2. CALCULATIONS & WRITES
+      const timestamp = Timestamp.fromDate(options.date);
+      const updatedPoItems = [...poData.items];
       
-      const seriesStr = nextSeries.toString().padStart(4, '0');
-      const batchId = `DR#${yearYY}-${seriesStr}`;
+      // Track item state changes for multiple lines of the same item
+      const rollingItemState: Record<string, { totalQuantity: number; averageCost: number }> = {};
+      for (const id in itemDataMap) {
+        rollingItemState[id] = {
+          totalQuantity: itemDataMap[id].totalQuantity || 0,
+          averageCost: itemDataMap[id].averageCost || 0
+        };
+      }
+
+      for (const receive of receivedItems) {
+        if (receive.quantity <= 0) continue;
+
+        const poItemIndex = updatedPoItems.findIndex(poi => 
+          poi.itemId === receive.itemId && 
+          JSON.stringify(poi.variant || {}) === JSON.stringify(receive.variant || {})
+        );
+
+        if (poItemIndex === -1) continue;
+        const poItem = updatedPoItems[poItemIndex];
+        const currentReceived = poItem.receivedQuantity || 0;
+
+        if (currentReceived + receive.quantity > poItem.quantity) {
+          const itemName = itemDataMap[receive.itemId]?.name || receive.itemId;
+          throw new Error(`Cannot receive ${receive.quantity} for ${itemName}. Ordered: ${poItem.quantity}, Already Received: ${currentReceived}.`);
+        }
+
+        updatedPoItems[poItemIndex] = {
+          ...poItem,
+          receivedQuantity: currentReceived + receive.quantity
+        };
+
+        const itemData = itemDataMap[receive.itemId];
+        if (!itemData) continue;
+
+        const conversionFactor = itemData.uomId === receive.uomId ? 1 : (itemData.uomConversions?.find(c => c.uomId === receive.uomId)?.factor || 1);
+        const baseQuantity = receive.quantity * conversionFactor;
+
+        // Inventory update
+        const invRef = getInventoryRef(receive.itemId, options.toLocationId, receive.variant, receive.serialNumber, receive.customSpec);
+        const invInfo = invDataMap[invRef.path];
+        invInfo.quantity += baseQuantity;
+
+        dbTransaction.set(invRef, {
+          itemId: receive.itemId,
+          locationId: options.toLocationId,
+          variant: receive.variant ? cleanData(receive.variant) : null,
+          customSpec: receive.customSpec || null,
+          serialNumber: receive.serialNumber || null,
+          propertyNumber: receive.propertyNumber || null,
+          quantity: invInfo.quantity,
+          updatedAt: serverTimestamp()
+        }, { merge: true });
+
+        // Update Asset if serialized
+        if (receive.serialNumber) {
+          const assetRef = doc(db, 'assets', receive.serialNumber);
+          dbTransaction.set(assetRef, {
+            id: receive.serialNumber,
+            itemId: receive.itemId,
+            locationId: options.toLocationId,
+            updatedAt: serverTimestamp()
+          }, { merge: true });
+        }
+
+        // Rolling Average Cost and Total Quantity
+        if (toIsInternal) {
+          const state = rollingItemState[receive.itemId];
+          const newUnitPricePerBase = receive.unitPrice / conversionFactor;
+          const totalQtyBefore = state.totalQuantity;
+          const avgCostBefore = state.averageCost;
+          
+          state.totalQuantity += baseQuantity;
+          if (state.totalQuantity > 0) {
+            state.averageCost = ((totalQtyBefore * avgCostBefore) + (baseQuantity * newUnitPricePerBase)) / state.totalQuantity;
+          }
+
+          dbTransaction.update(doc(db, 'items', receive.itemId), {
+            totalQuantity: state.totalQuantity,
+            averageCost: state.averageCost,
+            updatedAt: serverTimestamp(),
+            updatedBy: userId
+          });
+        }
+
+        // Record Transaction
+        const transactionRef = doc(collection(db, 'transactions'));
+        dbTransaction.set(transactionRef, cleanData({
+          itemId: receive.itemId,
+          variant: receive.variant || null,
+          customSpec: receive.customSpec || null,
+          serialNumber: receive.serialNumber || null,
+          propertyNumber: receive.propertyNumber || null,
+          fromLocationId: poData.supplierId,
+          toLocationId: options.toLocationId,
+          quantity: receive.quantity,
+          uomId: receive.uomId,
+          conversionFactor,
+          baseQuantity,
+          type: 'delivery',
+          notes: receive.note || options.notes || '',
+          unitPrice: receive.unitPrice,
+          totalPrice: receive.totalPrice,
+          poNumber: poData.poNumber,
+          poId: poData.id,
+          supplierInvoice: options.supplierInvoice || null,
+          supplierDR: options.supplierDR || null,
+          userId,
+          userName,
+          timestamp
+        }));
+      }
+
+      // Final PO Status
+      const isComplete = updatedPoItems.every(poi => (poi.receivedQuantity || 0) >= poi.quantity);
+      const isAnyReceived = updatedPoItems.some(poi => (poi.receivedQuantity || 0) > 0);
       
+      dbTransaction.update(poRef, {
+        items: updatedPoItems,
+        status: isComplete ? 'received' : (isAnyReceived ? 'partially_received' : poData.status),
+        updatedAt: serverTimestamp(),
+        updatedBy: userId
+      });
+    });
+  } catch (error) {
+    console.error("Bulk receive failed:", error);
+    throw error;
+  }
+};
+
+export const recordBulkPick = async (
+  selections: { requestId: string; deliveredQty: number; sourceLocationId: string; variant?: Record<string, string>; backorder?: boolean; serialNumbers?: string[] }[], 
+  warehousemanId: string, 
+  warehousemanName?: string,
+  options?: { customBatchId?: string; customDate?: Date }
+) => {
+  try {
+    await runTransaction(db, async (dbTransaction) => {
+      let batchId = options?.customBatchId;
+      let counterUpdate: any = null;
+      let counterRef: any = null;
+      
+      // If no custom DR is provided, generate one
+      if (!batchId) {
+        const now = new Date();
+        const yearYY = now.getFullYear().toString().slice(-2);
+        counterRef = doc(db, 'counters', 'dr_number');
+        const counterDoc = await dbTransaction.get(counterRef);
+        
+        let nextSeries = 1;
+        if (counterDoc.exists()) {
+          const data = counterDoc.data() as { year: string; lastSeries: number };
+          if (data.year === yearYY) {
+            nextSeries = (data.lastSeries || 0) + 1;
+          }
+        }
+        
+        const seriesStr = nextSeries.toString().padStart(4, '0');
+        batchId = `DR#${yearYY}-${seriesStr}`;
+
+        // Prepare counter update but DO NOT set it yet (must read all first)
+        counterUpdate = {
+          year: yearYY,
+          lastSeries: nextSeries,
+          updatedAt: serverTimestamp()
+        };
+      }
+
+      const pickTime = options?.customDate ? Timestamp.fromDate(options.customDate) : serverTimestamp();
       const requestData: any[] = [];
       const itemCache: Record<string, Item> = {};
-      const invCache: Record<string, { ref: any, quantity: number, serialNumber?: string }> = {};
-
-      const getInventoryRef = (itemId: string, locationId: string, variant?: Record<string, string>, serialNumber?: string) => {
-        let id = `${itemId}_${locationId}`;
-        if (variant && Object.keys(variant).length > 0) {
-          const sortedVariant = Object.keys(variant).sort().reduce((acc, key) => { acc[key] = variant[key]; return acc; }, {} as any);
-          const variantHash = encodeURIComponent(JSON.stringify(sortedVariant)).replace(/%/g, '_').replace(/\./g, '-');
-          id += `_${variantHash}`;
-        }
-        if (serialNumber) {
-          id += `_SN-${encodeURIComponent(serialNumber).replace(/%/g, '_')}`;
-        }
-        return doc(db, 'inventory', id.substring(0, 1000));
-      };
+      const invCache: Record<string, { ref: any, quantity: number, serialNumber?: string, metadata: any }> = {};
 
       // 1. READS
+      const locIds = Array.from(new Set(selections.map(s => s.sourceLocationId)));
+      const locDocs = await Promise.all(locIds.map(id => dbTransaction.get(doc(db, 'locations', id))));
+      const locMap = new Map();
+      locIds.forEach((id, i) => locMap.set(id, locDocs[i]));
+      const isInternal = (loc: any) => loc?.exists() && (loc.data()?.type === 'warehouse' || loc.data()?.type === 'jobsite');
+
       for (const selection of selections) {
         const { requestId, deliveredQty, sourceLocationId, variant, serialNumbers } = selection;
         const requestRef = doc(db, 'requests', requestId);
@@ -1254,7 +1554,7 @@ export const recordBulkPick = async (selections: { requestId: string; deliveredQ
         if (!requestDoc.exists()) continue;
         const request = requestDoc.data() as Request;
 
-        const { itemId, uomId } = request;
+        const { itemId, uomId, customSpec } = request;
         const effectiveVariant = variant || request.variant;
 
         if (!itemCache[itemId]) {
@@ -1270,25 +1570,27 @@ export const recordBulkPick = async (selections: { requestId: string; deliveredQ
         // If serial numbers are provided, we need to read each one's inventory
         if (serialNumbers && serialNumbers.length > 0) {
           for (const sn of serialNumbers) {
-            const invRef = getInventoryRef(itemId, sourceLocationId, effectiveVariant, sn);
+            const invRef = getInventoryRef(itemId, sourceLocationId, effectiveVariant, sn, customSpec);
             const invKey = invRef.path;
             if (!invCache[invKey]) {
               const invDoc = await dbTransaction.get(invRef);
               invCache[invKey] = {
                 ref: invRef,
                 quantity: (invDoc.exists() ? invDoc.data()?.quantity : 0) || 0,
-                serialNumber: sn
+                serialNumber: sn,
+                metadata: { itemId, locationId: sourceLocationId, variant: effectiveVariant, customSpec }
               };
             }
           }
         } else {
-          const invRef = getInventoryRef(itemId, sourceLocationId, effectiveVariant);
+          const invRef = getInventoryRef(itemId, sourceLocationId, effectiveVariant, undefined, customSpec);
           const invKey = invRef.path;
           if (!invCache[invKey]) {
             const invDoc = await dbTransaction.get(invRef);
             invCache[invKey] = {
               ref: invRef,
-              quantity: (invDoc.exists() ? invDoc.data()?.quantity : 0) || 0
+              quantity: (invDoc.exists() ? invDoc.data()?.quantity : 0) || 0,
+              metadata: { itemId, locationId: sourceLocationId, variant: effectiveVariant, customSpec }
             };
           }
         }
@@ -1312,12 +1614,12 @@ export const recordBulkPick = async (selections: { requestId: string; deliveredQ
       for (const data of requestData) {
         const { requestId, requestRef, request, selection, effectiveVariant, conversionFactor, baseQuantity, itemData } = data;
         const { deliveredQty, sourceLocationId, backorder, serialNumbers } = selection;
-        const { itemId, uomId, approvedQty } = request;
+        const { itemId, uomId, approvedQty, customSpec } = request;
 
         // Update inventory cache and record transactions
         if (serialNumbers && serialNumbers.length > 0) {
           for (const sn of serialNumbers) {
-            const invRef = getInventoryRef(itemId, sourceLocationId, effectiveVariant, sn);
+            const invRef = getInventoryRef(itemId, sourceLocationId, effectiveVariant, sn, request.customSpec);
             const invKey = invRef.path;
             invCache[invKey].quantity -= 1; // Serialized items are always quantity 1
 
@@ -1326,6 +1628,7 @@ export const recordBulkPick = async (selections: { requestId: string; deliveredQ
             dbTransaction.set(transactionRef, cleanData({
               itemId,
               variant: effectiveVariant || null,
+              customSpec: request.customSpec || null,
               fromLocationId: sourceLocationId,
               toLocationId: 'in-transit',
               quantity: 1,
@@ -1336,7 +1639,7 @@ export const recordBulkPick = async (selections: { requestId: string; deliveredQ
               type: 'pick',
               userId: warehousemanId,
               userName: warehousemanName || '',
-              timestamp: serverTimestamp(),
+              timestamp: pickTime,
               batchId,
               requestIds: [requestId]
             }));
@@ -1344,12 +1647,14 @@ export const recordBulkPick = async (selections: { requestId: string; deliveredQ
             // Update Asset location
             const assetRef = doc(db, 'assets', sn);
             dbTransaction.set(assetRef, {
+              id: sn,
+              itemId,
               locationId: 'in-transit',
-              updatedAt: serverTimestamp()
+              updatedAt: pickTime
             }, { merge: true });
           }
         } else {
-          const invRef = getInventoryRef(itemId, sourceLocationId, effectiveVariant);
+          const invRef = getInventoryRef(itemId, sourceLocationId, effectiveVariant, undefined, customSpec);
           const invKey = invRef.path;
           invCache[invKey].quantity -= baseQuantity;
 
@@ -1358,6 +1663,7 @@ export const recordBulkPick = async (selections: { requestId: string; deliveredQ
           dbTransaction.set(transactionRef, cleanData({
             itemId,
             variant: effectiveVariant || null,
+            customSpec: customSpec || null,
             fromLocationId: sourceLocationId,
             toLocationId: 'in-transit',
             quantity: deliveredQty,
@@ -1367,17 +1673,19 @@ export const recordBulkPick = async (selections: { requestId: string; deliveredQ
             type: 'pick',
             userId: warehousemanId,
             userName: warehousemanName || '',
-            timestamp: serverTimestamp(),
+            timestamp: pickTime,
             batchId,
             requestIds: [requestId]
           }));
         }
 
         // Update Request Status to 'for delivery'
+        // We set approvedQty to deliveredQty so it shows the actual picked amount in 'for delivery' section
         dbTransaction.update(requestRef, cleanData({
           status: 'for delivery',
+          approvedQty: deliveredQty,
           deliveredQty,
-          pickedAt: serverTimestamp(),
+          pickedAt: pickTime,
           batchId,
           variant: effectiveVariant || null,
           sourceLocationId,
@@ -1387,12 +1695,15 @@ export const recordBulkPick = async (selections: { requestId: string; deliveredQ
         }));
 
         // Handle Backorder
-        if (backorder && approvedQty && deliveredQty < approvedQty) {
+        const originalApprovedQty = request.approvedQty || request.requestedQty;
+        if (backorder && deliveredQty < originalApprovedQty) {
           const backorderRef = doc(collection(db, 'requests'));
           dbTransaction.set(backorderRef, cleanData({
             itemId,
             variant: effectiveVariant || null,
-            requestedQty: approvedQty - deliveredQty,
+            customSpec: customSpec || null,
+            requestedQty: originalApprovedQty - deliveredQty,
+            approvedQty: originalApprovedQty - deliveredQty,
             uomId,
             jobsiteId: request.jobsiteId,
             status: 'approved',
@@ -1400,58 +1711,54 @@ export const recordBulkPick = async (selections: { requestId: string; deliveredQ
             requestorName: request.requestorName || '',
             approverId: request.approverId || '',
             approverName: request.approverName || '',
-            workerNote: `Backorder of ${requestId}`,
-            timestamp: serverTimestamp(),
-            approvedAt: serverTimestamp(),
+            workerNote: `Backorder of ${itemData.name}`,
+            timestamp: pickTime,
+            approvedAt: pickTime,
             backorderOf: requestId
           }));
         }
-
-        // Record individual transaction (Pick)
-        const transactionRef = doc(collection(db, 'transactions'));
-        dbTransaction.set(transactionRef, cleanData({
-          itemId,
-          variant: effectiveVariant || null,
-          fromLocationId: sourceLocationId,
-          toLocationId: 'in-transit',
-          quantity: deliveredQty,
-          uomId,
-          conversionFactor,
-          baseQuantity,
-          type: 'pick',
-          userId: warehousemanId,
-          userName: warehousemanName || '',
-          timestamp: serverTimestamp(),
-          batchId,
-          requestIds: [requestId]
-        }));
       }
-
-      // Update counter for next time
-      dbTransaction.set(counterRef, {
-        year: yearYY,
-        lastSeries: nextSeries,
-        updatedAt: serverTimestamp()
-      });
 
       // Final inventory writes
       for (const invKey in invCache) {
-        const { ref, quantity, serialNumber } = invCache[invKey];
-        const data = requestData.find(d => {
-          if (serialNumber) {
-            return d.selection.serialNumbers?.includes(serialNumber);
-          }
-          return d.invKey === invKey;
+        const { ref, quantity, serialNumber, metadata } = invCache[invKey];
+        dbTransaction.set(ref, cleanData({
+          itemId: metadata.itemId,
+          locationId: metadata.locationId,
+          variant: metadata.variant || null,
+          customSpec: metadata.customSpec || null,
+          serialNumber: serialNumber || null,
+          quantity: quantity,
+          updatedAt: serverTimestamp()
+        }), { merge: true });
+      }
+
+      // Update total quantities for items
+      for (const itemId in itemCache) {
+        const itemData = itemCache[itemId];
+        const itemRef = doc(db, 'items', itemId);
+        
+        // Calculate net change in total quantity for this item in this batch
+        // Picking moves from internal (warehouse/jobsite) to in-transit (external)
+        let netChange = 0;
+        requestData.filter(d => d.request.itemId === itemId).forEach(d => {
+          const fromIsInternal = isInternal(locMap.get(d.selection.sourceLocationId));
+          const toIsInternal = false; // in-transit is external
+          netChange += (toIsInternal ? d.baseQuantity : 0) - (fromIsInternal ? d.baseQuantity : 0);
         });
-        if (data) {
-          dbTransaction.set(ref, cleanData({
-            itemId: data.request.itemId,
-            locationId: data.selection.sourceLocationId,
-            variant: data.effectiveVariant || null,
-            serialNumber: serialNumber || null,
-            quantity: quantity
-          }), { merge: true });
+
+        if (netChange !== 0) {
+          dbTransaction.update(itemRef, {
+            totalQuantity: (itemData.totalQuantity || 0) + netChange,
+            updatedAt: serverTimestamp(),
+            updatedBy: warehousemanId
+          });
         }
+      }
+
+      // 3. FINAL COUNTER WRITE (Must be after all reads)
+      if (counterUpdate && counterRef) {
+        dbTransaction.set(counterRef, counterUpdate);
       }
     });
   } catch (error) {
@@ -1460,36 +1767,171 @@ export const recordBulkPick = async (selections: { requestId: string; deliveredQ
   }
 };
 
-export const recordBulkReceive = async (requestIds: string[], receiverId: string, receiverName?: string) => {
+export const updateDeliveryQuantity = async (requestId: string, newQuantity: number, warehousemanId: string, warehousemanName: string, createBackorder: boolean) => {
   try {
     await runTransaction(db, async (dbTransaction) => {
-      const requestData: any[] = [];
-      const itemCache: Record<string, Item> = {};
-      const invCache: Record<string, { ref: any, quantity: number, serialNumber?: string }> = {};
+      const requestRef = doc(db, 'requests', requestId);
+      const requestDoc = await dbTransaction.get(requestRef);
+      if (!requestDoc.exists()) throw new Error('Request not found');
+      
+      const request = requestDoc.data() as Request;
+      const oldQuantity = request.deliveredQty || 0;
+      const difference = oldQuantity - newQuantity;
+      
+      if (difference === 0) return;
+      if (newQuantity < 0) throw new Error('Quantity cannot be negative');
 
-      const getInventoryRef = (itemId: string, locationId: string, variant?: Record<string, string>, serialNumber?: string) => {
-        let id = `${itemId}_${locationId}`;
-        if (variant && Object.keys(variant).length > 0) {
-          const sortedVariant = Object.keys(variant).sort().reduce((acc, key) => { acc[key] = variant[key]; return acc; }, {} as any);
-          const variantHash = encodeURIComponent(JSON.stringify(sortedVariant)).replace(/%/g, '_').replace(/\./g, '-');
-          id += `_${variantHash}`;
+      const itemId = request.itemId;
+      const itemRef = doc(db, 'items', itemId);
+      const itemDoc = await dbTransaction.get(itemRef);
+      if (!itemDoc.exists()) throw new Error('Item not found');
+      const itemData = itemDoc.data() as Item;
+
+      const conversionFactor = itemData.uomId === request.uomId ? 1 : (itemData.uomConversions?.find(c => c.uomId === request.uomId)?.factor || 1);
+      const baseDifference = difference * conversionFactor;
+
+      // Update source location inventory if quantity decreased (stock returned to warehouse)
+      // If quantity increased, we'd need to check availability, but the requirement specifically mentions "if it's now less than before"
+      if (difference > 0) {
+        if (request.sourceLocationId) {
+          const invRef = getInventoryRef(itemId, request.sourceLocationId, request.variant, undefined, request.customSpec);
+          const invDoc = await dbTransaction.get(invRef);
+          const currentInvData = invDoc.data() as any;
+          const currentInvQty = (invDoc.exists() ? currentInvData?.quantity : 0) || 0;
+          
+          dbTransaction.set(invRef, {
+            quantity: currentInvQty + baseDifference,
+            updatedAt: serverTimestamp()
+          }, { merge: true });
+
+          // Update total quantity (it was external 'in-transit', now returning internal)
+          dbTransaction.update(itemRef, {
+            totalQuantity: (itemData.totalQuantity || 0) + baseDifference,
+            updatedAt: serverTimestamp(),
+            updatedBy: warehousemanId
+          });
         }
-        if (serialNumber) {
-          id += `_SN-${encodeURIComponent(serialNumber).replace(/%/g, '_')}`;
+
+        // Record Adjustment Transaction (for the reduction)
+        const transRef = doc(collection(db, 'transactions'));
+        dbTransaction.set(transRef, cleanData({
+          itemId,
+          variant: request.variant || null,
+          customSpec: request.customSpec || null,
+          fromLocationId: 'in-transit',
+          toLocationId: request.sourceLocationId || 'unknown',
+          quantity: difference,
+          uomId: request.uomId,
+          conversionFactor,
+          baseQuantity: baseDifference,
+          type: 'adjustment',
+          userId: warehousemanId,
+          userName: warehousemanName,
+          timestamp: serverTimestamp(),
+          notes: `Quantity reduced for delivery #${request.batchId}. Stock returned to source.`
+        }));
+
+        // Backorder
+        if (createBackorder) {
+          const backorderRef = doc(collection(db, 'requests'));
+          dbTransaction.set(backorderRef, cleanData({
+            itemId,
+            variant: request.variant || null,
+            customSpec: request.customSpec || null,
+            requestedQty: difference,
+            approvedQty: difference,
+            uomId: request.uomId,
+            jobsiteId: request.jobsiteId,
+            status: 'approved',
+            requestorId: request.requestorId,
+            requestorName: request.requestorName || '',
+            approverId: request.approverId || '',
+            approverName: request.approverName || '',
+            workerNote: `Backorder of ${itemData.name} (Quantity Adjustment)`,
+            timestamp: serverTimestamp(),
+            approvedAt: serverTimestamp(),
+            backorderOf: requestId
+          }));
         }
-        return doc(db, 'inventory', id.substring(0, 1000));
+      } else if (difference < 0) {
+          // If warehouseman increases quantity... it's out of scope for "if it's less than before" but good to handle errors
+          // For now let's just allow it if stock permits? Actually user said "if it's less than before".
+          // Increasing quantity in-transit usually requires another pick. 
+          // To keep it simple and safe, I'll error if increasing unless requested.
+          throw new Error('Increasing delivery quantity after picking is not supported. Please create a new request or pick from warehouse again.');
+      }
+
+      // Update original request
+      const updateData: any = {
+        approvedQty: newQuantity,
+        deliveredQty: newQuantity,
+        updatedAt: serverTimestamp(),
+        updatedBy: warehousemanId,
+        adjustmentHistory: [
+          ...(request.adjustmentHistory || []),
+          {
+            oldQty: oldQuantity,
+            newQty: newQuantity,
+            timestamp: new Date().toISOString(),
+            userId: warehousemanId
+          }
+        ]
       };
 
-      // 1. READS
-      for (const requestId of requestIds) {
-        const requestRef = doc(db, 'requests', requestId);
-        const requestDoc = await dbTransaction.get(requestRef);
-        if (!requestDoc.exists()) continue;
+      // If quantity is now 0, mark it as 'delivered' (quantity 0) so it leaves the active list
+      if (newQuantity === 0) {
+        updateData.status = 'delivered';
+        updateData.deliveredAt = serverTimestamp();
+      }
+
+      dbTransaction.update(requestRef, cleanData(updateData));
+    });
+  } catch (error) {
+    console.error("Update delivery quantity failed:", error);
+    handleFirestoreError(error, OperationType.WRITE, 'requests');
+    throw error;
+  }
+};
+
+export const recordBulkReceive = async (requestIds: string[], receiverId: string, receiverName?: string) => {
+  try {
+    const requestDocs = await Promise.all(requestIds.map(id => getDoc(doc(db, 'requests', id))));
+    const validRequests = requestDocs.filter(d => d.exists() && d.data()?.status === 'for delivery');
+    
+    // Pre-fetch BOQ IDs for the items in these requests
+    const boqMap = new Map<string, string>(); // key: itemId_jobsiteId_variantHash, value: boqId
+    await Promise.all(validRequests.map(async (docSnap) => {
+      const data = docSnap.data() as Request;
+      const { itemId, jobsiteId, variant } = data;
+      const q = query(collection(db, 'boq'), where('jobsiteId', '==', jobsiteId), where('itemId', '==', itemId));
+      const snap = await getDocs(q);
+      const variantStr = JSON.stringify(variant || {});
+      const match = snap.docs.find(d => JSON.stringify(d.data().variant || {}) === variantStr);
+      if (match) {
+        const key = `${itemId}_${jobsiteId}_${variantStr}`;
+        boqMap.set(key, match.id);
+      }
+    }));
+
+    await runTransaction(db, async (dbTransaction) => {
+      console.log("[BulkReceive] Starting transaction for:", validRequests.length, "valid requests");
+      const requestData: any[] = [];
+      const itemCache: Record<string, Item> = {};
+      const invCache: Record<string, { ref: any, quantity: number, serialNumber?: string, metadata: any }> = {};
+
+      const locMap = new Map();
+      const isInternal = (loc: any) => loc?.exists() && (loc.data()?.type === 'warehouse' || loc.data()?.type === 'jobsite');
+      
+      for (const requestDoc of validRequests) {
+        const requestId = requestDoc.id;
+        const requestRef = requestDoc.ref;
         const request = requestDoc.data() as Request;
+        const { itemId, uomId, jobsiteId, deliveredQty, variant, serialNumbers, customSpec } = request;
 
-        if (request.status !== 'for delivery') continue;
-
-        const { itemId, uomId, jobsiteId, deliveredQty, variant, serialNumbers } = request;
+        if (!locMap.has(jobsiteId)) {
+          const locDoc = await dbTransaction.get(doc(db, 'locations', jobsiteId));
+          locMap.set(jobsiteId, locDoc);
+        }
 
         if (!itemCache[itemId]) {
           const itemRef = doc(db, 'items', itemId);
@@ -1499,29 +1941,34 @@ export const recordBulkReceive = async (requestIds: string[], receiverId: string
           }
         }
         const itemData = itemCache[itemId];
-        if (!itemData) continue;
+        if (!itemData) {
+          console.warn("[BulkReceive] Item not found:", itemId);
+          continue;
+        }
 
         if (serialNumbers && serialNumbers.length > 0) {
           for (const sn of serialNumbers) {
-            const invRef = getInventoryRef(itemId, jobsiteId, variant, sn);
+            const invRef = getInventoryRef(itemId, jobsiteId, variant, sn, customSpec);
             const invKey = invRef.path;
             if (!invCache[invKey]) {
               const invDoc = await dbTransaction.get(invRef);
               invCache[invKey] = {
                 ref: invRef,
                 quantity: (invDoc.exists() ? invDoc.data()?.quantity : 0) || 0,
-                serialNumber: sn
+                serialNumber: sn,
+                metadata: { itemId, jobsiteId, variant, customSpec }
               };
             }
           }
         } else {
-          const invRef = getInventoryRef(itemId, jobsiteId, variant);
+          const invRef = getInventoryRef(itemId, jobsiteId, variant, undefined, customSpec);
           const invKey = invRef.path;
           if (!invCache[invKey]) {
             const invDoc = await dbTransaction.get(invRef);
             invCache[invKey] = {
               ref: invRef,
-              quantity: (invDoc.exists() ? invDoc.data()?.quantity : 0) || 0
+              quantity: (invDoc.exists() ? invDoc.data()?.quantity : 0) || 0,
+              metadata: { itemId, jobsiteId, variant, customSpec }
             };
           }
         }
@@ -1538,6 +1985,8 @@ export const recordBulkReceive = async (requestIds: string[], receiverId: string
         });
       }
 
+      console.log("[BulkReceive] Reads complete. Processing writes for:", requestData.length, "items");
+
       // 2. WRITES
       for (const data of requestData) {
         const { requestId, requestRef, request, conversionFactor, baseQuantity } = data;
@@ -1545,7 +1994,7 @@ export const recordBulkReceive = async (requestIds: string[], receiverId: string
 
         if (serialNumbers && serialNumbers.length > 0) {
           for (const sn of serialNumbers) {
-            const invRef = getInventoryRef(itemId, jobsiteId, variant, sn);
+            const invRef = getInventoryRef(itemId, jobsiteId, variant, sn, request.customSpec);
             const invKey = invRef.path;
             invCache[invKey].quantity += 1;
 
@@ -1554,6 +2003,7 @@ export const recordBulkReceive = async (requestIds: string[], receiverId: string
             dbTransaction.set(transactionRef, cleanData({
               itemId,
               variant: variant || null,
+              customSpec: request.customSpec || null,
               fromLocationId: 'in-transit',
               toLocationId: jobsiteId,
               quantity: 1,
@@ -1571,12 +2021,14 @@ export const recordBulkReceive = async (requestIds: string[], receiverId: string
             // Update Asset location
             const assetRef = doc(db, 'assets', sn);
             dbTransaction.set(assetRef, {
+              id: sn,
+              itemId,
               locationId: jobsiteId,
               updatedAt: serverTimestamp()
             }, { merge: true });
           }
         } else {
-          const invRef = getInventoryRef(itemId, jobsiteId, variant);
+          const invRef = getInventoryRef(itemId, jobsiteId, variant, undefined, request.customSpec);
           const invKey = invRef.path;
           invCache[invKey].quantity += baseQuantity;
 
@@ -1585,6 +2037,7 @@ export const recordBulkReceive = async (requestIds: string[], receiverId: string
           dbTransaction.set(transactionRef, cleanData({
             itemId,
             variant: variant || null,
+            customSpec: request.customSpec || null,
             fromLocationId: 'in-transit',
             toLocationId: jobsiteId,
             quantity: deliveredQty,
@@ -1606,40 +2059,57 @@ export const recordBulkReceive = async (requestIds: string[], receiverId: string
           receiverId,
           receiverName: receiverName || ''
         }));
+
+        // Update Jobsite BOQ currentQuantity
+        const variantStr = JSON.stringify(variant || {});
+        const key = `${itemId}_${jobsiteId}_${variantStr}`;
+        const boqId = boqMap.get(key);
+        if (boqId) {
+          const boqRef = doc(db, 'boq', boqId);
+          // We need current quantity from the BOQ doc
+          // Since we already did a query outside, we might as well have fetched the quantities too,
+          // but fetching inside transaction is safer if we have the Ref.
+          const boqDoc = await dbTransaction.get(boqRef);
+          if (boqDoc.exists()) {
+            const current = (boqDoc.data().currentQuantity || 0) as number;
+            dbTransaction.update(boqRef, { currentQuantity: current + baseQuantity });
+          }
+        }
       }
 
       // Final inventory writes
       for (const invKey in invCache) {
-        const { ref, quantity, serialNumber } = invCache[invKey];
-        const data = requestData.find(d => {
-          if (serialNumber) {
-            return d.request.serialNumbers?.includes(serialNumber);
-          }
-          // For non-serialized, match by itemId, jobsiteId, and variant
-          return d.request.itemId === invCache[invKey].ref.id.split('_')[0]; // Simplified check
-        });
+        const { ref, quantity, serialNumber, metadata } = invCache[invKey];
+        dbTransaction.set(ref, cleanData({
+          itemId: metadata.itemId,
+          locationId: metadata.jobsiteId,
+          variant: metadata.variant || null,
+          customSpec: metadata.customSpec || null,
+          serialNumber: serialNumber || null,
+          quantity: quantity
+        }), { merge: true });
+      }
+
+      // Update total quantities for items
+      for (const itemId in itemCache) {
+        const itemData = itemCache[itemId];
+        const itemRef = doc(db, 'items', itemId);
         
-        // More robust matching for final writes
-        const matchingData = requestData.find(d => {
-          const { itemId, jobsiteId, variant, serialNumbers } = d.request;
-          if (serialNumber) {
-            return serialNumbers?.includes(serialNumber);
-          }
-          // This is a bit tricky because invKey is the path. 
-          // Let's just use the ref we stored.
-          return true; // We already have the ref and quantity in invCache
+        // Receiving moves from in-transit (external) to jobsite (internal)
+        let netChange = 0;
+        requestData.filter(d => d.request.itemId === itemId).forEach(d => {
+          const fromIsInternal = false; // in-transit is external
+          const toIsInternal = isInternal(locMap.get(d.request.jobsiteId));
+          netChange += (toIsInternal ? d.baseQuantity : 0) - (fromIsInternal ? d.baseQuantity : 0);
         });
 
-        if (matchingData) {
-          dbTransaction.set(ref, cleanData({
-            itemId: matchingData.request.itemId,
-            locationId: matchingData.request.jobsiteId,
-            variant: matchingData.request.variant || null,
-            serialNumber: serialNumber || null,
-            quantity: quantity
-          }), { merge: true });
+        if (netChange !== 0) {
+          dbTransaction.update(itemRef, {
+            totalQuantity: (itemData.totalQuantity || 0) + netChange
+          });
         }
       }
+      console.log("[BulkReceive] Transaction complete");
     });
   } catch (error) {
     console.error("Bulk receive failed:", error);
@@ -1731,10 +2201,117 @@ export const clearInventoryData = async (includeBOQ: boolean = true, includePOs:
   }
 };
 
+export const recordBulkPullout = async (
+  selections: { itemId: string; invId: string; quantity: number; variant?: Record<string, string> | null; customSpec?: string | null; uomId: string; }[],
+  fromLocationId: string,
+  toLocationId: string | null,
+  userId: string,
+  userName: string,
+  notes: string
+) => {
+  const getInventoryRef = (itemId: string, locationId: string, variant?: Record<string, string>, customSpec?: string) => {
+    let id = `${itemId}_${locationId}`;
+    if (variant && Object.keys(variant).length > 0) {
+      const sortedVariant = Object.keys(variant).sort().reduce((acc, key) => {
+        acc[key] = variant[key];
+        return acc;
+      }, {} as any);
+      const variantStr = JSON.stringify(sortedVariant);
+      const variantHash = encodeURIComponent(variantStr).replace(/%/g, '_').replace(/\./g, '-');
+      id += `_${variantHash}`;
+    }
+    if (customSpec) {
+      id += `_SPEC-${encodeURIComponent(customSpec).replace(/%/g, '_')}`;
+    }
+    if (id.length > 1000) id = id.substring(0, 1000);
+    return doc(db, 'inventory', id);
+  };
+
+  try {
+    await runTransaction(db, async (dbTransaction) => {
+      for (const selection of selections) {
+        if (selection.quantity <= 0) continue;
+
+        const fromInvRef = doc(db, 'inventory', selection.invId);
+        const fromInvDoc = await dbTransaction.get(fromInvRef);
+        
+        if (!fromInvDoc.exists()) continue;
+        const invData = fromInvDoc.data() as Inventory;
+
+        if (invData.quantity < selection.quantity) {
+          throw new Error(`Insufficient stock for ${selection.itemId}`);
+        }
+
+        // Update Source Inventory
+        dbTransaction.update(fromInvRef, {
+          quantity: invData.quantity - selection.quantity,
+          updatedAt: serverTimestamp()
+        });
+
+        // Update Destination Inventory
+        if (toLocationId) {
+          const toInvRef = getInventoryRef(selection.itemId, toLocationId, selection.variant || undefined, selection.customSpec || undefined);
+          const toInvDoc = await dbTransaction.get(toInvRef);
+          const currentToQty = (toInvDoc.exists() ? toInvDoc.data()?.quantity : 0) || 0;
+          
+          dbTransaction.set(toInvRef, {
+            itemId: selection.itemId,
+            locationId: toLocationId,
+            variant: selection.variant || null,
+            customSpec: selection.customSpec || null,
+            quantity: currentToQty + selection.quantity,
+            updatedAt: serverTimestamp()
+          }, { merge: true });
+        }
+
+        // Record Transaction
+        const transactionRef = doc(collection(db, 'transactions'));
+        dbTransaction.set(transactionRef, cleanData({
+          itemId: selection.itemId,
+          type: 'return',
+          quantity: selection.quantity,
+          fromLocationId,
+          toLocationId,
+          variant: selection.variant || null,
+          customSpec: selection.customSpec || null,
+          notes: `PULLOUT: ${notes}`,
+          uomId: selection.uomId,
+          conversionFactor: 1,
+          baseQuantity: selection.quantity,
+          timestamp: serverTimestamp(),
+          userId,
+          userName
+        }));
+      }
+    });
+  } catch (error) {
+    console.error("Bulk pullout failed:", error);
+    handleFirestoreError(error, OperationType.WRITE, 'bulk_pullout');
+    throw error;
+  }
+};
+
 // --- User Operations ---
 
-export const subscribeToUsers = (callback: (data: UserProfile[]) => void) => {
-  return onSnapshot(collection(db, 'users'), (snapshot) => {
+export const subscribeToUsers = (callback: (data: UserProfile[]) => void, currentUserRole?: string) => {
+  let q = query(collection(db, 'users'));
+  const currentUserId = auth.currentUser?.uid;
+  
+  if (currentUserRole === 'engineer' && currentUserId) {
+    // Engineers can see all active workers OR themselves
+    q = query(q, or(
+      and(where('role', '==', 'worker'), where('isActive', '==', true)),
+      where(documentId(), '==', currentUserId)
+    ));
+  } else if (currentUserRole && currentUserRole !== 'admin' && currentUserId) {
+    // Other roles (if ever enabled) see active users OR themselves
+    q = query(q, or(
+      where('isActive', '==', true),
+      where(documentId(), '==', currentUserId)
+    ));
+  }
+
+  return onSnapshot(q, (snapshot) => {
     const data = snapshot.docs.map(doc => ({ uid: doc.id, ...doc.data() } as UserProfile));
     callback(data);
   }, (error) => {

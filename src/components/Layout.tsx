@@ -1,13 +1,22 @@
-import React from 'react';
-import { Outlet } from 'react-router-dom';
+import React, { useEffect } from 'react';
+import { Outlet, useLocation } from 'react-router-dom';
 import { Sidebar, BottomNav } from './common/Navigation';
-import { useIsMobile } from '../hooks/useApp';
+import { useIsMobile, useSidebar } from '../hooks/useApp';
 import { useData } from '../App';
 import { Hammer } from 'lucide-react';
 
 export const Layout = ({ children }: { children?: React.ReactNode }) => {
   const isMobile = useIsMobile();
+  const { closeSidebar } = useSidebar();
   const { systemConfig } = useData();
+  const location = useLocation();
+
+  // Close sidebar on mobile whenever the route changes
+  useEffect(() => {
+    if (isMobile) {
+      closeSidebar();
+    }
+  }, [location.pathname, isMobile, closeSidebar]);
 
   return (
     <div className="min-h-screen bg-gray-50 flex flex-col lg:flex-row">

@@ -94,53 +94,54 @@ service cloud.firestore {
     function isAdmin() {
       return isAuthenticated() &&
         (
-          (request.auth.token.email != null && request.auth.token.email.lower() == "vibecodeph@gmail.com") ||
+          (request.auth.token.email != null && (
+            request.auth.token.email.lower() == "vibecodeph@gmail.com" ||
+            request.auth.token.email.lower() == "eadelacruz@gmail.com" ||
+            request.auth.token.email.lower() == "freepinoy@gmail.com"
+          )) ||
           request.auth.uid == "9mpLVchwVTTI1AMrGtW8PGJkagx2" ||
           (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
-           get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin')
+           get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('role', '') == 'admin')
         );
     }
 
     function isApproved() {
       return isAuthenticated() && 
         (isAdmin() || 
-         (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.isApproved == true));
+         (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
+          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('isApproved', false) == true));
     }
 
     function isAssignedLocation(locationId) {
       return isApproved() && (
-        isAdmin() || 
+        isAdmin() ||
         isWarehouseman() ||
-        isEngineer() ||
-        isWorker() ||
-        locationId == 'in-transit' ||
-        locationId == null ||
-        locationId == "" ||
-        (exists(/databases/$(database)/documents/locations/$(locationId)) && get(/databases/$(database)/documents/locations/$(locationId)).data.type == 'system') ||
-        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
-         'assignedLocationIds' in get(/databases/$(database)/documents/users/$(request.auth.uid)).data &&
-         locationId in get(/databases/$(database)/documents/users/$(request.auth.uid)).data.assignedLocationIds)
+        (locationId == 'in-transit' || locationId == null || locationId == "") ||
+        (exists(/databases/$(database)/documents/locations/$(locationId)) && 
+         get(/databases/$(database)/documents/locations/$(locationId)).data.get('type', '') == 'system') ||
+        (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('role', '') in ['worker', 'engineer'] &&
+         locationId in get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('assignedLocationIds', []))
       );
     }
 
     function isManager() {
       return isAuthenticated() && 
-        ((exists(/databases/$(database)/documents/users/$(request.auth.uid)) && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'manager') || isAdmin());
+        ((exists(/databases/$(database)/documents/users/$(request.auth.uid)) && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('role', '') == 'manager') || isAdmin());
     }
 
     function isEngineer() {
       return isAuthenticated() && 
-        ((exists(/databases/$(database)/documents/users/$(request.auth.uid)) && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'engineer') || isManager());
+        ((exists(/databases/$(database)/documents/users/$(request.auth.uid)) && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('role', '') == 'engineer') || isManager());
     }
 
     function isWarehouseman() {
       return isAuthenticated() && 
-        ((exists(/databases/$(database)/documents/users/$(request.auth.uid)) && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'warehouseman') || isManager());
+        ((exists(/databases/$(database)/documents/users/$(request.auth.uid)) && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('role', '') == 'warehouseman') || isManager());
     }
 
     function isWorker() {
       return isAuthenticated() && 
-        ((exists(/databases/$(database)/documents/users/$(request.auth.uid)) && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'worker') || isEngineer() || isWarehouseman());
+        ((exists(/databases/$(database)/documents/users/$(request.auth.uid)) && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('role', '') == 'worker') || isEngineer() || isWarehouseman());
     }
 
     function hasRequiredFields(fields) {
@@ -148,7 +149,7 @@ service cloud.firestore {
     }
 
     function hasOnlyAllowedFields(fields) {
-      return request.resource.data.keys().hasOnly(fields);
+      return fields.hasAll(request.resource.data.keys());
     }
 
     function isValidString(field, minLen, maxLen) {
@@ -167,14 +168,13 @@ service cloud.firestore {
     // ===============================================================
 
     function isValidItem(data) {
-      return hasRequiredFields(['name', 'uomId', 'isTool', 'isActive']) &&
-             hasOnlyAllowedFields(['id', 'name', 'uomId', 'isTool', 'isActive', 'createdAt', 'updatedAt', 'description', 'categoryId', 'subcategoryId', 'tags', 'variantAttributes', 'requireVariant', 'averageCost', 'totalQuantity', 'reorderLevel', 'preferredSupplierId', 'variantConfigs', 'components', 'uomConversions']) &&
-             data.name is string && data.name.size() > 0 && data.name.size() <= 200 &&
+      return hasOnlyAllowedFields(['id', 'name', 'uomId', 'isTool', 'isActive', 'createdAt', 'updatedAt', 'createdBy', 'updatedBy', 'description', 'categoryId', 'subcategoryId', 'tags', 'variantAttributes', 'requireVariant', 'averageCost', 'totalQuantity', 'reorderLevel', 'preferredSupplierId', 'variantConfigs', 'components', 'uomConversions', 'requireCustomSpec', 'customSpecLabel']) &&
+             (!('name' in data) || (data.name is string && data.name.size() > 0 && data.name.size() <= 200)) &&
              (!('description' in data) || data.description == null || (data.description is string && data.description.size() <= 1000)) &&
-             data.uomId is string && data.uomId.size() <= 50 &&
-             data.isTool is bool &&
-             data.isActive is bool &&
-             (!('id' in data) || data.id is string) &&
+             (!('uomId' in data) || (data.uomId is string && data.uomId.size() <= 50)) &&
+             (!('isTool' in data) || data.isTool is bool) &&
+             (!('isActive' in data) || data.isActive is bool) &&
+             (!('id' in data) || (data.id is string && data.id.size() <= 100)) &&
              (!('categoryId' in data) || data.categoryId == null || data.categoryId == "" || (data.categoryId is string && data.categoryId.size() <= 50)) &&
              (!('subcategoryId' in data) || data.subcategoryId == null || data.subcategoryId == "" || (data.subcategoryId is string && data.subcategoryId.size() <= 50)) &&
              (!('tags' in data) || data.tags == null || (data.tags is list && data.tags.size() <= 100)) &&
@@ -187,8 +187,12 @@ service cloud.firestore {
              (!('variantConfigs' in data) || data.variantConfigs == null || (data.variantConfigs is list && data.variantConfigs.size() <= 200)) &&
              (!('components' in data) || data.components == null || (data.components is list && data.components.size() <= 100)) &&
              (!('uomConversions' in data) || data.uomConversions == null || (data.uomConversions is list && data.uomConversions.size() <= 50)) &&
+             (!('requireCustomSpec' in data) || data.requireCustomSpec is bool) &&
+             (!('customSpecLabel' in data) || data.customSpecLabel == null || data.customSpecLabel is string) &&
              (!('createdAt' in data) || data.createdAt is timestamp) &&
-             (!('updatedAt' in data) || data.updatedAt is timestamp);
+             (!('updatedAt' in data) || data.updatedAt is timestamp) &&
+             (!('createdBy' in data) || data.createdBy is string) &&
+             (!('updatedBy' in data) || data.updatedBy is string);
     }
 
     function isValidCategory(data) {
@@ -204,26 +208,41 @@ service cloud.firestore {
     }
 
     function isValidAsset(data) {
-      return hasRequiredFields(['id', 'itemId', 'locationId', 'updatedAt']) &&
-             data.id is string && data.id.size() <= 100 &&
-             data.itemId is string && data.itemId.size() <= 50 &&
-             data.locationId is string && data.locationId.size() <= 50 &&
+      return hasOnlyAllowedFields(['id', 'serialNumber', 'propertyNumber', 'itemId', 'variant', 'locationId', 'notes', 'updatedAt', 'status', 'createdBy', 'updatedBy', 'createdAt']) &&
+             (!('id' in data) || (data.id is string && data.id.size() <= 100)) &&
+             (!('serialNumber' in data) || data.serialNumber == null || data.serialNumber is string) &&
+             (!('propertyNumber' in data) || data.propertyNumber == null || data.propertyNumber is string) &&
+             (!('itemId' in data) || (data.itemId is string && data.itemId.size() <= 50)) &&
+             (!('variant' in data) || data.variant == null || data.variant is map) &&
+             (!('locationId' in data) || (data.locationId is string && data.locationId.size() <= 50)) &&
              (!('notes' in data) || (data.notes is string && data.notes.size() <= 500)) &&
-             data.updatedAt is timestamp;
+             (!('status' in data) || data.status in ['available', 'in-use', 'maintenance', 'broken', 'in-transit']) &&
+             (!('updatedAt' in data) || data.updatedAt is timestamp) &&
+             (!('createdAt' in data) || data.createdAt is timestamp) &&
+             (!('createdBy' in data) || data.createdBy is string) &&
+             (!('updatedBy' in data) || data.updatedBy is string);
     }
 
     function isValidInventory(data) {
-      return hasRequiredFields(['itemId', 'locationId', 'quantity']) &&
-             hasOnlyAllowedFields(['itemId', 'locationId', 'quantity', 'variant']) &&
-             data.itemId is string && data.itemId.size() <= 50 &&
-             data.locationId is string && data.locationId.size() <= 50 &&
-             data.quantity is number &&
-             (!('variant' in data) || data.variant == null || data.variant is map);
+      return hasOnlyAllowedFields(['id', 'itemId', 'locationId', 'quantity', 'variant', 'customSpec', 'serialNumber', 'propertyNumber', 'updatedAt', 'createdBy', 'updatedBy', 'status', 'createdAt']) &&
+             (!('itemId' in data) || (data.itemId is string && data.itemId.size() <= 50)) &&
+             (!('locationId' in data) || (data.locationId is string && data.locationId.size() <= 50)) &&
+             (!('quantity' in data) || data.quantity is number) &&
+             (!('id' in data) || data.id is string) &&
+             (!('variant' in data) || data.variant == null || data.variant is map) &&
+             (!('customSpec' in data) || data.customSpec == null || data.customSpec is string) &&
+             (!('serialNumber' in data) || data.serialNumber == null || data.serialNumber is string) &&
+             (!('propertyNumber' in data) || data.propertyNumber == null || data.propertyNumber is string) &&
+             (!('updatedAt' in data) || data.updatedAt is timestamp) &&
+             (!('createdAt' in data) || data.createdAt is timestamp) &&
+             (!('createdBy' in data) || data.createdBy is string) &&
+             (!('updatedBy' in data) || data.updatedBy is string) &&
+             (!('status' in data) || data.status is string);
     }
 
     function isValidTransaction(data) {
       return hasRequiredFields(['itemId', 'quantity', 'type', 'timestamp', 'userId', 'uomId']) &&
-             hasOnlyAllowedFields(['itemId', 'quantity', 'type', 'timestamp', 'userId', 'uomId', 'conversionFactor', 'baseQuantity', 'notes', 'fromLocationId', 'toLocationId', 'variant', 'serialNumber', 'propertyNumber', 'userName', 'totalPrice', 'unitPrice', 'poNumber', 'poId', 'supplierInvoice', 'supplierDR', 'batchId', 'requestIds']) &&
+             hasOnlyAllowedFields(['itemId', 'quantity', 'type', 'timestamp', 'userId', 'uomId', 'conversionFactor', 'baseQuantity', 'notes', 'fromLocationId', 'toLocationId', 'variant', 'customSpec', 'serialNumber', 'propertyNumber', 'userName', 'totalPrice', 'unitPrice', 'poNumber', 'poId', 'supplierInvoice', 'supplierDR', 'batchId', 'requestIds', 'updatedAt', 'createdBy', 'updatedBy', 'createdAt', 'status']) &&
              data.itemId is string && data.itemId.size() <= 50 &&
              data.quantity is number &&
              data.type in ['delivery', 'usage', 'return', 'adjustment', 'pick'] &&
@@ -236,6 +255,7 @@ service cloud.firestore {
              (!('fromLocationId' in data) || data.fromLocationId == null || (data.fromLocationId is string && data.fromLocationId.size() <= 50)) &&
              (!('toLocationId' in data) || data.toLocationId == null || (data.toLocationId is string && data.toLocationId.size() <= 50)) &&
              (!('variant' in data) || data.variant == null || data.variant is map) &&
+             (!('customSpec' in data) || data.customSpec == null || (data.customSpec is string && data.customSpec.size() <= 1000)) &&
              (!('serialNumber' in data) || data.serialNumber == null || (data.serialNumber is string && data.serialNumber.size() <= 100)) &&
              (!('propertyNumber' in data) || data.propertyNumber == null || (data.propertyNumber is string && data.propertyNumber.size() <= 100)) &&
              (!('userName' in data) || (data.userName is string && data.userName.size() <= 100)) &&
@@ -246,44 +266,56 @@ service cloud.firestore {
              (!('supplierInvoice' in data) || data.supplierInvoice == null || (data.supplierInvoice is string && data.supplierInvoice.size() <= 100)) &&
              (!('supplierDR' in data) || data.supplierDR == null || (data.supplierDR is string && data.supplierDR.size() <= 100)) &&
              (!('batchId' in data) || (data.batchId is string && data.batchId.size() <= 50)) &&
-             (!('requestIds' in data) || (data.requestIds is list && data.requestIds.size() <= 100));
+             (!('requestIds' in data) || (data.requestIds is list && data.requestIds.size() <= 100)) &&
+             (!('updatedAt' in data) || data.updatedAt is timestamp) &&
+             (!('createdAt' in data) || data.createdAt is timestamp) &&
+             (!('createdBy' in data) || data.createdBy is string) &&
+             (!('updatedBy' in data) || data.updatedBy is string) &&
+             (!('status' in data) || data.status is string);
     }
 
     function isValidUOM(data) {
       return hasRequiredFields(['name', 'symbol']) &&
+             hasOnlyAllowedFields(['id', 'name', 'symbol', 'baseUomId', 'conversionFactor', 'isActive']) &&
              data.name is string && data.name.size() > 0 && data.name.size() <= 50 &&
-             data.symbol is string && data.symbol.size() > 0 && data.symbol.size() <= 10;
+             data.symbol is string && data.symbol.size() > 0 && data.symbol.size() <= 10 &&
+             (!('isActive' in data) || data.isActive is bool);
     }
 
     function isValidUser(data) {
       return hasRequiredFields(['uid', 'email', 'role']) &&
-             hasOnlyAllowedFields(['uid', 'email', 'role', 'assignedLocationIds', 'isApproved', 'isActive', 'displayName', 'firstName', 'lastName', 'position', 'photoURL', 'skills', 'createdAt']) &&
+             hasOnlyAllowedFields(['uid', 'email', 'role', 'assignedLocationIds', 'isApproved', 'isActive', 'displayName', 'firstName', 'lastName', 'position', 'photoURL', 'skills', 'createdAt', 'updatedAt', 'updatedBy']) &&
              isValidEmail(data.email) &&
              data.role in ['admin', 'manager', 'worker', 'engineer', 'warehouseman'] &&
-             (!('assignedLocationIds' in data) || (data.assignedLocationIds is list && data.assignedLocationIds.size() <= 30)) &&
-             (!('isApproved' in data) || data.isApproved is bool) &&
-             (!('isActive' in data) || data.isActive is bool) &&
-             (!('displayName' in data) || (data.displayName is string && data.displayName.size() <= 100)) &&
-             (!('firstName' in data) || (data.firstName is string && data.firstName.size() <= 50)) &&
-             (!('lastName' in data) || (data.lastName is string && data.lastName.size() <= 50)) &&
-             (!('position' in data) || (data.position is string && data.position.size() <= 100)) &&
-             (!('photoURL' in data) || (data.photoURL is string && data.photoURL.size() <= 1000)) &&
-             (!('skills' in data) || (data.skills is list && data.skills.size() <= 50)) &&
-             (!('createdAt' in data) || data.createdAt is timestamp);
+             (!('assignedLocationIds' in data) || data.assignedLocationIds == null || data.assignedLocationIds is list) &&
+             (!('isApproved' in data) || data.isApproved == null || data.isApproved is bool) &&
+             (!('isActive' in data) || data.isActive == null || data.isActive is bool) &&
+             (!('displayName' in data) || data.displayName == null || data.displayName is string) &&
+             (!('firstName' in data) || data.firstName == null || data.firstName is string) &&
+             (!('lastName' in data) || data.lastName == null || data.lastName is string) &&
+             (!('position' in data) || data.position == null || data.position is string) &&
+             (!('photoURL' in data) || data.photoURL == null || data.photoURL is string) &&
+             (!('skills' in data) || data.skills == null || data.skills is list) &&
+             (!('createdAt' in data) || data.createdAt == null || data.createdAt is timestamp) &&
+             (!('updatedAt' in data) || data.updatedAt == null || data.updatedAt is timestamp) &&
+             (!('updatedBy' in data) || data.updatedBy == null || data.updatedBy is string);
     }
 
     function isValidRequest(data) {
-      return hasRequiredFields(['itemId', 'requestedQty', 'uomId', 'jobsiteId', 'status', 'requestorId', 'timestamp']) &&
-             data.itemId is string && data.itemId.size() <= 50 &&
-             data.requestedQty is number &&
-             data.uomId is string && data.uomId.size() <= 50 &&
-             data.jobsiteId is string && data.jobsiteId.size() <= 50 &&
-             data.status in ['pending', 'approved', 'for delivery', 'delivered', 'rejected'] &&
-             data.timestamp is timestamp &&
+      return hasOnlyAllowedFields(['id', 'itemId', 'variant', 'customSpec', 'requestedQty', 'approvedQty', 'deliveredQty', 'uomId', 'jobsiteId', 'sourceLocationId', 'status', 'requestorId', 'requestorName', 'approverId', 'approverName', 'warehousemanId', 'warehousemanName', 'workerNote', 'engineerNote', 'adminNote', 'receiverId', 'receiverName', 'timestamp', 'approvedAt', 'deliveredAt', 'backorderOf', 'batchId', 'serialNumbers', 'updatedAt', 'createdBy', 'updatedBy', 'createdAt', 'pickedAt']) &&
+             (!('itemId' in data) || (data.itemId is string && data.itemId.size() <= 50)) &&
+             (!('requestedQty' in data) || data.requestedQty is number) &&
+             (!('uomId' in data) || (data.uomId is string && data.uomId.size() <= 50)) &&
+             (!('jobsiteId' in data) || (data.jobsiteId is string && data.jobsiteId.size() <= 50)) &&
+             (!('status' in data) || data.status in ['pending', 'approved', 'for delivery', 'delivered', 'rejected']) &&
+             (!('timestamp' in data) || data.timestamp is timestamp) &&
+             (!('requestorId' in data) || (data.requestorId is string && data.requestorId.size() <= 50)) &&
              (!('approvedQty' in data) || data.approvedQty == null || data.approvedQty is number) &&
              (!('deliveredQty' in data) || data.deliveredQty == null || data.deliveredQty is number) &&
              (!('workerNote' in data) || data.workerNote == null || (data.workerNote is string && data.workerNote.size() <= 1000)) &&
              (!('adminNote' in data) || data.adminNote == null || (data.adminNote is string && data.adminNote.size() <= 1000)) &&
+             (!('engineerNote' in data) || data.engineerNote == null || (data.engineerNote is string && data.engineerNote.size() <= 1000)) &&
+             (!('customSpec' in data) || data.customSpec == null || (data.customSpec is string && data.customSpec.size() <= 1000)) &&
              (!('deliveredAt' in data) || data.deliveredAt == null || data.deliveredAt is timestamp) &&
              (!('receiverId' in data) || data.receiverId == null || (data.receiverId is string && data.receiverId.size() <= 50)) &&
              (!('receiverName' in data) || data.receiverName == null || (data.receiverName is string && data.receiverName.size() <= 100)) &&
@@ -297,7 +329,12 @@ service cloud.firestore {
              (!('approverId' in data) || data.approverId == null || (data.approverId is string && data.approverId.size() <= 50)) &&
              (!('approverName' in data) || data.approverName == null || (data.approverName is string && data.approverName.size() <= 100)) &&
              (!('approvedAt' in data) || data.approvedAt == null || data.approvedAt is timestamp) &&
-             (!('requestorName' in data) || data.requestorName == null || (data.requestorName is string && data.requestorName.size() <= 100));
+             (!('requestorName' in data) || data.requestorName == null || (data.requestorName is string && data.requestorName.size() <= 100)) &&
+             (!('serialNumbers' in data) || data.serialNumbers == null || (data.serialNumbers is list && data.serialNumbers.size() <= 500)) &&
+             (!('updatedAt' in data) || data.updatedAt is timestamp) &&
+             (!('updatedBy' in data) || data.updatedBy is string) &&
+             (!('createdAt' in data) || data.createdAt is timestamp) &&
+             (!('createdBy' in data) || data.createdBy is string);
     }
 
     function isValidBOQItem(data) {
@@ -367,17 +404,14 @@ service cloud.firestore {
 
     match /items/{itemId} {
       allow read: if isApproved();
-      allow create: if isAdmin() && isValidItem(request.resource.data) && hasRequiredFields(['createdAt']);
-      allow update: if isAdmin() || 
-                      (isApproved() && 
-                       isValidItem(request.resource.data) &&
-                       request.resource.data.diff(resource.data).affectedKeys().hasOnly(['averageCost', 'totalQuantity', 'updatedAt']));
+      allow create: if isAdmin() && hasRequiredFields(['id', 'name', 'uomId', 'isTool', 'isActive', 'createdAt']) && isValidItem(request.resource.data);
+      allow update: if isAdmin() || (isApproved() && isValidItem(request.resource.data) && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['averageCost', 'totalQuantity', 'updatedAt', 'updatedBy']));
       allow delete: if isAdmin();
     }
 
     match /categories/{categoryId} {
       allow read: if isApproved();
-      allow create, update: if isApproved() && isWarehouseman() && isValidCategory(request.resource.data);
+      allow create, update: if isAdmin() && isValidCategory(request.resource.data);
       allow delete: if isAdmin();
     }
 
@@ -388,60 +422,77 @@ service cloud.firestore {
     }
 
     match /assets/{assetId} {
-      allow read: if isApproved() && (isWorker() || isAssignedLocation(resource.data.locationId));
-      allow create, update: if isApproved() && isAssignedLocation(request.resource.data.locationId) && isValidAsset(request.resource.data);
+      allow read: if isApproved();
+      allow create, update: if isApproved() && (isAdmin() || isWarehouseman() || isEngineer()) && isAssignedLocation(request.resource.data.locationId) && isValidAsset(request.resource.data);
       allow delete: if isAdmin();
     }
 
     match /inventory/{inventoryId} {
-      allow read: if isApproved() && (isWorker() || isAssignedLocation(resource.data.locationId));
+      allow read: if isApproved();
       // Inventory is updated via transactions in the app, but rules must allow the write
-      allow create, update: if isApproved() && isAssignedLocation(request.resource.data.locationId) && isValidInventory(request.resource.data);
+      allow create: if isApproved() && (isAdmin() || isWarehouseman() || isEngineer()) && isAssignedLocation(request.resource.data.locationId) && hasRequiredFields(['itemId', 'locationId', 'quantity']) && isValidInventory(request.resource.data);
+      allow update: if isApproved() && (isAdmin() || isWarehouseman() || isEngineer()) && isAssignedLocation(request.resource.data.locationId) && isValidInventory(request.resource.data);
       allow delete: if isAdmin();
     }
 
     match /transactions/{transactionId} {
-      allow read: if isApproved() && (
-        isWorker() ||
-        isAdmin() ||
-        (resource.data.fromLocationId != null && isAssignedLocation(resource.data.fromLocationId)) ||
-        (resource.data.toLocationId != null && isAssignedLocation(resource.data.toLocationId))
-      );
-      allow create: if isApproved() && (
-        (!('fromLocationId' in request.resource.data) || isAssignedLocation(request.resource.data.fromLocationId)) &&
-        (!('toLocationId' in request.resource.data) || isAssignedLocation(request.resource.data.toLocationId))
-      ) && isValidTransaction(request.resource.data);
+      allow read: if isApproved();
+      allow create: if isApproved() && isValidTransaction(request.resource.data);
       allow update, delete: if isAdmin();
     }
 
     match /uoms/{uomId} {
       allow read: if isApproved();
-      allow create, update: if isApproved() && isWarehouseman() && isValidUOM(request.resource.data);
+      allow create, update: if isAdmin() && isValidUOM(request.resource.data);
       allow delete: if isAdmin();
     }
 
     match /tags/{tagId} {
       allow read: if isApproved();
-      allow create, update: if isApproved() && isWarehouseman();
+      allow create, update: if isAdmin();
       allow delete: if isAdmin();
     }
 
     match /users/{userId} {
-      allow read: if isAdmin() || isOwner(userId);
+      allow read: if isAuthenticated() && (isAdmin() || isOwner(userId) || (isEngineer() && (resource == null || (resource.data.role == 'worker' && resource.data.get('isActive', true) == true))));
       allow create: if isAuthenticated() && isOwner(userId) && isValidUser(request.resource.data) && 
         request.resource.data.uid == request.auth.uid &&
-        request.resource.data.isApproved == false &&
-        (request.resource.data.role in ['engineer', 'worker', 'warehouseman'] || (request.resource.data.role == 'admin' && request.auth.token.email == "vibecodeph@gmail.com"));
-      allow update: if isAdmin() && isValidUser(request.resource.data);
+        (
+          (request.resource.data.get('isApproved', false) == false) ||
+          (request.resource.data.role == 'admin' && isAdmin())
+        ) &&
+        (request.resource.data.role in ['engineer', 'worker', 'warehouseman'] || (request.resource.data.role == 'admin' && isAdmin()));
+      allow update: if isAdmin() || 
+                    (isOwner(userId) && 
+                     isValidUser(request.resource.data) &&
+                     // Owners cannot change their own role, approval status, activity status, or assigned locations
+                     request.resource.data.role == resource.data.role &&
+                     request.resource.data.get('isApproved', false) == resource.data.get('isApproved', false) &&
+                     request.resource.data.get('isActive', false) == resource.data.get('isActive', false) &&
+                     request.resource.data.get('assignedLocationIds', []) == resource.data.get('assignedLocationIds', [])
+                    ) ||
+                    (isEngineer() && 
+                     userId != request.auth.uid && // Engineers cannot edit themselves through this rule
+                     resource.data.role == 'worker' && // Engineers can only edit workers
+                     isValidUser(request.resource.data) &&
+                     request.resource.data.diff(resource.data).affectedKeys().hasOnly(['assignedLocationIds', 'updatedAt', 'updatedBy']) &&
+                     // Ensure locations outside the engineer's scope are unchanged
+                     request.resource.data.get('assignedLocationIds', []).removeAll(get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('assignedLocationIds', [])) == 
+                     resource.data.get('assignedLocationIds', []).removeAll(get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('assignedLocationIds', []))
+                    );
     }
 
     match /requests/{requestId} {
       allow read: if isApproved() && (isWorker() || isAdmin() || isWarehouseman() || isEngineer() || isOwner(resource.data.requestorId) || isAssignedLocation(resource.data.jobsiteId));
-      allow create: if isWorker() && isApproved() && isValidRequest(request.resource.data) && request.resource.data.requestorId == request.auth.uid;
-      allow update: if isApproved() && isValidRequest(request.resource.data) && (
-                     (isEngineer() && request.resource.data.status in ['approved', 'rejected', 'delivered']) ||
-                     (isWarehouseman() && request.resource.data.status in ['for delivery', 'delivered']) ||
-                     (isWorker() && request.resource.data.status == 'delivered') ||
+      allow create: if isApproved() && (
+                      (isWorker() && request.resource.data.status == 'pending' && request.resource.data.requestorId == request.auth.uid) ||
+                      ((isEngineer() || isAdmin() || isManager()) && (request.resource.data.status == 'pending' || (request.resource.data.status == 'approved')) && request.resource.data.requestorId == request.auth.uid) ||
+                      ((isWarehouseman() || isEngineer() || isAdmin()) && 'backorderOf' in request.resource.data)
+                    ) && hasRequiredFields(['itemId', 'requestedQty', 'uomId', 'jobsiteId', 'status', 'requestorId', 'timestamp']) && isValidRequest(request.resource.data);
+      allow update: if isApproved() && (
+                     (isEngineer() && (request.resource.data.get('status', resource.data.status) in ['approved', 'rejected', 'for delivery', 'delivered', 'received'])) ||
+                     (isWarehouseman() && (request.resource.data.get('status', resource.data.status) in ['approved', 'rejected', 'for delivery', 'delivered', 'received'])) ||
+                     (isWorker() && request.resource.data.get('status', resource.data.status) in ['delivered', 'received']) ||
                      (isOwner(resource.data.requestorId) && resource.data.status == 'pending')
                    );
       allow delete: if isAdmin();
@@ -463,7 +514,7 @@ service cloud.firestore {
 
     match /counters/{counterId} {
       allow read: if isApproved();
-      allow write: if isApproved() && (isWarehouseman() || isAdmin());
+      allow write: if isApproved();
     }
 
     match /system/{configId} {

@@ -17,11 +17,39 @@ export const UsersManagementView = () => {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [showInactiveLocations, setShowInactiveLocations] = useState(false);
 
-  if (profile?.role !== 'admin') {
+  const isEngineer = profile?.role === 'engineer';
+  const isAdmin = profile?.role === 'admin';
+
+  if (!isAdmin && !isEngineer) {
     return <Navigate to="/settings" />;
   }
 
-  const filteredLocations = locations.filter(l => showInactiveLocations || l.isActive);
+  const displayUsers = users.filter(u => {
+    if (isAdmin) return true;
+    
+    const isSelf = u.uid === profile?.uid;
+    if (isSelf) return true;
+
+    // For non-admins (e.g. Engineers), filter out inactive users
+    if (!u.isActive) return false;
+
+    // Engineers only see workers
+    if (isEngineer && u.role !== 'worker') return false;
+
+    return true;
+  });
+
+  const sortedUsers = [...displayUsers].sort((a, b) => 
+    (a.displayName || a.email || '').localeCompare(b.displayName || b.email || '')
+  );
+
+  const filteredLocations = locations.filter(l => {
+    const baseFilter = showInactiveLocations || l.isActive;
+    if (isEngineer) {
+      return baseFilter && profile?.assignedLocationIds?.includes(l.id);
+    }
+    return baseFilter;
+  });
   const sortedLocations = [...filteredLocations].sort((a, b) => a.name.localeCompare(b.name));
   
   const groupedLocations = sortedLocations.reduce((acc, loc) => {
@@ -30,42 +58,73 @@ export const UsersManagementView = () => {
     return acc;
   }, {} as Record<string, Location[]>);
 
+  const roleOrder: UserRole[] = ['admin', 'manager', 'engineer', 'warehouseman', 'worker'];
+
+  const groupedUsers = roleOrder.reduce((acc, role) => {
+    const usersInRole = sortedUsers.filter(u => u.role === role);
+    if (usersInRole.length > 0) {
+      acc[role] = usersInRole;
+    }
+    return acc;
+  }, {} as Record<string, UserProfile[]>);
+
+  // Add a group for users with no role or roles not in roleOrder
+  const otherUsers = sortedUsers.filter(u => !u.role || !roleOrder.includes(u.role));
+  if (otherUsers.length > 0) {
+    groupedUsers['others'] = otherUsers;
+  }
+
   return (
     <div className="pb-20">
-      <Header title="User Management" showBack />
-      <div className="p-4 space-y-4">
-        <div className="space-y-2">
-          {users.map((user) => (
-            <div key={user.uid}>
-              <Card 
-                onClick={() => setEditingUser(user)}
-                className="p-4 flex items-center justify-between bg-white active:bg-gray-50 transition-colors cursor-pointer"
-              >
-                <div className="flex items-center space-x-3">
-                  <div className="w-10 h-10 rounded-xl bg-gray-100 flex items-center justify-center text-gray-500 font-bold overflow-hidden">
-                    {user.photoURL ? (
-                      <img src={user.photoURL} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
-                    ) : (
-                      user.displayName?.[0] || user.email?.[0]?.toUpperCase() || '?'
-                    )}
-                  </div>
-                  <div>
-                    <div className="flex items-center space-x-2">
-                      <h4 className="text-sm font-bold text-gray-900">{user.displayName || 'User'}</h4>
-                      {!user.isActive && (
-                        <span className="text-[8px] px-1.5 py-0.5 bg-orange-100 text-orange-600 rounded-full font-black uppercase tracking-widest">Pending</span>
-                      )}
+      <Header title="Team Management" showBack />
+      <div className="p-4 space-y-6">
+        {Object.entries(groupedUsers).map(([role, roleUsers]) => (
+          <div key={role} className="space-y-2">
+            <h3 className="text-[10px] font-black text-gray-400 uppercase tracking-[0.2em] px-2 mb-3 border-b border-gray-100 pb-2">
+              {role.replace('_', ' ')}s ({roleUsers.length})
+            </h3>
+            <div className="space-y-2">
+              {roleUsers.map((user) => (
+                <div key={user.uid}>
+                  <Card 
+                    onClick={() => setEditingUser(user)}
+                    className="p-4 flex items-center justify-between bg-white active:bg-gray-50 transition-colors cursor-pointer"
+                  >
+                    <div className="flex items-center space-x-3">
+                      <div className="w-10 h-10 rounded-xl bg-gray-100 flex items-center justify-center text-gray-500 font-bold overflow-hidden">
+                        {user.photoURL ? (
+                          <img src={user.photoURL} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                        ) : (
+                          user.displayName?.[0] || user.email?.[0]?.toUpperCase() || '?'
+                        )}
+                      </div>
+                      <div>
+                        <div className="flex items-center space-x-2">
+                          <h4 className="text-sm font-bold text-gray-900">{user.displayName || 'User'}</h4>
+                          {!user.isActive && (
+                            <span className="text-[8px] px-1.5 py-0.5 bg-orange-100 text-orange-600 rounded-full font-black uppercase tracking-widest">Inactive</span>
+                          )}
+                        </div>
+                        <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest leading-relaxed">
+                          {
+                            (user.assignedLocationIds || [])
+                              .map(id => locations.find(l => l.id === id)?.name)
+                              .filter(Boolean)
+                              .join(', ') || 'No Locations'
+                          }
+                          {isEngineer && user.assignedLocationIds?.some(id => profile?.assignedLocationIds?.includes(id)) && (
+                            <span className="ml-2 text-blue-600 font-black">✓ ON TEAM</span>
+                          )}
+                        </p>
+                      </div>
                     </div>
-                    <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">
-                      {user.email} • {user.role?.replace('_', ' ') || 'No Role'} • {user.assignedLocationIds?.length || 0} Locations
-                    </p>
-                  </div>
+                    <ChevronRight size={16} className="text-gray-300" />
+                  </Card>
                 </div>
-                <ChevronRight size={16} className="text-gray-300" />
-              </Card>
+              ))}
             </div>
-          ))}
-        </div>
+          </div>
+        ))}
 
         <Modal 
           isOpen={!!editingUser} 
@@ -78,29 +137,41 @@ export const UsersManagementView = () => {
               setIsSubmitting(true);
               try {
                 const formData = new FormData(e.currentTarget);
-                const role = formData.get('role') as UserRole;
                 const assignedLocationIds = Array.from(formData.getAll('locations')) as string[];
-                const firstName = formData.get('firstName') as string;
-                const lastName = formData.get('lastName') as string;
-                const position = formData.get('position') as string;
-                const photoURL = formData.get('photoURL') as string;
-                const skills = (formData.get('skills') as string).split(',').map(s => s.trim()).filter(Boolean);
-                const displayName = `${firstName} ${lastName}`.trim() || editingUser.email.split('@')[0];
                 
-                const isActive = formData.get('isActive') === 'on';
-                
-                await updateUserProfile(editingUser.uid, { 
-                  role, 
-                  assignedLocationIds,
-                  isActive,
-                  isApproved: isActive, // Keep in sync for now
-                  firstName,
-                  lastName,
-                  position,
-                  photoURL,
-                  skills,
-                  displayName
-                });
+                if (isEngineer) {
+                  // If engineer, only update assignedLocationIds
+                  // We must merge with existing locations that are NOT in the engineer's scope
+                  const engineerScope = profile?.assignedLocationIds || [];
+                  const otherLocations = (editingUser.assignedLocationIds || []).filter(id => !engineerScope.includes(id));
+                  const finalLocations = [...new Set([...otherLocations, ...assignedLocationIds])];
+                  
+                  await updateUserProfile(editingUser.uid, { 
+                    assignedLocationIds: finalLocations
+                  });
+                } else {
+                  const role = formData.get('role') as UserRole;
+                  const firstName = formData.get('firstName') as string;
+                  const lastName = formData.get('lastName') as string;
+                  const position = formData.get('position') as string;
+                  const photoURL = formData.get('photoURL') as string;
+                  const skills = (formData.get('skills') as string).split(',').map(s => s.trim()).filter(Boolean);
+                  const displayName = `${firstName} ${lastName}`.trim() || editingUser.email.split('@')[0];
+                  const isActive = formData.get('isActive') === 'on';
+
+                  await updateUserProfile(editingUser.uid, { 
+                    role, 
+                    assignedLocationIds,
+                    isActive,
+                    isApproved: isActive,
+                    firstName,
+                    lastName,
+                    position,
+                    photoURL,
+                    skills,
+                    displayName
+                  });
+                }
                 setEditingUser(null);
               } catch (error) {
                 console.error(error);
@@ -121,7 +192,8 @@ export const UsersManagementView = () => {
                   <input 
                     name="firstName" 
                     defaultValue={editingUser.firstName}
-                    className="w-full p-4 bg-gray-100 rounded-2xl text-sm font-medium outline-none focus:ring-2 focus:ring-blue-500"
+                    disabled={isEngineer}
+                    className="w-full p-4 bg-gray-100 rounded-2xl text-sm font-medium outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50"
                   />
                 </div>
                 <div className="space-y-1">
@@ -129,7 +201,8 @@ export const UsersManagementView = () => {
                   <input 
                     name="lastName" 
                     defaultValue={editingUser.lastName}
-                    className="w-full p-4 bg-gray-100 rounded-2xl text-sm font-medium outline-none focus:ring-2 focus:ring-blue-500"
+                    disabled={isEngineer}
+                    className="w-full p-4 bg-gray-100 rounded-2xl text-sm font-medium outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50"
                   />
                 </div>
               </div>
@@ -139,7 +212,8 @@ export const UsersManagementView = () => {
                 <input 
                   name="position" 
                   defaultValue={editingUser.position}
-                  className="w-full p-4 bg-gray-100 rounded-2xl text-sm font-medium outline-none focus:ring-2 focus:ring-blue-500"
+                  disabled={isEngineer}
+                  className="w-full p-4 bg-gray-100 rounded-2xl text-sm font-medium outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50"
                 />
               </div>
 
@@ -148,7 +222,8 @@ export const UsersManagementView = () => {
                 <input 
                   name="photoURL" 
                   defaultValue={editingUser.photoURL}
-                  className="w-full p-4 bg-gray-100 rounded-2xl text-sm font-medium outline-none focus:ring-2 focus:ring-blue-500"
+                  disabled={isEngineer}
+                  className="w-full p-4 bg-gray-100 rounded-2xl text-sm font-medium outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50"
                 />
               </div>
 
@@ -157,7 +232,8 @@ export const UsersManagementView = () => {
                 <textarea 
                   name="skills" 
                   defaultValue={editingUser.skills?.join(', ')}
-                  className="w-full p-4 bg-gray-100 rounded-2xl text-sm font-medium outline-none focus:ring-2 focus:ring-blue-500 min-h-[80px]"
+                  disabled={isEngineer}
+                  className="w-full p-4 bg-gray-100 rounded-2xl text-sm font-medium outline-none focus:ring-2 focus:ring-blue-500 min-h-[80px] disabled:opacity-50"
                 />
               </div>
 
@@ -166,7 +242,8 @@ export const UsersManagementView = () => {
                 <select 
                   name="role" 
                   defaultValue={editingUser.role}
-                  className="w-full p-4 bg-gray-100 rounded-2xl text-sm font-medium outline-none focus:ring-2 focus:ring-blue-500 appearance-none"
+                  disabled={isEngineer}
+                  className="w-full p-4 bg-gray-100 rounded-2xl text-sm font-medium outline-none focus:ring-2 focus:ring-blue-500 appearance-none disabled:opacity-50"
                 >
                   <option value="worker">Worker</option>
                   <option value="engineer">Engineer</option>
@@ -176,18 +253,20 @@ export const UsersManagementView = () => {
                 </select>
               </div>
 
-              <div className="flex items-center justify-between p-4 bg-gray-50 rounded-2xl border border-gray-100">
-                <div>
-                  <p className="text-sm font-bold text-gray-900">Approved Access</p>
-                  <p className="text-[10px] text-gray-500 font-medium">Allow user to access the application</p>
+              {!isEngineer && (
+                <div className="flex items-center justify-between p-4 bg-gray-50 rounded-2xl border border-gray-100">
+                  <div>
+                    <p className="text-sm font-bold text-gray-900">Approved Access</p>
+                    <p className="text-[10px] text-gray-500 font-medium">Allow user to access the application</p>
+                  </div>
+                  <input 
+                    type="checkbox" 
+                    name="isActive" 
+                    defaultChecked={editingUser.isActive}
+                    className="w-6 h-6 rounded-lg border-gray-300 text-blue-600 focus:ring-blue-500"
+                  />
                 </div>
-                <input 
-                  type="checkbox" 
-                  name="isActive" 
-                  defaultChecked={editingUser.isActive}
-                  className="w-6 h-6 rounded-lg border-gray-300 text-blue-600 focus:ring-blue-500"
-                />
-              </div>
+              )}
 
               <div className="space-y-3">
                 <div className="flex items-center justify-between px-1">

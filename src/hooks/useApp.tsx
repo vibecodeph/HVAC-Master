@@ -21,9 +21,10 @@ export const SidebarContext = createContext<SidebarContextType | undefined>(unde
 
 export const SidebarProvider = ({ children }: { children: React.ReactNode }) => {
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
-  const toggleSidebar = () => setIsSidebarOpen(!isSidebarOpen);
-  const openSidebar = () => setIsSidebarOpen(true);
-  const closeSidebar = () => setIsSidebarOpen(false);
+  
+  const toggleSidebar = React.useCallback(() => setIsSidebarOpen(prev => !prev), []);
+  const openSidebar = React.useCallback(() => setIsSidebarOpen(true), []);
+  const closeSidebar = React.useCallback(() => setIsSidebarOpen(false), []);
 
   return (
     <SidebarContext.Provider value={{ isSidebarOpen, toggleSidebar, openSidebar, closeSidebar }}>

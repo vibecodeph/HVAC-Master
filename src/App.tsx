@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate, useLocation } from 'react-router-dom';
-import { onAuthStateChanged, User, signInWithPopup, GoogleAuthProvider, signOut } from 'firebase/auth';
+import { onAuthStateChanged, User, signInWithPopup, signInWithRedirect, GoogleAuthProvider, signOut, getRedirectResult } from 'firebase/auth';
 import { onSnapshot, collection, query, where, getDocs, doc, setDoc, serverTimestamp, getDoc } from 'firebase/firestore';
 import { ArrowLeftRight } from 'lucide-react';
 import { auth, db, handleFirestoreError, OperationType } from './firebase';
@@ -99,7 +99,7 @@ interface AuthContextType {
   loading: boolean;
   isSigningIn: boolean;
   authError: string | null;
-  signIn: () => Promise<void>;
+  signIn: (method?: 'popup' | 'redirect') => Promise<void>;
   logout: () => Promise<void>;
 }
 
@@ -109,7 +109,7 @@ const AuthContext = createContext<AuthContextType>({
   loading: true,
   isSigningIn: false,
   authError: null,
-  signIn: async () => {},
+  signIn: async (method?: 'popup' | 'redirect') => {},
   logout: async () => {}
 });
 export const useAuth = () => useContext(AuthContext);
@@ -150,27 +150,28 @@ const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   const [isSigningIn, setIsSigningIn] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
 
-  const signIn = async () => {
+  const signIn = async (method: 'popup' | 'redirect' = 'popup') => {
     if (isSigningIn) return;
     setIsSigningIn(true);
     setAuthError(null);
     try {
       const provider = new GoogleAuthProvider();
-      // Add custom parameters to force account selection if needed
-      provider.setCustomParameters({ prompt: 'select_account' });
       
-      await signInWithPopup(auth, provider);
+      if (method === 'popup') {
+        const result = await signInWithPopup(auth, provider);
+        setUser(result.user);
+      } else {
+        await signInWithRedirect(auth, provider);
+      }
     } catch (error: any) {
       console.error('Sign in error:', error);
-      if (error.code === 'auth/popup-closed-by-user') {
-        setAuthError('The sign-in popup was closed before completion. Please try again and keep the popup open until finished.');
-      } else if (error.code === 'auth/blocked-at-interaction') {
-        setAuthError('The sign-in popup was blocked by your browser. Please allow popups for this site in your browser settings.');
-      } else if (error.code === 'auth/popup-blocked') {
-        setAuthError('Sign-in popup was blocked. Please enable popups for this website.');
-      } else if (error.code === 'auth/cancelled-popup-request') {
-        // This happens if another popup request is made before the first one is finished
-        setAuthError('A sign-in request is already in progress. Please wait.');
+      const isPopupClosed = error.code === 'auth/popup-closed-by-user' || error.message?.includes('popup-closed-by-user');
+      const isPopupBlocked = error.code === 'auth/popup-blocked' || error.code === 'auth/blocked-at-interaction' || error.message?.includes('popup-blocked');
+      
+      if (isPopupClosed) {
+        setAuthError('Sign-in was cancelled.');
+      } else if (isPopupBlocked) {
+        setAuthError('The sign-in popup was blocked. Please enable popups for this site or try the "Redirect" method below.');
       } else {
         setAuthError(error.message || 'An error occurred during sign-in. Please try again.');
       }
@@ -184,48 +185,62 @@ const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   };
 
   useEffect(() => {
-    return onAuthStateChanged(auth, async (u) => {
-      try {
-        setUser(u);
-        if (u) {
-          const userDoc = await getDoc(doc(db, 'users', u.uid));
-          const isAdmin = u.email === 'vibecodeph@gmail.com';
-          
-          if (userDoc.exists()) {
-            const data = userDoc.data() as UserProfile;
-            // Auto-activate admin if they are the admin email but not active
-            if (isAdmin && !data.isActive) {
-              const updatedProfile = { ...data, isActive: true, isApproved: true, role: 'admin' as const };
-              await setDoc(doc(db, 'users', u.uid), updatedProfile, { merge: true });
-              setProfile(updatedProfile);
-            } else {
-              setProfile(data);
-            }
-          } else {
-            // Create default profile for new users
-            const newProfile: UserProfile = {
-              uid: u.uid,
-              email: u.email || '',
-              displayName: u.displayName || 'New User',
-              photoURL: u.photoURL || '',
-              role: isAdmin ? 'admin' : 'worker',
-              isActive: isAdmin, // Admins are active by default
-              isApproved: isAdmin, // Admins are approved by default
-              createdAt: serverTimestamp() as any,
-            };
-            await setDoc(doc(db, 'users', u.uid), newProfile);
-            setProfile(newProfile);
-          }
-        } else {
-          setProfile(null);
-        }
-      } catch (error) {
-        console.error('Auth state change error:', error);
-      } finally {
+    getRedirectResult(auth).catch((error) => {
+      console.error('Redirect result error:', error);
+      setAuthError(error.message);
+    });
+  }, []);
+
+  useEffect(() => {
+    const unsubAuth = onAuthStateChanged(auth, (u) => {
+      setUser(u);
+      if (!u) {
+        setProfile(null);
         setLoading(false);
       }
     });
+    return () => unsubAuth();
   }, []);
+
+  useEffect(() => {
+    if (!user) return;
+
+    const unsubProfile = onSnapshot(doc(db, 'users', user.uid), async (userDoc) => {
+      const isAdmin = user.email === 'vibecodeph@gmail.com';
+      
+      if (userDoc.exists()) {
+        const data = userDoc.data() as UserProfile;
+        // Auto-activate admin if they are the admin email but not active
+        if (isAdmin && !data.isActive) {
+          const updatedProfile = { ...data, isActive: true, isApproved: true, role: 'admin' as const };
+          await setDoc(doc(db, 'users', user.uid), updatedProfile, { merge: true });
+          setProfile(updatedProfile);
+        } else {
+          setProfile(data);
+        }
+      } else {
+        // Create default profile for new users
+        const newProfile: UserProfile = {
+          uid: user.uid,
+          email: user.email || '',
+          displayName: user.displayName || 'New User',
+          photoURL: user.photoURL || '',
+          role: isAdmin ? 'admin' : 'worker',
+          isActive: isAdmin, // Admins are active by default
+          isApproved: isAdmin, // Admins are approved by default
+          createdAt: serverTimestamp() as any,
+        };
+        await setDoc(doc(db, 'users', user.uid), newProfile);
+        setProfile(newProfile);
+      }
+      setLoading(false);
+    }, (err) => {
+      console.error('Profile listener error:', err);
+      setLoading(false);
+    });
+
+    return () => unsubProfile();
+  }, [user]);
 
   return (
     <AuthContext.Provider value={{ user, profile, loading, isSigningIn, authError, signIn, logout }}>
@@ -254,7 +269,7 @@ const DataProvider = ({ children }: { children: React.ReactNode }) => {
         'transactions', 'requests', 'assets', 'boq', 'unplanned', 
         'tags', 'purchase_orders'
       );
-      if (profile.role === 'admin') {
+      if (profile.role === 'admin' || profile.role === 'engineer') {
         collectionsToLoad.push('users');
       }
     }
@@ -312,7 +327,7 @@ const DataProvider = ({ children }: { children: React.ReactNode }) => {
       safeSubscribe('inventory', subscribeToInventory, assigned),
       safeSubscribe('transactions', subscribeToTransactions, assigned),
       safeSubscribe('requests', subscribeToRequests, assigned),
-      profile?.role === 'admin' ? safeSubscribe('users', subscribeToUsers) : () => {},
+      (profile?.role === 'admin' || profile?.role === 'engineer') ? safeSubscribe('users', subscribeToUsers, profile.role) : () => {},
       safeSubscribe('assets', subscribeToAssets, assigned),
       safeSubscribe('boq', subscribeToBOQs, assigned),
       safeSubscribe('unplanned', subscribeToUnplannedStock, assigned),
@@ -348,7 +363,7 @@ const ProtectedRoute = ({ children, requireAdmin }: { children: React.ReactNode,
   if (!user) return <Navigate to="/login" state={{ from: location }} replace />;
   
   // Maintenance Mode Check
-  if (systemConfig?.maintenanceMode && profile?.role !== 'admin') {
+  if (systemConfig?.maintenanceMode && profile?.role !== 'admin' && user?.email !== 'vibecodeph@gmail.com') {
     return <Navigate to="/maintenance" replace />;
   }
 
@@ -427,7 +442,7 @@ const App = () => {
                   } />
 
                   <Route path="/transactions" element={
-                    <ProtectedRoute>
+                    <ProtectedRoute requireAdmin>
                       <Layout>
                         <Transactions />
                       </Layout>
@@ -507,7 +522,7 @@ const App = () => {
                   } />
 
                   <Route path="/settings/manage/users" element={
-                    <ProtectedRoute requireAdmin>
+                    <ProtectedRoute requireAdmin={false}>
                       <Layout>
                         <UsersManagementView />
                       </Layout>

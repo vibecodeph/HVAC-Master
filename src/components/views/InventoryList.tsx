@@ -3,12 +3,12 @@ import { Search, MapPin, Wrench, Box, Truck, Target, AlertTriangle, Plus, X, Che
 import { motion, AnimatePresence } from 'motion/react';
 import { useAuth, useData } from '../../App';
 import { useIsMobile } from '../../hooks/useApp';
-import { cn } from '../../lib/utils';
+import { cn, getMillis } from '../../lib/utils';
 import { Header } from '../common/Header';
 import { Card } from '../common/Card';
 import { Modal } from '../common/Modal';
 import { RequestForm, ItemForm } from '../Forms';
-import { Item, Location, Transaction } from '../../types';
+import { Item, Location, Transaction, Inventory } from '../../types';
 import { Pagination } from '../common/Pagination';
 import { useDebounce } from '../../hooks/useDebounce';
 import { subscribeToTransactions } from '../../services/inventoryService';
@@ -22,8 +22,26 @@ export const InventoryList = () => {
   const debouncedSearchTerm = useDebounce(searchTerm, 300);
   const [filter, setFilter] = useState('Materials');
   const [selectedJobsiteId, setSelectedJobsiteId] = useState<string>(() => {
-    return localStorage.getItem('lastJobsiteId') || '';
+    if (profile?.uid) {
+      const saved = localStorage.getItem(`lastSite_${profile.uid}`);
+      return saved || '';
+    }
+    return '';
   });
+  const [hasSetDefaultJobsite, setHasSetDefaultJobsite] = useState(false);
+  const storageKey = profile?.uid ? `lastSite_${profile.uid}` : null;
+
+  // Sync with localStorage changes
+  useEffect(() => {
+    if (!storageKey) return;
+    const handleStorageChange = (e: StorageEvent) => {
+      if (e.key === storageKey && e.newValue) {
+        setSelectedJobsiteId(e.newValue);
+      }
+    };
+    window.addEventListener('storage', handleStorageChange);
+    return () => window.removeEventListener('storage', handleStorageChange);
+  }, [storageKey]);
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [editingItem, setEditingItem] = useState<Item | null>(null);
   const [requestingItem, setRequestingItem] = useState<Item | null>(null);
@@ -85,63 +103,86 @@ export const InventoryList = () => {
 
   // Persist selected jobsite
   useEffect(() => {
-    if (selectedJobsiteId) {
-      localStorage.setItem('lastJobsiteId', selectedJobsiteId);
+    if (selectedJobsiteId && profile?.uid) {
+      localStorage.setItem(`lastSite_${profile.uid}`, selectedJobsiteId);
     }
-  }, [selectedJobsiteId]);
+  }, [selectedJobsiteId, profile]);
 
   // Set initial jobsite if none selected or selection is invalid
   useEffect(() => {
     const allSites = groupedJobsites.flatMap(g => g.locations);
-    if (allSites.length > 0) {
-      const isValid = allSites.some(j => j.id === selectedJobsiteId);
-      if (!selectedJobsiteId || !isValid) {
+    if (allSites.length > 0 && profile && !hasSetDefaultJobsite) {
+      const saved = storageKey ? localStorage.getItem(storageKey) : null;
+      const isValid = allSites.some(j => j.id === saved) || saved === 'all';
+      
+      if (saved && isValid) {
+        setSelectedJobsiteId(saved);
+      } else {
         setSelectedJobsiteId(allSites[0].id);
       }
+      setHasSetDefaultJobsite(true);
     }
-  }, [groupedJobsites, selectedJobsiteId]);
+  }, [groupedJobsites, profile, hasSetDefaultJobsite, storageKey]);
 
   const allDisplayItems = useMemo(() => {
     if (!selectedJobsiteId) return [];
 
     const jobsiteBOQ = boqs.filter(b => b.jobsiteId === selectedJobsiteId);
-    const jobsiteInventory = inventory.filter(inv => inv.locationId === selectedJobsiteId && (showZeroQty || inv.quantity > 0));
     const search = debouncedSearchTerm.toLowerCase();
     
+    // Pre-group inventory for fast lookup: item_id -> variant_json -> Array of inventory docs
+    const invMap: Record<string, Record<string, Inventory[]>> = {};
+    inventory.forEach(inv => {
+      if (inv.locationId !== selectedJobsiteId) return;
+      if (!invMap[inv.itemId]) invMap[inv.itemId] = {};
+      const vKey = JSON.stringify(inv.variant || {});
+      if (!invMap[inv.itemId][vKey]) invMap[inv.itemId][vKey] = [];
+      invMap[inv.itemId][vKey].push(inv);
+    });
+
     // Items in BOQ
     const boqItems = jobsiteBOQ
-      .map(b => ({
-        boq: b,
-        item: items.find(i => i.id === b.itemId),
-        inv: jobsiteInventory.filter(inv => inv.itemId === b.itemId)
-      }))
+      .map(b => {
+        const item = items.find(i => i.id === b.itemId);
+        // Get all matching inventory for this item+variant using our map
+        const vKey = JSON.stringify(b.variant || {});
+        const inv = invMap[b.itemId]?.[vKey] || [];
+        const totalQty = inv.reduce((sum, i) => sum + i.quantity, 0);
+        return { boq: b, item, inv, totalQty };
+      })
       .filter(x => x.item && (filter === 'Tools' ? x.item.isTool : !x.item.isTool))
-      .filter(x => !search || x.item?.name.toLowerCase().includes(search) || x.item?.tags?.some(t => t.toLowerCase().includes(search)));
+      .filter(x => !search || x.item?.name.toLowerCase().includes(search) || x.item?.tags?.some(t => t.toLowerCase().includes(search)))
+      .filter(x => showZeroQty ? x.totalQty <= 0 : x.totalQty > 0);
 
     // Unplanned Stock (In inventory but not in BOQ)
-    const unplannedStock = jobsiteInventory
-      .filter(inv => !jobsiteBOQ.some(b => b.itemId === inv.itemId))
-      .map(inv => ({
-        inv,
-        item: items.find(i => i.id === inv.itemId)
-      }))
-      .filter(x => x.item && (filter === 'Tools' ? x.item.isTool : !x.item.isTool))
-      .filter(x => !search || x.item?.name.toLowerCase().includes(search) || x.item?.tags?.some(t => t.toLowerCase().includes(search)));
+    const unplannedStockList: any[] = [];
+    Object.keys(invMap).forEach(itemId => {
+      const item = items.find(i => i.id === itemId);
+      if (!item) return;
+      if (filter === 'Tools' ? !item.isTool : item.isTool) return;
+      if (search && !item.name.toLowerCase().includes(search) && !item.tags?.some(t => t.toLowerCase().includes(search))) return;
 
-    // Items not in BOQ or Unplanned Stock but matching search
-    const searchAllItems = search.length > 0 ? items
-      .filter(item => 
-        !jobsiteBOQ.some(b => b.itemId === item.id) && 
-        !jobsiteInventory.some(inv => inv.itemId === item.id) &&
-        (filter === 'Tools' ? item.isTool : !item.isTool) &&
-        (item.name.toLowerCase().includes(search) || 
-         item.tags?.some(t => t.toLowerCase().includes(search)))
-      ) : [];
+      Object.keys(invMap[itemId]).forEach(vKey => {
+        const variant = JSON.parse(vKey);
+        // Skip if already in BOQ
+        const inBOQ = jobsiteBOQ.some(b => 
+          b.itemId === itemId && 
+          JSON.stringify(b.variant || {}) === vKey
+        );
+        if (inBOQ) return;
+
+        const inv = invMap[itemId][vKey];
+        const totalQty = inv.reduce((sum, i) => sum + i.quantity, 0);
+        
+        if (showZeroQty ? totalQty <= 0 : totalQty > 0) {
+          unplannedStockList.push({ type: 'unplanned' as const, inv: inv[0], item, totalQty });
+        }
+      });
+    });
 
     const result = [
       ...boqItems.map(x => ({ type: 'boq' as const, ...x })),
-      ...unplannedStock.map(x => ({ type: 'unplanned' as const, ...x })),
-      ...searchAllItems.map(item => ({ type: 'search' as const, item }))
+      ...unplannedStockList,
     ];
 
     return result.sort((a, b) => {
@@ -151,6 +192,24 @@ export const InventoryList = () => {
       return (a.item?.name || '').localeCompare(b.item?.name || '');
     });
   }, [selectedJobsiteId, debouncedSearchTerm, filter, items, inventory, boqs, showZeroQty, categories]);
+
+  const globalSearchItems = useMemo(() => {
+    if (!selectedJobsiteId || !debouncedSearchTerm) return [];
+    
+    const jobsiteBOQ = boqs.filter(b => b.jobsiteId === selectedJobsiteId);
+    const jobsiteInventory = inventory.filter(inv => inv.locationId === selectedJobsiteId);
+    const search = debouncedSearchTerm.toLowerCase();
+
+    return items
+      .filter(item => 
+        !jobsiteBOQ.some(b => b.itemId === item.id) && 
+        !jobsiteInventory.some(inv => inv.itemId === item.id) &&
+        (filter === 'Tools' ? item.isTool : !item.isTool) &&
+        (item.name.toLowerCase().includes(search) || 
+         item.tags?.some(t => t.toLowerCase().includes(search)))
+      )
+      .slice(0, 5); // Limit to 5 global results
+  }, [selectedJobsiteId, debouncedSearchTerm, filter, items, inventory, boqs]);
 
   const totalPages = Math.ceil(allDisplayItems.length / ITEMS_PER_PAGE);
   const paginatedItems = allDisplayItems.slice((currentPage - 1) * ITEMS_PER_PAGE, currentPage * ITEMS_PER_PAGE);
@@ -235,7 +294,7 @@ export const InventoryList = () => {
                 showZeroQty ? "translate-x-4" : "translate-x-0.5"
               )} />
             </div>
-            <span className="text-[10px] font-bold text-gray-500 uppercase tracking-wider">Show zero/negative stock</span>
+            <span className="text-[10px] font-bold text-gray-500 uppercase tracking-wider">Show ONLY zero/negative stock</span>
           </label>
         </div>
 
@@ -254,7 +313,7 @@ export const InventoryList = () => {
                 </div>
               ) : (
                 <div className="space-y-8">
-                  {paginatedItems.length === 0 ? (
+                  {paginatedItems.length === 0 && globalSearchItems.length === 0 ? (
                     <div className="flex flex-col items-center justify-center py-20 text-center space-y-4">
                       <div className="w-16 h-16 bg-gray-50 rounded-full flex items-center justify-center text-gray-300">
                         <Box size={32} />
@@ -324,8 +383,11 @@ export const InventoryList = () => {
                               </div>
                             )}
                             <Card 
-                              className="p-4 bg-white hover:shadow-md transition-shadow cursor-pointer"
-                              onClick={() => setViewingTransactions({ item, variant: variantToMatch || undefined })}
+                              className={cn(
+                                "p-4 bg-white transition-shadow",
+                                profile?.role === 'admin' ? "hover:shadow-md cursor-pointer" : ""
+                              )}
+                              onClick={() => profile?.role === 'admin' && setViewingTransactions({ item, variant: variantToMatch || undefined })}
                             >
                               <div className="flex items-start justify-between">
                                 <div className="flex items-start space-x-3">
@@ -345,10 +407,17 @@ export const InventoryList = () => {
                                     {variantToMatch && Object.keys(variantToMatch).length > 0 && (
                                       <div className="flex flex-wrap gap-1 mt-1">
                                         {Object.entries(variantToMatch).map(([k, v]) => (
-                                          <span key={k} className="text-[8px] px-1.5 py-0.5 bg-blue-50 text-blue-600 rounded font-bold uppercase tracking-tighter">
-                                            {k}: {v}
+                                          <span key={k} className="text-xs px-1.5 py-0.5 bg-blue-50 text-blue-600 rounded font-bold uppercase tracking-tighter">
+                                            {String(v)}
                                           </span>
                                         ))}
+                                      </div>
+                                    )}
+                                    {invList[0]?.customSpec && (
+                                      <div className="mt-1">
+                                        <span className="text-[8px] px-1.5 py-0.5 bg-purple-50 text-purple-600 rounded font-bold uppercase tracking-tighter">
+                                          {invList[0].customSpec}
+                                        </span>
                                       </div>
                                     )}
                                   </div>
@@ -363,8 +432,8 @@ export const InventoryList = () => {
                                       totalQty < 0 ? "text-red-500" : (totalQty === 0 ? "text-gray-300" : (boq && boq.targetQuantity && totalQty > boq.targetQuantity ? "text-red-600" : "text-gray-900"))
                                     )}>
                                       {item.components && item.components.length > 0 ? (
-                                        // Calculate virtual kit stock based on components in this location
-                                        Math.min(...item.components.map(comp => {
+                                        // Physical stock + Virtual kit stock based on components in this location
+                                        totalQty + Math.min(...item.components.map(comp => {
                                           const compInv = inventory.filter(inv => inv.itemId === comp.itemId && inv.locationId === selectedJobsiteId);
                                           const compTotal = compInv.reduce((sum, i) => sum + i.quantity, 0);
                                           return Math.floor(compTotal / comp.quantity);
@@ -375,20 +444,16 @@ export const InventoryList = () => {
                                   </div>
                                   {item.components && item.components.length > 0 && (
                                     <div className="text-[8px] font-black text-purple-400 uppercase tracking-widest mt-[-2px]">
-                                      Virtual Kit Stock
+                                      Total Stock (incl. Virtual)
                                     </div>
                                   )}
-                                  {reorderLevel > 0 && (
+                                  {profile?.role === 'admin' && reorderLevel > 0 && (
                                     <div className="text-[8px] font-black text-gray-400 uppercase tracking-widest mt-[-2px]">
                                       Re-order: {reorderLevel}
                                     </div>
                                   )}
                                   {boq && (
                                     <div className="mt-1 flex items-center justify-end space-x-2">
-                                      <div className="flex items-center space-x-1 text-[10px] font-bold text-gray-400">
-                                        <Target size={10} />
-                                        <span>{boq.targetQuantity || '∞'}</span>
-                                      </div>
                                       {boq.targetQuantity && (
                                         <div className={cn(
                                           "w-16 h-1 bg-gray-100 rounded-full overflow-hidden",
@@ -403,6 +468,10 @@ export const InventoryList = () => {
                                           />
                                         </div>
                                       )}
+                                      <div className="flex items-center space-x-1 text-[10px] font-bold text-gray-400">
+                                        <Target size={10} />
+                                        <span>{boq.currentQuantity || 0}/{boq.targetQuantity || '∞'}</span>
+                                      </div>
                                     </div>
                                   )}
                                 </div>
@@ -416,7 +485,9 @@ export const InventoryList = () => {
                                       {item.components.map(comp => {
                                         const compItem = items.find(i => i.id === comp.itemId);
                                         const compInv = inventory.filter(inv => inv.itemId === comp.itemId && inv.locationId === selectedJobsiteId);
-                                        const compTotal = compInv.reduce((sum, i) => sum + i.quantity, 0);
+                                        const looseStock = compInv.reduce((sum, i) => sum + i.quantity, 0);
+                                        const stockInKits = totalQty * comp.quantity;
+                                        const compTotal = looseStock + stockInKits;
                                         const compUom = uoms.find(u => u.id === compItem?.uomId || u.symbol === compItem?.uomId);
                                         
                                         return (
@@ -430,7 +501,12 @@ export const InventoryList = () => {
                                                 "text-[10px] font-black",
                                                 compTotal < comp.quantity ? "text-red-500" : "text-blue-600"
                                               )}>{compTotal}</p>
-                                              <p className="text-[8px] font-black text-gray-400 uppercase tracking-tighter">Stock</p>
+                                              <div className="flex flex-col items-end">
+                                                <p className="text-[8px] font-black text-gray-400 uppercase tracking-tighter">Total Stock</p>
+                                                {stockInKits > 0 && (
+                                                  <p className="text-[6px] font-bold text-purple-400 uppercase tracking-tighter">({stockInKits} in kits)</p>
+                                                )}
+                                              </div>
                                             </div>
                                           </div>
                                         );
@@ -441,7 +517,7 @@ export const InventoryList = () => {
                                 
                                 <div className="flex items-center justify-between">
                                   <div className="flex items-center space-x-4">
-                                    {totalQty < reorderLevel && (
+                                    {profile?.role === 'admin' && totalQty < reorderLevel && (
                                       <div className="flex items-center space-x-1 text-orange-500">
                                         <AlertTriangle size={12} />
                                         <span className="text-[10px] font-bold uppercase">Low Stock</span>
@@ -458,7 +534,7 @@ export const InventoryList = () => {
                                       e.stopPropagation();
                                       setRequestingItem(item);
                                     }}
-                                    className="px-4 py-2 bg-gray-900 text-white text-[10px] font-black uppercase tracking-widest rounded-xl active:scale-95 transition-transform"
+                                    className="px-4 h-10 bg-gray-900 text-white text-[10px] font-black uppercase tracking-widest rounded-xl active:scale-95 transition-transform"
                                   >
                                     Request
                                   </button>
@@ -468,13 +544,62 @@ export const InventoryList = () => {
                           </motion.div>
                         );
                       })}
+
+                      {globalSearchItems.length > 0 && (
+                        <div className="space-y-4 pt-8 border-t border-gray-100">
+                          <div className="flex items-center justify-between px-1">
+                            <h3 className="text-[10px] font-black text-gray-400 uppercase tracking-[0.2em]">Global Catalog Results</h3>
+                            <span className="text-[8px] font-bold text-gray-300 uppercase">Not in this jobsite</span>
+                          </div>
+                          <div className="grid grid-cols-1 gap-4">
+                            {globalSearchItems.map((item) => (
+                               <Card 
+                                key={`global-${item.id}`}
+                                className={cn(
+                                  "p-4 bg-gray-50/50 border-dashed border-gray-200 transition-all group",
+                                  profile?.role === 'admin' ? "hover:bg-white hover:border-solid hover:shadow-md cursor-pointer" : ""
+                                )}
+                                onClick={() => profile?.role === 'admin' && setViewingTransactions({ item })}
+                              >
+                                <div className="flex items-center justify-between">
+                                  <div className="flex items-center space-x-3">
+                                    <div className={cn(
+                                      "w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 bg-white shadow-sm",
+                                      item.isTool ? "text-orange-400" : "text-blue-400"
+                                    )}>
+                                      {item.isTool ? <Wrench size={20} /> : <Box size={20} />}
+                                    </div>
+                                    <div>
+                                      <h4 className="text-sm font-bold text-gray-600 group-hover:text-gray-900 transition-colors">{item.name}</h4>
+                                      <p className="text-[10px] text-gray-400 font-medium uppercase tracking-wider">
+                                        {categories.find(c => c.id === item.categoryId)?.name || 'General'}
+                                      </p>
+                                    </div>
+                                  </div>
+                                  <button 
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      setRequestingItem(item);
+                                    }}
+                                    className="px-4 h-10 bg-white text-blue-600 border border-blue-100 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-blue-600 hover:text-white transition-all shadow-sm"
+                                  >
+                                    Request
+                                  </button>
+                                </div>
+                              </Card>
+                            ))}
+                          </div>
+                        </div>
+                      )}
                       
-                      <Pagination 
-                        currentPage={currentPage}
-                        totalPages={totalPages}
-                        onPageChange={setCurrentPage}
-                        className="mt-6"
-                      />
+                      {paginatedItems.length > 0 && (
+                        <Pagination 
+                          currentPage={currentPage}
+                          totalPages={totalPages}
+                          onPageChange={setCurrentPage}
+                          className="mt-6"
+                        />
+                      )}
                     </div>
                   )}
                 </div>
@@ -512,7 +637,10 @@ export const InventoryList = () => {
           categories={categories} 
           locations={locations}
           items={items}
-          onComplete={() => setIsAddModalOpen(false)} 
+          onComplete={() => {
+            setIsAddModalOpen(false);
+            setCurrentPage(1);
+          }} 
         />
       </Modal>
 
@@ -554,7 +682,7 @@ export const InventoryList = () => {
                   </p>
                   {viewingTransactions.variant && Object.keys(viewingTransactions.variant).length > 0 && Object.entries(viewingTransactions.variant).map(([k, v]) => (
                     <span key={k} className="text-[8px] px-1.5 py-0.5 bg-blue-50 text-blue-600 rounded font-bold uppercase">
-                      {k}: {v}
+                      {v}
                     </span>
                   ))}
                 </div>
@@ -596,6 +724,11 @@ export const InventoryList = () => {
                           <div className="flex items-center justify-between">
                             <p className="text-[10px] font-black text-gray-900 uppercase tracking-tight">
                               {t.type}
+                              {t.customSpec && (
+                                <span className="ml-2 text-purple-600 lowercase font-bold">
+                                  ({t.customSpec})
+                                </span>
+                              )}
                             </p>
                             <p className="text-[9px] font-bold text-gray-400">
                               {t.timestamp?.toDate ? t.timestamp.toDate().toLocaleDateString() : 'Just now'}

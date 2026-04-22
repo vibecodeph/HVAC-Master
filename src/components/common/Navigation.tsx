@@ -11,17 +11,22 @@ import { useSidebar } from '../../hooks/useApp';
 export const Sidebar = () => {
   const navigate = useNavigate();
   const { profile, logout } = useAuth();
-  const { isSidebarOpen, toggleSidebar } = useSidebar();
+  const { isSidebarOpen, toggleSidebar, closeSidebar } = useSidebar();
   const location = useLocation();
 
   const menuItems = [
     { label: 'Dashboard', icon: LayoutDashboard, path: '/' },
     { label: 'Inventory', icon: Package, path: '/inventory' },
     { label: 'Requests', icon: ArrowLeftRight, path: '/requests' },
-    { label: 'Transactions', icon: History, path: '/transactions' },
+    { label: 'Transactions', icon: History, path: '/transactions', adminOnly: true },
+    { label: 'Team', icon: Shield, path: '/settings/manage/users', engineerAccess: true },
     { label: 'Purchase Orders', icon: FileText, path: '/purchase-orders', adminOnly: true },
     { label: 'Settings', icon: Settings, path: '/settings', adminOnly: true },
-  ].filter(item => !item.adminOnly || profile?.role === 'admin');
+  ].filter(item => {
+    if (item.adminOnly) return profile?.role === 'admin';
+    if (item.engineerAccess) return profile?.role === 'admin' || profile?.role === 'engineer';
+    return true;
+  });
 
   return (
     <>
@@ -46,7 +51,7 @@ export const Sidebar = () => {
             </div>
             <div>
               <h1 className="text-lg font-black text-gray-900 tracking-tight">HVAC Master</h1>
-              <p className="text-[10px] font-black text-gray-400 uppercase tracking-[0.2em]">Field Operations</p>
+              <p className="text-[10px] font-bold text-gray-400 uppercase tracking-[0.2em]">Field Operations</p>
             </div>
           </div>
           <button onClick={toggleSidebar} className="lg:hidden p-2 text-gray-400 hover:bg-gray-50 rounded-xl">
@@ -55,6 +60,12 @@ export const Sidebar = () => {
         </div>
 
         <nav className="flex-1 px-4 py-2 space-y-1 overflow-y-auto no-scrollbar">
+          <div className="px-4 mb-4">
+            <div className="flex items-center space-x-2 px-3 py-2 bg-blue-50/50 rounded-xl border border-blue-100/50">
+              <div className="w-1.5 h-1.5 bg-blue-500 rounded-full animate-pulse shadow-[0_0_8px_rgba(59,130,246,0.3)]" />
+              <span className="text-[9px] font-black text-blue-600 uppercase tracking-widest">Database: Live Sync</span>
+            </div>
+          </div>
           {menuItems.map((item) => {
             const isActive = location.pathname === item.path;
             return (
@@ -63,9 +74,9 @@ export const Sidebar = () => {
                 to={item.path}
                 onClick={() => window.innerWidth < 1024 && toggleSidebar()}
                 className={cn(
-                  "flex items-center space-x-3 px-4 py-3.5 rounded-2xl font-bold transition-all group",
+                  "flex items-center space-x-3 px-4 py-3.5 rounded-2xl font-bold transition-all group relative",
                   isActive 
-                    ? "bg-blue-600 text-white shadow-lg shadow-blue-100" 
+                    ? "bg-blue-600 text-white shadow-xl shadow-blue-500/30 scale-[1.02]" 
                     : "text-gray-500 hover:bg-gray-50 hover:text-gray-900"
                 )}
               >
@@ -98,8 +109,11 @@ export const Sidebar = () => {
               </div>
             </div>
             <button 
-              onClick={logout}
-              className="w-full py-3 bg-white text-red-600 rounded-2xl text-xs font-bold flex items-center justify-center space-x-2 shadow-sm hover:bg-red-50 transition-colors"
+              onClick={() => {
+                closeSidebar();
+                logout();
+              }}
+              className="w-full py-4 bg-white text-red-600 rounded-2xl text-xs font-bold flex items-center justify-center space-x-2 shadow-sm hover:bg-red-50 transition-colors"
             >
               <LogOut size={16} />
               <span>Sign Out</span>
@@ -113,11 +127,13 @@ export const Sidebar = () => {
 
 export const BottomNav = () => {
   const location = useLocation();
+  const { profile } = useAuth();
   const navItems = [
     { label: 'Home', icon: LayoutDashboard, path: '/' },
     { label: 'Stock', icon: Package, path: '/inventory' },
     { label: 'Requests', icon: ArrowLeftRight, path: '/requests' },
-    { label: 'History', icon: History, path: '/transactions' },
+    ...(profile?.role === 'admin' ? [{ label: 'History', icon: History, path: '/transactions' }] : []),
+    ...(profile?.role === 'admin' || profile?.role === 'engineer' ? [{ label: 'Team', icon: Shield, path: '/settings/manage/users' }] : []),
   ];
 
   return (

@@ -1,14 +1,14 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { ChevronRight, Truck, Wrench, Package, ArrowLeftRight, History, Check, X, AlertTriangle, Search } from 'lucide-react';
+import { ChevronRight, ChevronDown, MapPin, Truck, Wrench, Package, ArrowLeftRight, History, Check, X, AlertTriangle, Search } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { useAuth, useData } from '../../App';
 import { onSnapshot, collection, query, where, orderBy, limit, serverTimestamp } from 'firebase/firestore';
-import { subscribeToRequests, approveRequest, updateRequest, recordBulkPick, recordBulkReceive, approveBulkRequests } from '../../services/inventoryService';
+import { subscribeToRequests, approveRequest, updateRequest, recordBulkPick, recordBulkReceive, approveBulkRequests, updateDeliveryQuantity } from '../../services/inventoryService';
 import { cn } from '../../lib/utils';
 import { Header } from '../common/Header';
 import { Card } from '../common/Card';
 import { Modal } from '../common/Modal';
-import { PickingModal, RequestApprovalModal } from '../Forms';
+import { PickingModal, RequestApprovalModal, DeliveryQuantityEditModal } from '../Forms';
 import { Request } from '../../types';
 
 export const RequestsView = () => {
@@ -29,11 +29,84 @@ export const RequestsView = () => {
   }, [profile, hasSetDefaultFilter]);
   const [editingRequest, setEditingRequest] = useState<Request | null>(null);
   const [rejectingRequest, setRejectingRequest] = useState<Request | null>(null);
+  const [adjustingRequest, setAdjustingRequest] = useState<Request | null>(null);
   const [pickingRequests, setPickingRequests] = useState<Request[]>([]);
   const [isPickingModalOpen, setIsPickingModalOpen] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
-  const [selectedItemId, setSelectedItemId] = useState<string>('all');
-  const [selectedJobsiteId, setSelectedJobsiteId] = useState<string>('all');
+
+  // ... mid sections omitted for brevity in multi_edit if possible, but edit_file requires precision
+
+  const handleUpdateDeliveryQty = async (requestId: string, newQty: number, createBackorder: boolean) => {
+    setIsProcessing(true);
+    try {
+      await updateDeliveryQuantity(
+        requestId, 
+        newQty, 
+        profile?.uid || 'unknown', 
+        profile?.displayName || 'Warehouseman',
+        createBackorder
+      );
+      setAdjustingRequest(null);
+    } catch (error: any) {
+      alert(error.message || 'Failed to update delivery quantity');
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+  const storageKey = profile?.uid ? `lastSite_${profile.uid}` : null;
+  const [selectedJobsiteId, setSelectedJobsiteId] = useState<string>(() => {
+    if (profile?.uid) {
+      const saved = localStorage.getItem(`lastSite_${profile.uid}`);
+      return saved || 'all';
+    }
+    return 'all';
+  });
+  const [hasSetDefaultJobsite, setHasSetDefaultJobsite] = useState(false);
+
+  // Sync with localStorage changes
+  useEffect(() => {
+    if (!storageKey) return;
+    const handleStorageChange = (e: StorageEvent) => {
+      if (e.key === storageKey && e.newValue) {
+        setSelectedJobsiteId(e.newValue);
+      }
+    };
+    window.addEventListener('storage', handleStorageChange);
+    return () => window.removeEventListener('storage', handleStorageChange);
+  }, [storageKey]);
+
+  // Persist selected jobsite
+  useEffect(() => {
+    if (selectedJobsiteId && profile?.uid) {
+      localStorage.setItem(`lastSite_${profile.uid}`, selectedJobsiteId);
+    }
+  }, [selectedJobsiteId, profile]);
+
+  useEffect(() => {
+    if (profile && locations.length > 0 && !hasSetDefaultJobsite) {
+      const storageKey = `lastSite_${profile.uid}`;
+      const savedSite = localStorage.getItem(storageKey);
+      
+      const userAssignedJobsites = locations.filter(l => 
+        l.type === 'jobsite' && 
+        l.isActive && 
+        profile.assignedLocationIds?.includes(l.id)
+      );
+
+      if (savedSite && savedSite !== 'all') {
+        // Verify user still has access
+        const hasAccess = profile.role === 'admin' || profile.role === 'manager' || profile.role === 'warehouseman' || profile.assignedLocationIds?.includes(savedSite);
+        if (hasAccess) {
+          setSelectedJobsiteId(savedSite);
+        }
+      } else if (profile.role !== 'admin') {
+        if (userAssignedJobsites.length > 0) {
+          setSelectedJobsiteId(userAssignedJobsites[0].id);
+        }
+      }
+      setHasSetDefaultJobsite(true);
+    }
+  }, [profile, locations, hasSetDefaultJobsite]);
   
   // Pagination state
   const [limitCount, setLimitCount] = useState(50);
@@ -68,7 +141,6 @@ export const RequestsView = () => {
   const { filteredRequests, groupedByJobsite, sortedJobsiteIds } = useMemo(() => {
     const filtered = localRequests.filter(r => {
       const matchesStatus = r.status === filter;
-      const matchesItemFilter = filter !== 'delivered' || selectedItemId === 'all' || r.itemId === selectedItemId;
       const matchesJobsiteFilter = selectedJobsiteId === 'all' || r.jobsiteId === selectedJobsiteId;
       
       const jobsite = locations.find(l => l.id === r.jobsiteId);
@@ -77,23 +149,28 @@ export const RequestsView = () => {
       const hasJobsiteAccess = (profile?.role === 'admin' || 
                                (profile?.assignedLocationIds && profile.assignedLocationIds.includes(r.jobsiteId))) && isJobsiteActive;
 
-      return matchesStatus && matchesItemFilter && matchesJobsiteFilter && hasJobsiteAccess;
+      return matchesStatus && matchesJobsiteFilter && hasJobsiteAccess;
     });
 
     const grouped = filtered.reduce((acc, r) => {
-      if (!acc[r.jobsiteId]) acc[r.jobsiteId] = [];
-      acc[r.jobsiteId].push(r);
+      const showBatch = filter === 'for delivery' || filter === 'delivered';
+      const key = showBatch && r.batchId ? `${r.jobsiteId}|${r.batchId}` : r.jobsiteId;
+      if (!acc[key]) acc[key] = [];
+      acc[key].push(r);
       return acc;
     }, {} as Record<string, Request[]>);
 
-    const sortedIds = Object.keys(grouped).sort((a, b) => {
-      const nameA = locations.find(l => l.id === a)?.name || '';
-      const nameB = locations.find(l => l.id === b)?.name || '';
-      return nameA.localeCompare(nameB);
+    const sortedKeys = Object.keys(grouped).sort((a, b) => {
+      const [siteA] = a.split('|');
+      const [siteB] = b.split('|');
+      const nameA = locations.find(l => l.id === siteA)?.name || '';
+      const nameB = locations.find(l => l.id === siteB)?.name || '';
+      if (nameA !== nameB) return nameA.localeCompare(nameB);
+      return a.localeCompare(b);
     });
 
-    return { filteredRequests: filtered, groupedByJobsite: grouped, sortedJobsiteIds: sortedIds };
-  }, [localRequests, filter, selectedItemId, selectedJobsiteId, locations, profile]);
+    return { filteredRequests: filtered, groupedByJobsite: grouped, sortedJobsiteIds: sortedKeys };
+  }, [localRequests, filter, selectedJobsiteId, locations, profile]);
 
   const handleApprove = async (request: Request, approvedQty: number, note?: string) => {
     setIsProcessing(true);
@@ -124,14 +201,17 @@ export const RequestsView = () => {
     }
   };
 
-  const handleDeliver = async (selections: { requestId: string; deliveredQty: number; sourceLocationId: string; variant?: Record<string, string>; backorder?: boolean }[]) => {
+  const handleDeliver = async (
+    selections: { requestId: string; deliveredQty: number; sourceLocationId: string; variant?: Record<string, string>; backorder?: boolean; serialNumbers?: string[] }[],
+    options?: { customBatchId?: string; customDate?: Date }
+  ) => {
     setIsProcessing(true);
     try {
-      await recordBulkPick(selections, profile?.uid || 'unknown', profile?.displayName);
+      await recordBulkPick(selections, profile?.uid || 'unknown', profile?.displayName, options);
       setIsPickingModalOpen(false);
       setPickingRequests([]);
-    } catch (error) {
-      console.error(error);
+    } catch (error: any) {
+      alert(error.message || 'Failed to prepare delivery');
     } finally {
       setIsProcessing(false);
     }
@@ -187,40 +267,26 @@ export const RequestsView = () => {
         <div className="space-y-4 mb-6">
           {userJobsites.length > 1 && (
             <div className="relative">
+              <MapPin className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={18} />
               <select 
                 value={selectedJobsiteId}
-                onChange={(e) => setSelectedJobsiteId(e.target.value)}
-                className="w-full p-3 bg-white border border-gray-200 rounded-2xl text-[10px] font-black uppercase tracking-widest outline-none focus:ring-2 focus:ring-blue-500 appearance-none"
+                onChange={(e) => {
+                  const val = e.target.value;
+                  setSelectedJobsiteId(val);
+                  if (profile?.uid && val !== 'all') {
+                    localStorage.setItem(`lastSite_${profile.uid}`, val);
+                  }
+                }}
+                className="w-full pl-10 pr-10 py-3 bg-gray-100 border-none rounded-2xl text-base font-medium focus:ring-2 focus:ring-blue-500 outline-none appearance-none"
               >
-                <option value="all">All Jobsites</option>
+                {profile?.role === 'admin' && (
+                  <option value="all">All Jobsites</option>
+                )}
                 {userJobsites.sort((a, b) => a.name.localeCompare(b.name)).map(loc => (
                   <option key={loc.id} value={loc.id}>{loc.name}</option>
                 ))}
               </select>
-              <div className="absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none text-gray-400">
-                <ChevronRight className="rotate-90" size={16} />
-              </div>
-            </div>
-          )}
-
-          {filter === 'delivered' && (
-            <div className="relative">
-              <select 
-                value={selectedItemId}
-                onChange={(e) => setSelectedItemId(e.target.value)}
-                className="w-full p-3 bg-white border border-gray-200 rounded-2xl text-[10px] font-black uppercase tracking-widest outline-none focus:ring-2 focus:ring-blue-500 appearance-none"
-              >
-                <option value="all">All Delivered Items</option>
-                {Array.from(new Set(localRequests.filter(r => r.status === 'delivered').map(r => r.itemId))).map(itemId => {
-                  const item = items.find(i => i.id === itemId);
-                  return (
-                    <option key={itemId} value={itemId}>{item?.name}</option>
-                  );
-                })}
-              </select>
-              <div className="absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none text-gray-400">
-                <ChevronRight className="rotate-90" size={16} />
-              </div>
+              <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" size={16} />
             </div>
           )}
         </div>
@@ -231,7 +297,7 @@ export const RequestsView = () => {
               key={s}
               onClick={() => setFilter(s)}
               className={cn(
-                "flex-1 py-2 px-4 text-[10px] font-black uppercase tracking-widest rounded-xl transition-all whitespace-nowrap",
+                "flex-1 py-2 px-4 text-xs font-black uppercase tracking-widest rounded-xl transition-all whitespace-nowrap",
                 filter === s ? "bg-white text-blue-600 shadow-sm" : "text-gray-500"
               )}
             >
@@ -241,18 +307,24 @@ export const RequestsView = () => {
         </div>
 
         <div className="space-y-8">
-          {sortedJobsiteIds.map((jobsiteId) => {
+          {sortedJobsiteIds.map((groupKey) => {
+            const [jobsiteId, batchId] = groupKey.split('|');
             const jobsite = locations.find(l => l.id === jobsiteId);
-            const jobsiteRequests = groupedByJobsite[jobsiteId].sort((a, b) => {
+            const jobsiteRequests = groupedByJobsite[groupKey].sort((a, b) => {
               const itemA = items.find(i => i.id === a.itemId)?.name || '';
               const itemB = items.find(i => i.id === b.itemId)?.name || '';
               return itemA.localeCompare(itemB);
             });
 
             return (
-              <div key={jobsiteId} className="space-y-3">
+              <div key={groupKey} className="space-y-3">
                 <div className="flex justify-between items-center px-2">
-                  <h3 className="text-xs font-black text-gray-400 uppercase tracking-widest">{jobsite?.name || jobsiteId || 'Unknown Jobsite'}</h3>
+                  <div className="flex flex-col">
+                    <h3 className="text-xs font-black text-gray-400 uppercase tracking-widest">{jobsite?.name || jobsiteId || 'Unknown Jobsite'}</h3>
+                    {batchId && (
+                      <span className="text-[16px] leading-[16px] font-bold text-blue-600 uppercase tracking-widest mt-0.5">DR# {batchId.replace('DR#', '')}</span>
+                    )}
+                  </div>
                   {filter === 'approved' && (profile?.role === 'warehouseman' || profile?.role === 'admin') && jobsiteRequests.length > 0 && (
                     <button
                       disabled={isProcessing}
@@ -265,7 +337,7 @@ export const RequestsView = () => {
                       Pick All for {jobsite?.name}
                     </button>
                   )}
-                  {filter === 'pending' && profile?.role === 'admin' && jobsiteRequests.length > 0 && (
+                  {filter === 'pending' && (profile?.role === 'admin' || profile?.role === 'manager' || profile?.role === 'engineer') && jobsiteRequests.length > 0 && (
                     <button
                       disabled={isProcessing}
                       onClick={() => handleApproveBulk(jobsiteRequests.map(r => r.id))}
@@ -274,7 +346,7 @@ export const RequestsView = () => {
                       Approve All
                     </button>
                   )}
-                  {filter === 'for delivery' && jobsiteRequests.length > 0 && (
+                  {filter === 'for delivery' && profile?.role !== 'warehouseman' && jobsiteRequests.length > 0 && (
                     <button
                       disabled={isProcessing}
                       onClick={() => handleReceive(jobsiteRequests.map(r => r.id))}
@@ -287,50 +359,98 @@ export const RequestsView = () => {
                 {jobsiteRequests.map(r => {
                   const item = items.find(i => i.id === r.itemId);
                   const requestor = users.find(u => u.uid === r.requestorId);
+                  const isWarehouseman = profile?.role === 'warehouseman' || profile?.role === 'admin';
+                  const isEditable = filter === 'for delivery' && isWarehouseman;
                   
                   return (
-                    <Card key={r.id} className="p-4">
+                    <Card 
+                      key={r.id} 
+                      className={cn(
+                        "p-4 transition-all duration-200",
+                        isEditable && "cursor-pointer hover:border-orange-200 hover:bg-orange-50/30 active:scale-[0.99] group"
+                      )}
+                      onClick={() => {
+                        if (isEditable) setAdjustingRequest(r);
+                      }}
+                    >
                       <div className="flex justify-between items-start mb-2">
-                        <div>
-                          <h4 className="font-bold text-gray-900">{item?.name}</h4>
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center space-x-2">
+                            <h4 className="font-bold text-gray-900 truncate">{item?.name}</h4>
+                            {isEditable && (
+                              <div className="opacity-0 group-hover:opacity-100 transition-opacity bg-orange-100 p-1 rounded-md">
+                                <Wrench size={10} className="text-orange-600" />
+                              </div>
+                            )}
+                          </div>
                           {r.variant && Object.keys(r.variant).length > 0 && (
-                            <p className="text-[10px] text-gray-500 uppercase font-bold">
+                            <p className="text-xs text-gray-500 uppercase font-bold">
                               {Object.values(r.variant).join(', ')}
                             </p>
                           )}
-                          {r.workerNote && (
-                            <p className="text-[10px] text-blue-600 font-medium mt-1 italic">
-                              "{r.workerNote}"
+                          {r.customSpec && (
+                            <p className="text-[10px] text-purple-600 uppercase font-bold">
+                              {r.customSpec}
                             </p>
                           )}
                         </div>
                         <div className="text-right">
+                          {r.batchId && (
+                            <div className="mb-1">
+                              <span className="text-[10px] font-normal text-white bg-blue-600 px-1.5 py-0.5 rounded-md uppercase tracking-tighter shadow-sm">
+                                {r.batchId}
+                              </span>
+                            </div>
+                          )}
                           <p className="text-lg font-black text-blue-600">{filter === 'pending' ? r.requestedQty : r.approvedQty}</p>
                           <p className="text-[10px] font-bold text-gray-400 uppercase">{uoms.find(u => u.id === r.uomId || u.symbol === r.uomId)?.symbol || r.uomId}</p>
                         </div>
                       </div>
                       <div className="flex items-center justify-between mt-4 pt-4 border-t border-gray-50">
-                        <div className="flex items-center space-x-2">
-                          <div className="w-6 h-6 rounded-full bg-gray-100 flex items-center justify-center text-[10px] font-bold">
-                            {(r.requestorName || requestor?.displayName)?.[0] || '?'}
+                        <div className="flex flex-col space-y-3 min-w-0 flex-1 mr-4">
+                          <div className="flex items-center space-x-2">
+                            <div className="w-6 h-6 rounded-full bg-gray-100 flex items-center justify-center text-[10px] font-bold shrink-0">
+                              {(r.requestorName || requestor?.displayName)?.[0] || '?'}
+                            </div>
+                            <div className="flex flex-col min-w-0">
+                              <div className="flex items-baseline space-x-2">
+                                <span className="text-xs font-bold text-gray-500 whitespace-nowrap">{(r.requestorName || requestor?.displayName || 'Worker').split(' ')[0]}</span>
+                                {r.workerNote && (
+                                  <span className="text-xs text-gray-400 font-medium italic truncate max-w-[120px] sm:max-w-xs transition-all">"{r.workerNote}"</span>
+                                )}
+                              </div>
+                              <span className="text-xs text-gray-400 font-medium">{formatDate(r.timestamp)}</span>
+                            </div>
                           </div>
-                          <div className="flex flex-col">
-                            <span className="text-[10px] font-bold text-gray-500">{r.requestorName || requestor?.displayName || 'Worker'}</span>
-                            <span className="text-[8px] text-gray-400 font-medium">{formatDate(r.timestamp)}</span>
-                          </div>
+                          {r.approverId && (
+                            <div className="flex items-center space-x-2 pl-3 border-l-2 border-blue-100">
+                              <div className="w-6 h-6 rounded-full bg-blue-50 text-blue-600 flex items-center justify-center text-[10px] font-bold shrink-0">
+                                {(r.approverName || users.find(u => u.uid === r.approverId)?.displayName)?.[0] || '?'}
+                              </div>
+                              <div className="flex flex-col min-w-0">
+                                <div className="flex items-baseline space-x-2">
+                                  <span className="text-xs font-bold text-blue-600 whitespace-nowrap">{(r.approverName || users.find(u => u.uid === r.approverId)?.displayName || 'Approver').split(' ')[0]}</span>
+                                  {r.engineerNote && (
+                                    <span className="text-xs text-blue-400 font-medium italic truncate max-w-[120px] sm:max-w-xs transition-all">"{r.engineerNote}"</span>
+                                  )}
+                                </div>
+                                <span className="text-xs text-gray-400 font-medium italic">Appr. {formatDate(r.approvedAt)}</span>
+                              </div>
+                            </div>
+                          )}
                         </div>
-                        <div className="flex space-x-2">
+                        <div className="flex space-x-2 self-end shrink-0">
                           {filter === 'pending' && (profile?.role === 'admin' || profile?.role === 'manager' || profile?.role === 'engineer') && (
                             <>
                               <button 
                                 onClick={() => setRejectingRequest(r)}
-                                className="p-2 text-red-600 bg-red-50 rounded-xl active:scale-95 transition-transform"
+                                className="w-10 h-10 flex items-center justify-center text-red-600 bg-red-50 rounded-xl active:scale-95 transition-transform"
                               >
                                 <X size={16} />
                               </button>
                               <button 
                                 onClick={() => setEditingRequest(r)}
-                                className="p-2 text-blue-600 bg-blue-50 rounded-xl active:scale-95 transition-transform"
+                                className="w-10 h-10 flex items-center justify-center text-blue-600 bg-blue-50 rounded-xl active:scale-95 transition-transform"
                               >
                                 <Check size={16} />
                               </button>
@@ -342,15 +462,15 @@ export const RequestsView = () => {
                                 setPickingRequests([r]);
                                 setIsPickingModalOpen(true);
                               }}
-                              className="px-4 py-2 bg-blue-600 text-white rounded-xl text-[10px] font-black uppercase tracking-widest active:scale-95 transition-transform"
+                              className="px-4 h-10 bg-blue-600 text-white rounded-xl text-xs font-black uppercase tracking-widest active:scale-95 transition-transform"
                             >
                               Pick
                             </button>
                           )}
-                          {filter === 'for delivery' && (
+                          {filter === 'for delivery' && profile?.role !== 'warehouseman' && (
                             <button 
                               onClick={() => handleReceive([r.id])}
-                              className="px-4 py-2 bg-blue-600 text-white rounded-xl text-[10px] font-black uppercase tracking-widest active:scale-95 transition-transform"
+                              className="px-4 h-10 bg-blue-600 text-white rounded-xl text-xs font-black uppercase tracking-widest active:scale-95 transition-transform"
                             >
                               Receive
                             </button>
@@ -431,6 +551,18 @@ export const RequestsView = () => {
             uoms={uoms}
             onDeliver={handleDeliver}
             onClose={() => { setIsPickingModalOpen(false); setPickingRequests([]); }}
+          />
+        )}
+      </Modal>
+
+      <Modal isOpen={!!adjustingRequest} onClose={() => setAdjustingRequest(null)} title="Adjust Delivery Quantity">
+        {adjustingRequest && (
+          <DeliveryQuantityEditModal 
+            request={adjustingRequest}
+            items={items}
+            uoms={uoms}
+            onUpdate={handleUpdateDeliveryQty}
+            onClose={() => setAdjustingRequest(null)}
           />
         )}
       </Modal>

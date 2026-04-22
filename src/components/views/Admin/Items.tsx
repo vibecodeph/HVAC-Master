@@ -4,7 +4,7 @@ import { Search, Plus, Box, Wrench, AlertTriangle, Trash2, X, Settings2, Downloa
 import { useAuth, useData } from '../../../App';
 import { deleteItem } from '../../../services/inventoryService';
 import { exportItemsToCSV, importItemsFromCSV } from '../../../services/csvService';
-import { cn } from '../../../lib/utils';
+import { cn, getMillis } from '../../../lib/utils';
 import { Header } from '../../common/Header';
 import { Card } from '../../common/Card';
 import { Swipeable } from '../../common/Swipeable';
@@ -99,10 +99,11 @@ const VariantDetailsModal = ({ item, uoms, onClose }: { item: Item, uoms: any[],
 
 export const ItemManagementView = () => {
   const { profile } = useAuth();
-  const { items, categories, uoms, locations, inventory, transactions, boqs } = useData();
+  const { items, categories, uoms, locations, inventory, transactions, boqs, tags } = useData();
   const [searchTerm, setSearchTerm] = useState('');
   const debouncedSearchTerm = useDebounce(searchTerm, 300);
   const [filter, setFilter] = useState<'Materials' | 'Tools'>('Materials');
+  const [selectedCategoryId, setSelectedCategoryId] = useState<string>('all');
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [editingItem, setEditingItem] = useState<Item | null>(null);
   const [isDuplicating, setIsDuplicating] = useState(false);
@@ -126,6 +127,7 @@ export const ItemManagementView = () => {
         }
         if (filter === 'Materials' && item.isTool) return false;
         if (filter === 'Tools' && !item.isTool) return false;
+        if (selectedCategoryId !== 'all' && item.categoryId !== selectedCategoryId) return false;
         if (debouncedSearchTerm) {
           const search = debouncedSearchTerm.toLowerCase();
           const mainCat = categories.find(c => c.id === item.categoryId);
@@ -150,7 +152,7 @@ export const ItemManagementView = () => {
         if (catCompare !== 0) return catCompare;
         return a.name.localeCompare(b.name);
       });
-  }, [items, showInactive, filter, debouncedSearchTerm, categories]);
+  }, [items, showInactive, filter, debouncedSearchTerm, categories, selectedCategoryId]);
 
   const totalPages = Math.ceil(filteredItems.length / ITEMS_PER_PAGE);
   const paginatedItems = filteredItems.slice((currentPage - 1) * ITEMS_PER_PAGE, currentPage * ITEMS_PER_PAGE);
@@ -174,7 +176,7 @@ export const ItemManagementView = () => {
     setIsImporting(true);
     setImportStatus(null);
     try {
-      const result = await importItemsFromCSV(file, categories, uoms);
+      const result = await importItemsFromCSV(file, categories, uoms, tags);
       setImportStatus(result);
     } catch (error: any) {
       setImportStatus({ success: 0, errors: [error.message || 'Import failed'] });
@@ -262,7 +264,21 @@ export const ItemManagementView = () => {
           ))}
         </div>
 
-        <div className="flex justify-end items-center px-1">
+        <div className="flex justify-between items-center px-1">
+          <div className="flex items-center space-x-2">
+            <span className="text-[8px] font-black text-gray-400 uppercase tracking-widest">Category:</span>
+            <select 
+              value={selectedCategoryId}
+              onChange={(e) => setSelectedCategoryId(e.target.value)}
+              className="text-[10px] font-black uppercase tracking-widest bg-transparent outline-none text-blue-600 border-b border-blue-100 pb-0.5"
+            >
+              <option value="all">All Categories</option>
+              {categories.filter(c => !c.parentId && c.isActive).map(cat => (
+                <option key={cat.id} value={cat.id}>{cat.name}</option>
+              ))}
+            </select>
+          </div>
+
           <button 
             onClick={() => setShowInactive(!showInactive)}
             className={cn(
@@ -414,8 +430,8 @@ export const ItemManagementView = () => {
           locations={locations}
           items={items}
           onComplete={() => {
-            console.log('ItemForm onComplete called for New Item in ItemManagementView');
             setIsAddModalOpen(false);
+            setCurrentPage(1);
           }} 
         />
       </Modal>
@@ -437,7 +453,6 @@ export const ItemManagementView = () => {
             initialData={editingItem}
             isDuplicate={isDuplicating}
             onComplete={() => {
-              console.log('ItemForm onComplete called in ItemManagementView');
               setEditingItem(null);
               setIsDuplicating(false);
             }} 

@@ -23,6 +23,7 @@ export const JobsiteBOQView = () => {
   const [pendingImportData, setPendingImportData] = useState<Omit<BOQItem, 'id' | 'timestamp'>[] | null>(null);
   const [selectedItemForVariant, setSelectedItemForVariant] = useState<string | null>(null);
   const [selectedVariant, setSelectedVariant] = useState<Record<string, string>>({});
+  const [selectedCustomSpec, setSelectedCustomSpec] = useState('');
 
   const jobsite = locations.find(l => l.id === jobsiteId);
   const jobsiteBOQ = boqs.filter(b => b.jobsiteId === jobsiteId);
@@ -78,7 +79,7 @@ export const JobsiteBOQView = () => {
     ).slice(0, 10);
   }, [items, debouncedSearchTerm]);
 
-  const handleAdd = async (itemId: string, variant?: Record<string, string>) => {
+  const handleAdd = async (itemId: string, variant?: Record<string, string>, customSpec?: string) => {
     if (!jobsiteId) return;
     setIsSubmitting(true);
     setError(null);
@@ -87,6 +88,7 @@ export const JobsiteBOQView = () => {
         jobsiteId,
         itemId,
         variant: variant || null,
+        customSpec: customSpec || null,
         targetQuantity: 0,
         currentQuantity: 0,
         unitPrice: 0,
@@ -96,6 +98,7 @@ export const JobsiteBOQView = () => {
       setSearchTerm('');
       setSelectedItemForVariant(null);
       setSelectedVariant({});
+      setSelectedCustomSpec('');
     } catch (err: any) {
       setError(err.message || 'Failed to add item to BOQ');
     } finally {
@@ -206,8 +209,10 @@ export const JobsiteBOQView = () => {
               <div className="bg-white border border-gray-100 rounded-2xl shadow-xl overflow-hidden mt-2 max-h-80 overflow-y-auto z-10 relative">
                 {filteredItems.map(item => {
                   const hasVariants = item.variantAttributes && item.variantAttributes.length > 0;
-                  const isSelectingVariant = selectedItemForVariant === item.id;
-                  const isInBOQ = !hasVariants && jobsiteBOQ.some(b => b.itemId === item.id);
+                  const needsCustomSpec = item.requireCustomSpec;
+                  const needsSelection = hasVariants || needsCustomSpec;
+                  const isSelecting = selectedItemForVariant === item.id;
+                  const isInBOQ = !needsSelection && jobsiteBOQ.some(b => b.itemId === item.id);
 
                   return (
                     <div key={item.id} className="border-b border-gray-50 last:border-0">
@@ -215,7 +220,7 @@ export const JobsiteBOQView = () => {
                         "p-4 flex items-center justify-between hover:bg-gray-50 transition-colors",
                         isInBOQ && "opacity-50 pointer-events-none"
                       )}>
-                        <div className="flex-1" onClick={() => hasVariants ? setSelectedItemForVariant(isSelectingVariant ? null : item.id) : handleAdd(item.id)}>
+                        <div className="flex-1" onClick={() => needsSelection ? setSelectedItemForVariant(isSelecting ? null : item.id) : handleAdd(item.id)}>
                           <div className="flex items-center space-x-2">
                             <p className="text-sm font-bold text-gray-900">{item.name}</p>
                             {isInBOQ && <span className="text-[8px] font-black bg-gray-200 text-gray-500 px-1.5 py-0.5 rounded uppercase tracking-widest">In BOQ</span>}
@@ -225,17 +230,17 @@ export const JobsiteBOQView = () => {
                           </p>
                         </div>
                         <button
-                          onClick={() => hasVariants ? setSelectedItemForVariant(isSelectingVariant ? null : item.id) : handleAdd(item.id)}
+                          onClick={() => needsSelection ? setSelectedItemForVariant(isSelecting ? null : item.id) : handleAdd(item.id)}
                           disabled={isSubmitting || isInBOQ}
                           className="p-2 bg-blue-50 text-blue-600 rounded-xl hover:bg-blue-100 transition-colors"
                         >
-                          {hasVariants ? <ChevronDown size={18} className={cn("transition-transform", isSelectingVariant && "rotate-180")} /> : <Plus size={18} />}
+                          {needsSelection ? <ChevronDown size={18} className={cn("transition-transform", isSelecting && "rotate-180")} /> : <Plus size={18} />}
                         </button>
                       </div>
 
-                      {isSelectingVariant && item.variantAttributes && (
-                        <div className="p-4 bg-gray-50 space-y-3 border-t border-gray-100">
-                          {item.variantAttributes.map(attr => (
+                      {isSelecting && (
+                        <div className="p-4 bg-gray-50 space-y-4 border-t border-gray-100">
+                          {item.variantAttributes && item.variantAttributes.map(attr => (
                             <div key={attr.name} className="space-y-1">
                               <label className="text-[10px] font-bold text-gray-400 uppercase">{attr.name}</label>
                               <div className="flex flex-wrap gap-2">
@@ -256,17 +261,37 @@ export const JobsiteBOQView = () => {
                               </div>
                             </div>
                           ))}
+
+                          {item.requireCustomSpec && (
+                            <div className="space-y-1">
+                              <label className="text-[10px] font-bold text-gray-400 uppercase">
+                                {item.customSpecLabel || 'Specification'}
+                              </label>
+                              <input
+                                type="text"
+                                value={selectedCustomSpec}
+                                onChange={(e) => setSelectedCustomSpec(e.target.value)}
+                                placeholder={`Enter ${item.customSpecLabel || 'specification'}...`}
+                                className="w-full p-3 bg-white border border-gray-200 rounded-xl text-xs font-bold outline-none focus:ring-2 focus:ring-blue-500"
+                              />
+                            </div>
+                          )}
                           
                           {(() => {
                             const isVariantInBOQ = jobsiteBOQ.some(b => 
                               b.itemId === item.id && 
-                              JSON.stringify(b.variant) === JSON.stringify(selectedVariant)
+                              JSON.stringify(b.variant) === JSON.stringify(selectedVariant) &&
+                              b.customSpec === (selectedCustomSpec || undefined)
                             );
+
+                            const canAdd = !isSubmitting && !isVariantInBOQ && 
+                              (!item.requireVariant || Object.keys(selectedVariant).length === (item.variantAttributes?.length || 0)) &&
+                              (!item.requireCustomSpec || selectedCustomSpec.trim().length > 0);
 
                             return (
                               <button
-                                onClick={() => handleAdd(item.id, selectedVariant)}
-                                disabled={isSubmitting || isVariantInBOQ || (item.requireVariant && Object.keys(selectedVariant).length < (item.variantAttributes?.length || 0))}
+                                onClick={() => handleAdd(item.id, selectedVariant, selectedCustomSpec)}
+                                disabled={!canAdd}
                                 className="w-full py-3 bg-blue-600 text-white rounded-xl text-xs font-bold flex items-center justify-center space-x-2 disabled:opacity-50"
                               >
                                 {isVariantInBOQ ? (
@@ -277,7 +302,7 @@ export const JobsiteBOQView = () => {
                                 ) : (
                                   <>
                                     <Plus size={16} />
-                                    <span>{Object.keys(selectedVariant).length > 0 ? 'Add with Variant' : 'Add without Variant'}</span>
+                                    <span>Add to BOQ</span>
                                   </>
                                 )}
                               </button>
@@ -427,9 +452,14 @@ export const JobsiteBOQView = () => {
                                 <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">{uom?.symbol || item?.uomId}</p>
                                 {boq.variant && Object.entries(boq.variant).map(([k, v]) => (
                                   <span key={k} className="text-[8px] px-1.5 py-0.5 bg-blue-50 text-blue-600 rounded font-bold uppercase">
-                                    {k}: {v}
+                                    {v}
                                   </span>
                                 ))}
+                                {boq.customSpec && (
+                                  <span key="spec" className="text-[8px] px-1.5 py-0.5 bg-purple-50 text-purple-600 rounded font-bold uppercase">
+                                    {boq.customSpec}
+                                  </span>
+                                )}
                               </div>
                             </div>
                             <button 

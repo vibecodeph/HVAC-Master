@@ -92,13 +92,9 @@ service cloud.firestore {
     }
 
     function isAdmin() {
-      return isAuthenticated() && (
-        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
-         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('role', '') == 'admin') ||
-        (exists(/databases/$(database)/documents/system/config) && 
-         request.auth.token.email != null &&
-         request.auth.token.email.lower() in get(/databases/$(database)/documents/system/config).data.get('adminEmails', []))
-      );
+      return isAuthenticated() && 
+        exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('role', '') == 'admin';
     }
 
     function isApproved() {

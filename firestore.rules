@@ -74,11 +74,6 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    // Global admin access
-    match /{document=**} {
-      allow read, write: if isAdmin();
-    }
-
     // ===============================================================
     // Helper Functions
     // ===============================================================
@@ -430,7 +425,7 @@ service cloud.firestore {
 
     match /transactions/{transactionId} {
       allow read: if isApproved();
-      allow create: if isApproved() && isValidTransaction(request.resource.data);
+      allow create: if (isAdmin() || isWarehouseman() || isEngineer()) && isValidTransaction(request.resource.data);
       allow update, delete: if isAdmin();
     }
 
@@ -507,11 +502,11 @@ service cloud.firestore {
 
     match /counters/{counterId} {
       allow read: if isApproved();
-      allow write: if isApproved();
+      allow write: if isAdmin() || isWarehouseman() || isEngineer();
     }
 
     match /system/{configId} {
-      allow read: if true;
+      allow read: if isAuthenticated() || configId == 'config';
       allow create: if isAuthenticated() && !exists(/databases/$(database)/documents/system/config) && isValidSystemConfig(request.resource.data);
       allow update: if isAdmin() && isValidSystemConfig(request.resource.data);
       allow delete: if false;

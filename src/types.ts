@@ -148,7 +148,7 @@ export interface Request {
   uomId: string;
   jobsiteId: string;
   sourceLocationId?: string;
-  status: 'pending' | 'approved' | 'for delivery' | 'delivered' | 'rejected';
+  status: 'pending' | 'approved' | 'for delivery' | 'delivered' | 'rejected' | 'cancelled';
   requestorId: string;
   requestorName?: string;
   approverId?: string;

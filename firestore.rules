@@ -294,7 +294,7 @@ service cloud.firestore {
              (!('requestedQty' in data) || data.requestedQty is number) &&
              (!('uomId' in data) || (data.uomId is string && data.uomId.size() <= 50)) &&
              (!('jobsiteId' in data) || (data.jobsiteId is string && data.jobsiteId.size() <= 50)) &&
-             (!('status' in data) || data.status in ['pending', 'approved', 'for delivery', 'delivered', 'rejected']) &&
+             (!('status' in data) || data.status in ['pending', 'approved', 'for delivery', 'delivered', 'rejected', 'cancelled']) &&
              (!('timestamp' in data) || data.timestamp is timestamp) &&
              (!('requestorId' in data) || (data.requestorId is string && data.requestorId.size() <= 50)) &&
              (!('approvedQty' in data) || data.approvedQty == null || data.approvedQty is number) &&
@@ -478,10 +478,10 @@ service cloud.firestore {
                       ((isWarehouseman() || isEngineer() || isAdmin()) && 'backorderOf' in request.resource.data)
                     ) && hasRequiredFields(['itemId', 'requestedQty', 'uomId', 'jobsiteId', 'status', 'requestorId', 'timestamp']) && isValidRequest(request.resource.data);
       allow update: if isApproved() && (
-                     (isEngineer() && (request.resource.data.get('status', resource.data.status) in ['approved', 'rejected', 'for delivery', 'delivered', 'received'])) ||
-                     (isWarehouseman() && (request.resource.data.get('status', resource.data.status) in ['approved', 'rejected', 'for delivery', 'delivered', 'received'])) ||
-                     (isWorker() && request.resource.data.get('status', resource.data.status) in ['delivered', 'received']) ||
-                     (isOwner(resource.data.requestorId) && resource.data.status == 'pending')
+                     (isEngineer() && (request.resource.data.get('status', resource.data.status) in ['approved', 'rejected', 'for delivery', 'delivered', 'received', 'cancelled'])) ||
+                     (isWarehouseman() && (request.resource.data.get('status', resource.data.status) in ['approved', 'rejected', 'for delivery', 'delivered', 'received', 'cancelled'])) ||
+                     (isWorker() && (request.resource.data.get('status', resource.data.status) in ['delivered', 'received', 'cancelled'])) ||
+                     (isOwner(resource.data.requestorId) && resource.data.status == 'pending' && request.resource.data.get('status', resource.data.status) == 'cancelled')
                    );
       allow delete: if isAdmin();
     }

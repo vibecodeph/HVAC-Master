@@ -3,7 +3,7 @@ import { Search, MapPin, Wrench, Box, Truck, Target, AlertTriangle, Plus, X, Che
 import { motion, AnimatePresence } from 'motion/react';
 import { useAuth, useData } from '../../App';
 import { useIsMobile } from '../../hooks/useApp';
-import { cn, getMillis } from '../../lib/utils';
+import { cn, getMillis, normalizeVariant } from '../../lib/utils';
 import { Header } from '../common/Header';
 import { Card } from '../common/Card';
 import { Modal } from '../common/Modal';
@@ -14,6 +14,232 @@ import { useDebounce } from '../../hooks/useDebounce';
 import { subscribeToTransactions } from '../../services/inventoryService';
 
 const ITEMS_PER_PAGE = 10;
+
+const ItemCard = ({ 
+  item, 
+  entries, 
+  profile, 
+  categories, 
+  uoms, 
+  inventory, 
+  selectedJobsiteId,
+  setRequestingItem, 
+  setViewingTransactions 
+}: any) => {
+  const [isExpanded, setIsExpanded] = useState(false);
+
+  return (
+    <Card className="bg-white overflow-hidden border-gray-100 shadow-sm">
+      {/* Item Header */}
+      <div 
+        className="p-4 flex items-center justify-between bg-white cursor-pointer active:bg-gray-50 transition-colors"
+        onClick={() => setIsExpanded(!isExpanded)}
+      >
+        <div className="flex items-center space-x-3 overflow-hidden">
+          <div className={cn(
+            "w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0",
+            item.isTool ? "bg-orange-100 text-orange-600" : "bg-blue-100 text-blue-600"
+          )}>
+            {item.isTool ? <Wrench size={20} /> : <Box size={20} />}
+          </div>
+          <div className="overflow-hidden">
+            <div className="flex items-center space-x-2">
+              <h4 className="text-sm font-bold text-gray-900 truncate">{item.name}</h4>
+              {item.components && item.components.length > 0 && (
+                <span className="text-[8px] px-1.5 py-0.5 bg-purple-100 text-purple-600 rounded-full font-black uppercase tracking-widest">Kit</span>
+              )}
+              <motion.div
+                animate={{ rotate: isExpanded ? 180 : 0 }}
+                transition={{ duration: 0.3 }}
+                className="text-gray-400"
+              >
+                <ChevronDown size={14} />
+              </motion.div>
+            </div>
+
+          </div>
+        </div>
+
+        <div className="flex items-center space-x-2">
+          {!isExpanded && entries.length === 1 && (
+            <div className="text-right mr-2">
+              <span className="text-sm font-black text-gray-900">
+                {entries[0].totalQty}
+              </span>
+              <span className="text-[8px] font-bold text-gray-400 uppercase ml-1">
+                {uoms.find((u: any) => u.id === item.uomId || u.symbol === item.uomId)?.symbol || item.uomId}
+              </span>
+            </div>
+          )}
+          <button 
+            onClick={(e) => {
+              e.stopPropagation();
+              // If multiple variants, expand. If one, request.
+              if (entries.length > 1 && !isExpanded) {
+                setIsExpanded(true);
+              } else {
+                setRequestingItem({ 
+                  item, 
+                  variant: entries[0]?.boq?.variant || entries[0]?.inv?.variant,
+                  customSpec: entries[0]?.inv?.customSpec
+                });
+              }
+            }}
+            className="px-4 py-2 bg-gray-900 text-white text-[10px] font-black uppercase tracking-widest rounded-xl hover:bg-gray-800 active:scale-95 transition-all shadow-sm"
+          >
+            Request
+          </button>
+        </div>
+      </div>
+
+      {/* Variants List (Collapsible) */}
+      <AnimatePresence>
+        {isExpanded && (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: "auto", opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={{ duration: 0.3, ease: "easeInOut" }}
+          >
+            <div className="divide-y divide-gray-50 border-t border-gray-50">
+              {entries.map((entry: any, eIdx: number) => {
+                const { type } = entry;
+                const inv = entry.inv ? (Array.isArray(entry.inv) ? entry.inv : [entry.inv]) : [];
+                const boq = entry.boq || null;
+                
+                const variantToMatch = boq?.variant || (type === 'unplanned' && !Array.isArray(entry.inv) ? entry.inv.variant : null);
+                
+                const filteredInv = boq && boq.variant 
+                  ? inv.filter((i: any) => normalizeVariant(i.variant) === normalizeVariant(boq.variant))
+                  : inv;
+
+                const totalQty = filteredInv.reduce((sum: number, i: any) => sum + i.quantity, 0);
+                const uom = uoms.find((u: any) => u.id === item.uomId || u.symbol === item.uomId);
+
+                let reorderLevel = item.reorderLevel || 0;
+                let averageCost = item.averageCost || 0;
+
+                if (variantToMatch) {
+                  const config = item.variantConfigs?.find((vc: any) => 
+                    normalizeVariant(vc.variant) === normalizeVariant(variantToMatch)
+                  );
+                  if (config) {
+                    if (config.reorderLevel !== undefined) reorderLevel = config.reorderLevel;
+                    if (config.averageCost !== undefined) averageCost = config.averageCost;
+                  }
+                }
+
+                const invList = filteredInv;
+
+                return (
+                  <div 
+                    key={`${item.id}-${eIdx}`}
+                    className="p-4 hover:bg-gray-50/50 transition-colors cursor-pointer group"
+                    onClick={() => profile?.role === 'admin' && setViewingTransactions({ item, variant: variantToMatch || undefined })}
+                  >
+                    <div className="flex items-start justify-between">
+                      <div className="flex-1 min-w-0">
+                        {variantToMatch && Object.keys(variantToMatch).length > 0 && (
+                          <div className="flex flex-wrap gap-1 mb-2">
+                            {Object.entries(variantToMatch).map(([k, v]) => (
+                              <span key={k} className="text-xs px-2 py-1 bg-blue-50 text-blue-600 rounded-lg font-bold uppercase tracking-tight">
+                                {String(v)}
+                              </span>
+                            ))}
+                          </div>
+                        )}
+                        {invList[0]?.customSpec && (
+                          <div className="mb-2">
+                            <span className="text-[10px] px-2 py-1 bg-purple-50 text-purple-600 rounded-lg font-bold uppercase tracking-tight">
+                              {invList[0].customSpec}
+                            </span>
+                          </div>
+                        )}
+
+                        {boq && (
+                          <div className="flex flex-col space-y-1.5 max-w-[200px]">
+                            {boq.targetQuantity && (
+                              <div className={cn(
+                                "w-full h-1.5 bg-gray-100 rounded-full overflow-hidden",
+                                totalQty > boq.targetQuantity && "bg-red-100"
+                              )}>
+                                <div 
+                                  className={cn(
+                                    "h-full transition-all duration-500",
+                                    totalQty >= boq.targetQuantity ? "bg-green-500" : "bg-blue-500"
+                                  )}
+                                  style={{ width: `${Math.min(100, (totalQty / boq.targetQuantity) * 100)}%` }}
+                                />
+                              </div>
+                            )}
+                            <div className="flex items-center space-x-1 text-[10px] font-bold text-gray-400">
+                              <Target size={12} className="text-gray-300" />
+                              <span className="tracking-widest capitalize">Site Usage:</span>
+                              <span className="text-gray-600 ml-1">{boq.currentQuantity || 0} / {boq.targetQuantity || '∞'}</span>
+                            </div>
+                          </div>
+                        )}
+                        
+                        {profile?.role === 'admin' && averageCost !== undefined && (
+                          <div className="mt-2 text-[10px] font-bold text-blue-600">
+                            ₱{averageCost.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                          </div>
+                        )}
+                      </div>
+
+                      <div className="text-right flex-shrink-0 ml-4 flex flex-col items-end">
+                        <div className="flex items-center justify-end space-x-1.5">
+                          {boq && boq.targetQuantity && totalQty > boq.targetQuantity && (
+                            <AlertTriangle size={14} className="text-red-500" />
+                          )}
+                          <span className={cn(
+                            "text-xl font-black",
+                            totalQty < 0 ? "text-red-500" : (totalQty === 0 ? (type === 'boq' ? "text-blue-300" : "text-gray-300") : (boq && boq.targetQuantity && totalQty > boq.targetQuantity ? "text-red-600" : "text-gray-900"))
+                          )}>
+                            {item.components && item.components.length > 0 ? (
+                              totalQty + Math.min(...item.components.map((comp: any) => {
+                                const compInv = inventory.filter((inv: any) => inv.itemId === comp.itemId && inv.locationId === selectedJobsiteId);
+                                const compTotal = compInv.reduce((sum: number, i: any) => sum + i.quantity, 0);
+                                return Math.floor(compTotal / comp.quantity);
+                              }))
+                            ) : totalQty}
+                          </span>
+                          <span className="text-[10px] font-bold text-gray-400 uppercase">{uom?.symbol || item.uomId}</span>
+                        </div>
+                        
+                        {profile?.role === 'admin' && reorderLevel > 0 && (
+                          <div className="text-[8px] font-black text-gray-400 uppercase tracking-widest mt-[-2px]">
+                            Re-order: {reorderLevel}
+                          </div>
+                        )}
+
+                        {entries.length > 1 && (
+                          <button 
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setRequestingItem({ 
+                                item, 
+                                variant: variantToMatch || undefined,
+                                customSpec: invList[0]?.customSpec
+                              });
+                            }}
+                            className="mt-3 px-3 py-1.5 bg-gray-100 text-gray-900 text-[9px] font-black uppercase tracking-widest rounded-lg hover:bg-gray-200 active:scale-95 transition-all opacity-0 group-hover:opacity-100"
+                          >
+                            Request
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </Card>
+  );
+};
 
 export const InventoryList = () => {
   const { profile } = useAuth();
@@ -44,7 +270,11 @@ export const InventoryList = () => {
   }, [storageKey]);
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [editingItem, setEditingItem] = useState<Item | null>(null);
-  const [requestingItem, setRequestingItem] = useState<Item | null>(null);
+  const [requestingItem, setRequestingItem] = useState<{ 
+    item: Item; 
+    variant?: Record<string, string>; 
+    customSpec?: string; 
+  } | null>(null);
   const [currentPage, setCurrentPage] = useState(1);
   const [showZeroQty, setShowZeroQty] = useState(false);
   const [viewingTransactions, setViewingTransactions] = useState<{ item: Item, variant?: Record<string, string> } | null>(null);
@@ -63,7 +293,7 @@ export const InventoryList = () => {
       // Filter transactions for this item and this location (either from or to)
       const filtered = data.filter(t => {
         const matchesItem = t.itemId === viewingTransactions.item.id;
-        const matchesVariant = !viewingTransactions.variant || JSON.stringify(t.variant) === JSON.stringify(viewingTransactions.variant);
+        const matchesVariant = !viewingTransactions.variant || normalizeVariant(t.variant) === normalizeVariant(viewingTransactions.variant);
         const matchesLocation = t.fromLocationId === selectedJobsiteId || t.toLocationId === selectedJobsiteId;
         return matchesItem && matchesVariant && matchesLocation;
       });
@@ -128,62 +358,90 @@ export const InventoryList = () => {
     if (!selectedJobsiteId) return [];
 
     const jobsiteBOQ = boqs.filter(b => b.jobsiteId === selectedJobsiteId);
+    const jobsiteInv = inventory.filter(inv => inv.locationId === selectedJobsiteId);
     const search = debouncedSearchTerm.toLowerCase();
-    
-    // Pre-group inventory for fast lookup: item_id -> variant_json -> Array of inventory docs
-    const invMap: Record<string, Record<string, Inventory[]>> = {};
-    inventory.forEach(inv => {
-      if (inv.locationId !== selectedJobsiteId) return;
-      if (!invMap[inv.itemId]) invMap[inv.itemId] = {};
-      const vKey = JSON.stringify(inv.variant || {});
-      if (!invMap[inv.itemId][vKey]) invMap[inv.itemId][vKey] = [];
-      invMap[inv.itemId][vKey].push(inv);
-    });
 
-    // Items in BOQ
-    const boqItems = jobsiteBOQ
-      .map(b => {
-        const item = items.find(i => i.id === b.itemId);
-        // Get all matching inventory for this item+variant using our map
-        const vKey = JSON.stringify(b.variant || {});
-        const inv = invMap[b.itemId]?.[vKey] || [];
-        const totalQty = inv.reduce((sum, i) => sum + i.quantity, 0);
-        return { boq: b, item, inv, totalQty };
-      })
-      .filter(x => x.item && (filter === 'Tools' ? x.item.isTool : !x.item.isTool))
-      .filter(x => !search || x.item?.name.toLowerCase().includes(search) || x.item?.tags?.some(t => t.toLowerCase().includes(search)))
-      .filter(x => showZeroQty ? x.totalQty <= 0 : x.totalQty > 0);
+    // 1. Get all unique item IDs involved in this jobsite (BOQ or Stock)
+    const itemIds = new Set([
+      ...jobsiteBOQ.map(b => b.itemId),
+      ...jobsiteInv.map(inv => inv.itemId)
+    ]);
 
-    // Unplanned Stock (In inventory but not in BOQ)
-    const unplannedStockList: any[] = [];
-    Object.keys(invMap).forEach(itemId => {
+    const groupedResult: Record<string, { item: Item, entries: any[] }> = {};
+
+    itemIds.forEach(itemId => {
       const item = items.find(i => i.id === itemId);
       if (!item) return;
+      
+      // Filter by Tool/Material
       if (filter === 'Tools' ? !item.isTool : item.isTool) return;
+      
+      // Search filter
       if (search && !item.name.toLowerCase().includes(search) && !item.tags?.some(t => t.toLowerCase().includes(search))) return;
 
-      Object.keys(invMap[itemId]).forEach(vKey => {
-        const variant = JSON.parse(vKey);
-        // Skip if already in BOQ
-        const inBOQ = jobsiteBOQ.some(b => 
-          b.itemId === itemId && 
-          JSON.stringify(b.variant || {}) === vKey
-        );
-        if (inBOQ) return;
+      const itemBOQs = jobsiteBOQ.filter(b => b.itemId === itemId);
+      const itemInv = jobsiteInv.filter(inv => inv.itemId === itemId);
 
-        const inv = invMap[itemId][vKey];
-        const totalQty = inv.reduce((sum, i) => sum + i.quantity, 0);
-        
-        if (showZeroQty ? totalQty <= 0 : totalQty > 0) {
-          unplannedStockList.push({ type: 'unplanned' as const, inv: inv[0], item, totalQty });
+      // Rule check: Does this item have ANY transaction/stock in this jobsite?
+      const itemHasStock = itemInv.some(inv => inv.quantity !== 0);
+
+      const variantEntries: Record<string, any> = {};
+
+      // Process BOQ entries
+      itemBOQs.forEach(boq => {
+        const vKey = normalizeVariant(boq.variant);
+        const matchingInv = itemInv.filter(inv => normalizeVariant(inv.variant) === vKey);
+        const delivered = matchingInv.reduce((sum, inv) => sum + inv.quantity, 0);
+
+        const hasValues = (boq.targetQuantity || 0) > 0 || (boq.unitPrice || 0) > 0 || delivered !== 0;
+
+        // Rule: Show if it has values OR if the item has NO transactions at all
+        if (hasValues || !itemHasStock) {
+          variantEntries[vKey] = {
+            type: 'boq',
+            item,
+            boq,
+            inv: matchingInv,
+            totalQty: delivered
+          };
         }
       });
+
+      // Process Inventory entries (unplanned variants)
+      const invByVariant: Record<string, Inventory[]> = {};
+      itemInv.forEach(inv => {
+        const vKey = normalizeVariant(inv.variant);
+        if (!invByVariant[vKey]) invByVariant[vKey] = [];
+        invByVariant[vKey].push(inv);
+      });
+
+      Object.entries(invByVariant).forEach(([vKey, invs]) => {
+        // If handled by BOQ, skip
+        if (variantEntries[vKey]) return;
+
+        const totalQty = invs.reduce((sum, inv) => sum + inv.quantity, 0);
+        // Show unplanned variant only if it has stock
+        if (totalQty !== 0) {
+          variantEntries[vKey] = {
+            type: 'unplanned',
+            item,
+            inv: invs[0], // for metadata
+            totalQty
+          };
+        }
+      });
+
+      const entriesList = Object.values(variantEntries);
+      if (entriesList.length > 0) {
+        // Apply showZeroQty toggle filter at the item total level if requested
+        const totalStockValue = entriesList.reduce((sum: number, e: any) => sum + (e.totalQty || 0), 0);
+        if (showZeroQty ? totalStockValue <= 0 : true) {
+          groupedResult[itemId] = { item, entries: entriesList };
+        }
+      }
     });
 
-    const result = [
-      ...boqItems.map(x => ({ type: 'boq' as const, ...x })),
-      ...unplannedStockList,
-    ];
+    const result = Object.values(groupedResult);
 
     return result.sort((a, b) => {
       const catA = categories.find(c => c.id === a.item?.categoryId)?.name || 'General';
@@ -324,226 +582,35 @@ export const InventoryList = () => {
                       </div>
                     </div>
                   ) : (
-                    <div className="space-y-4">
-                      {paginatedItems.map((entry, idx) => {
-                        const { type, item } = entry;
-                        if (!item) return null;
-                        
-                        const prevEntry = paginatedItems[idx - 1];
-                        const currentCategory = categories.find(c => c.id === item.categoryId)?.name || 'General';
-                        const prevCategory = prevEntry ? (categories.find(c => c.id === prevEntry.item?.categoryId)?.name || 'General') : null;
-                        const showHeader = currentCategory !== prevCategory;
-                        
-                        const inv = 'inv' in entry ? (Array.isArray(entry.inv) ? entry.inv : [entry.inv]) : [];
-                        const boq = 'boq' in entry ? entry.boq : null;
-                        
-                        // Filter inventory by variant if it's a BOQ item with a variant
-                        const filteredInv = boq && boq.variant 
-                          ? inv.filter(i => JSON.stringify(i.variant) === JSON.stringify(boq.variant))
-                          : inv;
-
-                        const totalQty = filteredInv.reduce((sum, i) => sum + i.quantity, 0);
-                        const uom = uoms.find(u => u.id === item.uomId || u.symbol === item.uomId);
-
-                        // Resolve variant-specific configs
-                        let reorderLevel = item.reorderLevel || 0;
-                        let averageCost = item.averageCost || 0;
-
-                        const variantToMatch = boq?.variant || (type === 'unplanned' && !Array.isArray(entry.inv) ? entry.inv.variant : null);
-
-                        if (variantToMatch) {
-                          const config = item.variantConfigs?.find(vc => 
-                            JSON.stringify(vc.variant) === JSON.stringify(variantToMatch)
-                          );
-                          if (config) {
-                            if (config.reorderLevel !== undefined) reorderLevel = config.reorderLevel;
-                            if (config.averageCost !== undefined) averageCost = config.averageCost;
-                          }
-                        }
-
-                        // Create a unique key based on the entry type and its specific ID
-                        const invList = 'inv' in entry ? (Array.isArray(entry.inv) ? entry.inv : [entry.inv]) : [];
-                        const invId = invList[0]?.id;
-                        const uniqueKey = `${type}-${item.id}-${invId || 'no-id'}-${idx}`;
-
-                        return (
-                          <motion.div
-                            key={uniqueKey}
-                            initial={{ opacity: 0, y: 10 }}
-                            animate={{ opacity: 1, y: 0 }}
-                            transition={{ delay: idx * 0.05 }}
-                            className="space-y-4"
-                          >
-                            {showHeader && (
-                              <div className="pt-4 pb-2">
-                                <h3 className="text-[10px] font-black text-blue-600 uppercase tracking-[0.2em] flex items-center">
-                                  <span className="bg-blue-50 px-3 py-1 rounded-full">{currentCategory}</span>
-                                  <div className="flex-1 h-[1px] bg-blue-50 ml-4" />
-                                </h3>
-                              </div>
-                            )}
-                            <Card 
-                              className={cn(
-                                "p-4 bg-white transition-shadow",
-                                profile?.role === 'admin' ? "hover:shadow-md cursor-pointer" : ""
-                              )}
-                              onClick={() => profile?.role === 'admin' && setViewingTransactions({ item, variant: variantToMatch || undefined })}
+                    <>
+                      <div className="space-y-4">
+                        {paginatedItems.map((group: any, idx) => {
+                          const { item, entries } = group;
+                          if (!item) return null;
+                          
+                          return (
+                            <motion.div
+                              key={`group-${item.id}-${idx}`}
+                              initial={{ opacity: 0, y: 10 }}
+                              animate={{ opacity: 1, y: 0 }}
+                              transition={{ delay: idx * 0.05 }}
+                              className="space-y-4"
                             >
-                              <div className="flex items-start justify-between">
-                                <div className="flex items-start space-x-3">
-                                  <div className={cn(
-                                    "w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0",
-                                    item.isTool ? "bg-orange-100 text-orange-600" : "bg-blue-100 text-blue-600"
-                                  )}>
-                                    {item.isTool ? <Wrench size={20} /> : <Box size={20} />}
-                                  </div>
-                                  <div>
-                                    <div className="flex items-center space-x-2">
-                                      <h4 className="text-sm font-bold text-gray-900">{item.name}</h4>
-                                      {item.components && item.components.length > 0 && (
-                                        <span className="text-[8px] px-1.5 py-0.5 bg-purple-100 text-purple-600 rounded-full font-black uppercase tracking-widest">Kit</span>
-                                      )}
-                                    </div>
-                                    {variantToMatch && Object.keys(variantToMatch).length > 0 && (
-                                      <div className="flex flex-wrap gap-1 mt-1">
-                                        {Object.entries(variantToMatch).map(([k, v]) => (
-                                          <span key={k} className="text-xs px-1.5 py-0.5 bg-blue-50 text-blue-600 rounded font-bold uppercase tracking-tighter">
-                                            {String(v)}
-                                          </span>
-                                        ))}
-                                      </div>
-                                    )}
-                                    {invList[0]?.customSpec && (
-                                      <div className="mt-1">
-                                        <span className="text-[8px] px-1.5 py-0.5 bg-purple-50 text-purple-600 rounded font-bold uppercase tracking-tighter">
-                                          {invList[0].customSpec}
-                                        </span>
-                                      </div>
-                                    )}
-                                  </div>
-                                </div>
-                                <div className="text-right flex-shrink-0">
-                                  <div className="flex items-center justify-end space-x-1">
-                                    {boq && boq.targetQuantity && totalQty > boq.targetQuantity && (
-                                      <AlertTriangle size={14} className="text-red-500 mr-1" />
-                                    )}
-                                    <span className={cn(
-                                      "text-lg font-black",
-                                      totalQty < 0 ? "text-red-500" : (totalQty === 0 ? "text-gray-300" : (boq && boq.targetQuantity && totalQty > boq.targetQuantity ? "text-red-600" : "text-gray-900"))
-                                    )}>
-                                      {item.components && item.components.length > 0 ? (
-                                        // Physical stock + Virtual kit stock based on components in this location
-                                        totalQty + Math.min(...item.components.map(comp => {
-                                          const compInv = inventory.filter(inv => inv.itemId === comp.itemId && inv.locationId === selectedJobsiteId);
-                                          const compTotal = compInv.reduce((sum, i) => sum + i.quantity, 0);
-                                          return Math.floor(compTotal / comp.quantity);
-                                        }))
-                                      ) : totalQty}
-                                    </span>
-                                    <span className="text-[10px] font-bold text-gray-400 uppercase">{uom?.symbol || item.uomId}</span>
-                                  </div>
-                                  {item.components && item.components.length > 0 && (
-                                    <div className="text-[8px] font-black text-purple-400 uppercase tracking-widest mt-[-2px]">
-                                      Total Stock (incl. Virtual)
-                                    </div>
-                                  )}
-                                  {profile?.role === 'admin' && reorderLevel > 0 && (
-                                    <div className="text-[8px] font-black text-gray-400 uppercase tracking-widest mt-[-2px]">
-                                      Re-order: {reorderLevel}
-                                    </div>
-                                  )}
-                                  {boq && (
-                                    <div className="mt-1 flex items-center justify-end space-x-2">
-                                      {boq.targetQuantity && (
-                                        <div className={cn(
-                                          "w-16 h-1 bg-gray-100 rounded-full overflow-hidden",
-                                          totalQty > boq.targetQuantity && "bg-red-100"
-                                        )}>
-                                          <div 
-                                            className={cn(
-                                              "h-full transition-all duration-500",
-                                              totalQty >= boq.targetQuantity ? "bg-green-500" : "bg-blue-500"
-                                            )}
-                                            style={{ width: `${Math.min(100, (totalQty / boq.targetQuantity) * 100)}%` }}
-                                          />
-                                        </div>
-                                      )}
-                                      <div className="flex items-center space-x-1 text-[10px] font-bold text-gray-400">
-                                        <Target size={10} />
-                                        <span>{boq.currentQuantity || 0}/{boq.targetQuantity || '∞'}</span>
-                                      </div>
-                                    </div>
-                                  )}
-                                </div>
-                              </div>
-                              
-                              <div className="mt-4 pt-4 border-t border-gray-50">
-                                {item.components && item.components.length > 0 && (
-                                  <div className="mb-4 space-y-2">
-                                    <p className="text-[8px] font-black text-gray-400 uppercase tracking-[0.2em] mb-2">Component Breakdown</p>
-                                    <div className="grid grid-cols-2 gap-2">
-                                      {item.components.map(comp => {
-                                        const compItem = items.find(i => i.id === comp.itemId);
-                                        const compInv = inventory.filter(inv => inv.itemId === comp.itemId && inv.locationId === selectedJobsiteId);
-                                        const looseStock = compInv.reduce((sum, i) => sum + i.quantity, 0);
-                                        const stockInKits = totalQty * comp.quantity;
-                                        const compTotal = looseStock + stockInKits;
-                                        const compUom = uoms.find(u => u.id === compItem?.uomId || u.symbol === compItem?.uomId);
-                                        
-                                        return (
-                                          <div key={comp.itemId} className="p-2 bg-gray-50 rounded-xl border border-gray-100 flex items-center justify-between">
-                                            <div className="min-w-0">
-                                              <p className="text-[10px] font-bold text-gray-900 truncate">{compItem?.name}</p>
-                                              <p className="text-[8px] text-gray-400 font-medium uppercase tracking-wider">Need {comp.quantity} {compUom?.symbol}</p>
-                                            </div>
-                                            <div className="text-right">
-                                              <p className={cn(
-                                                "text-[10px] font-black",
-                                                compTotal < comp.quantity ? "text-red-500" : "text-blue-600"
-                                              )}>{compTotal}</p>
-                                              <div className="flex flex-col items-end">
-                                                <p className="text-[8px] font-black text-gray-400 uppercase tracking-tighter">Total Stock</p>
-                                                {stockInKits > 0 && (
-                                                  <p className="text-[6px] font-bold text-purple-400 uppercase tracking-tighter">({stockInKits} in kits)</p>
-                                                )}
-                                              </div>
-                                            </div>
-                                          </div>
-                                        );
-                                      })}
-                                    </div>
-                                  </div>
-                                )}
-                                
-                                <div className="flex items-center justify-between">
-                                  <div className="flex items-center space-x-4">
-                                    {profile?.role === 'admin' && totalQty < reorderLevel && (
-                                      <div className="flex items-center space-x-1 text-orange-500">
-                                        <AlertTriangle size={12} />
-                                        <span className="text-[10px] font-bold uppercase">Low Stock</span>
-                                      </div>
-                                    )}
-                                    {profile?.role === 'admin' && averageCost !== undefined && (
-                                      <div className="flex flex-col">
-                                        <span className="text-[10px] font-black text-blue-600">₱{averageCost.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
-                                      </div>
-                                    )}
-                                  </div>
-                                  <button 
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      setRequestingItem(item);
-                                    }}
-                                    className="px-4 h-10 bg-gray-900 text-white text-[10px] font-black uppercase tracking-widest rounded-xl active:scale-95 transition-transform"
-                                  >
-                                    Request
-                                  </button>
-                                </div>
-                              </div>
-                            </Card>
-                          </motion.div>
-                        );
-                      })}
+                              <ItemCard 
+                                item={item} 
+                                entries={entries} 
+                                profile={profile}
+                                categories={categories}
+                                uoms={uoms}
+                                inventory={inventory}
+                                selectedJobsiteId={selectedJobsiteId}
+                                setRequestingItem={setRequestingItem}
+                                setViewingTransactions={setViewingTransactions}
+                              />
+                            </motion.div>
+                          );
+                        })}
+                      </div>
 
                       {globalSearchItems.length > 0 && (
                         <div className="space-y-4 pt-8 border-t border-gray-100">
@@ -552,7 +619,7 @@ export const InventoryList = () => {
                             <span className="text-[8px] font-bold text-gray-300 uppercase">Not in this jobsite</span>
                           </div>
                           <div className="grid grid-cols-1 gap-4">
-                            {globalSearchItems.map((item) => (
+                            {globalSearchItems.map((item: any) => (
                                <Card 
                                 key={`global-${item.id}`}
                                 className={cn(
@@ -579,7 +646,7 @@ export const InventoryList = () => {
                                   <button 
                                     onClick={(e) => {
                                       e.stopPropagation();
-                                      setRequestingItem(item);
+                                      setRequestingItem({ item });
                                     }}
                                     className="px-4 h-10 bg-white text-blue-600 border border-blue-100 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-blue-600 hover:text-white transition-all shadow-sm"
                                   >
@@ -600,7 +667,7 @@ export const InventoryList = () => {
                           className="mt-6"
                         />
                       )}
-                    </div>
+                    </>
                   )}
                 </div>
               )}
@@ -621,7 +688,9 @@ export const InventoryList = () => {
       <Modal isOpen={!!requestingItem} onClose={() => setRequestingItem(null)} title="Request Item">
         {requestingItem && (
           <RequestForm 
-            item={requestingItem}
+            item={requestingItem.item}
+            initialVariant={requestingItem.variant}
+            initialCustomSpec={requestingItem.customSpec}
             locations={locations}
             uoms={uoms}
             profile={profile}

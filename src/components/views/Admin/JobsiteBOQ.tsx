@@ -1,14 +1,169 @@
 import React, { useState, useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { Search, Plus, Trash2, Check, Loader2, AlertTriangle, ChevronDown, Package, Box, ArrowLeft, X, Download, Upload } from 'lucide-react';
+import { Search, Plus, Trash2, Check, Loader2, AlertTriangle, ChevronDown, Package, Box, ArrowLeft, X, Download, Upload, ChevronUp } from 'lucide-react';
+import { motion, AnimatePresence } from 'motion/react';
 import { useAuth, useData } from '../../../App';
 import { BOQItem, Item } from '../../../types';
 import { addBOQItem, updateBOQItem, deleteBOQItem, replaceJobsiteBOQ } from '../../../services/inventoryService';
-import { cn } from '../../../lib/utils';
+import { cn, normalizeVariant } from '../../../lib/utils';
 import { useDebounce } from '../../../hooks/useDebounce';
 import { Header } from '../../common/Header';
 import { Card } from '../../common/Card';
 import { exportJobsiteBOQToCSV, importJobsiteBOQFromCSV } from '../../../services/csvService';
+
+const BOQItemGroup = ({ itemId, boqItems, items, uoms, inventory, jobsiteId }: { itemId: string; boqItems: BOQItem[]; items: Item[]; uoms: any[]; inventory: any[]; jobsiteId: string }) => {
+  const [isExpanded, setIsExpanded] = useState(false);
+  const item = items.find(i => i.id === itemId);
+  const uom = uoms.find(u => u.id === item?.uomId || u.symbol === item?.uomId);
+
+  // Pre-calculate delivered stock for each variant and filter out "empty" ones
+  const activeEntries = boqItems.map(boq => {
+    const delivered = inventory
+      .filter(inv => {
+        const matchesLocation = inv.locationId === jobsiteId;
+        const matchesItem = inv.itemId === boq.itemId;
+        const matchesVariant = !boq.variant || normalizeVariant(inv.variant) === normalizeVariant(boq.variant);
+        return matchesLocation && matchesItem && matchesVariant;
+      })
+      .reduce((sum, inv) => sum + inv.quantity, 0);
+    
+    return { boq, delivered };
+  });
+
+  if (activeEntries.length === 0) return null;
+
+  return (
+    <Card className="border-gray-100 shadow-sm overflow-hidden">
+      <div 
+        className="p-4 flex justify-between items-center cursor-pointer active:bg-gray-50 transition-colors"
+        onClick={() => setIsExpanded(!isExpanded)}
+      >
+        <div className="flex items-center space-x-3">
+          <div className="w-10 h-10 bg-blue-50 text-blue-600 rounded-xl flex items-center justify-center">
+            <Box size={20} />
+          </div>
+          <div>
+            <h4 className="font-bold text-gray-900">{item?.name}</h4>
+            <p className="text-[10px] text-gray-400 font-bold uppercase tracking-wider">
+              {activeEntries.length} {activeEntries.length === 1 ? 'Variant' : 'Variants'} in BOQ
+            </p>
+          </div>
+        </div>
+        <motion.div
+          animate={{ rotate: isExpanded ? 180 : 0 }}
+          transition={{ duration: 0.3 }}
+          className="text-gray-400"
+        >
+          <ChevronDown size={18} />
+        </motion.div>
+      </div>
+
+      <AnimatePresence>
+        {isExpanded && (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: "auto", opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={{ duration: 0.3 }}
+          >
+            <div className="divide-y divide-gray-50 border-t border-gray-50">
+              {activeEntries.map(({ boq, delivered }) => {
+                const isOverTarget = (boq.targetQuantity || 0) > 0 && delivered > (boq.targetQuantity || 0);
+                
+                return (
+                  <div key={boq.id} className={cn("p-4 group", isOverTarget && "bg-red-50/10")}>
+                    <div className="flex justify-between items-start mb-3">
+                      <div className="flex flex-wrap gap-2">
+                        {boq.variant && Object.entries(boq.variant).map(([k, v]) => (
+                          <span key={k} className="text-[10px] px-2 py-1 bg-blue-100 text-blue-700 rounded-lg font-black uppercase tracking-tight">
+                            {String(v)}
+                          </span>
+                        ))}
+                        {boq.customSpec && (
+                          <span className="text-[10px] px-2 py-1 bg-purple-100 text-purple-700 rounded-lg font-black uppercase tracking-tight">
+                            {boq.customSpec}
+                          </span>
+                        )}
+                        {isOverTarget && (
+                          <div className="flex items-center space-x-1 text-red-600 bg-red-100 px-2 py-1 rounded-lg">
+                            <AlertTriangle size={10} />
+                            <span className="text-[8px] font-black uppercase">Over Target</span>
+                          </div>
+                        )}
+                      </div>
+                      <button 
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          if (confirm('Remove this variant from BOQ?')) deleteBOQItem(boq.id);
+                        }}
+                        className="p-1.5 text-gray-300 hover:text-red-500 hover:bg-red-50 rounded-lg transition-all opacity-0 group-hover:opacity-100"
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="space-y-1">
+                        <label className="text-[9px] font-black text-gray-400 uppercase tracking-[0.2em] ml-1">Target Qty</label>
+                        <div className="relative">
+                          <input 
+                            type="number"
+                            placeholder="Unlimited"
+                            defaultValue={boq.targetQuantity || ''}
+                            onBlur={async (e) => {
+                              const val = e.target.value === '' ? null : Number(e.target.value);
+                              if (val !== boq.targetQuantity) await updateBOQItem(boq.id, { targetQuantity: val as any });
+                            }}
+                            className={cn(
+                              "w-full pl-3 pr-12 py-2.5 rounded-xl text-xs font-bold ring-1 ring-inset ring-gray-100 outline-none focus:ring-2 focus:ring-blue-500",
+                              isOverTarget ? "bg-red-50 ring-red-100 text-red-900" : "bg-gray-50"
+                            )}
+                          />
+                          <span className="absolute right-3 top-1/2 -translate-y-1/2 text-[10px] font-black text-gray-400 uppercase">
+                            {uom?.symbol || item?.uomId}
+                          </span>
+                        </div>
+                      </div>
+                      <div className="space-y-1">
+                        <label className="text-[9px] font-black text-gray-400 uppercase tracking-[0.2em] ml-1">Budget Price</label>
+                        <div className="relative">
+                          <span className="absolute left-3 top-1/2 -translate-y-1/2 text-[10px] font-black text-gray-400">₱</span>
+                          <input 
+                            type="number"
+                            step="0.01"
+                            placeholder="0.00"
+                            defaultValue={boq.unitPrice || ''}
+                            onBlur={async (e) => {
+                              const val = e.target.value === '' ? null : Number(e.target.value);
+                              if (val !== boq.unitPrice) await updateBOQItem(boq.id, { unitPrice: val as any });
+                            }}
+                            className="w-full pl-7 pr-3 py-2.5 bg-gray-50 ring-1 ring-inset ring-gray-100 rounded-xl text-xs font-bold outline-none focus:ring-2 focus:ring-blue-500"
+                          />
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center justify-between mt-3 px-1">
+                      <div className="flex items-center space-x-2">
+                        <div className="w-1.5 h-1.5 rounded-full bg-blue-500" />
+                        <span className="text-[9px] font-black text-gray-500 uppercase tracking-widest">Delivered: {delivered}</span>
+                      </div>
+                      {boq.targetQuantity && (
+                        <span className="text-[9px] font-black text-gray-400 uppercase tracking-widest">
+                          Remaining: {Math.max(0, boq.targetQuantity - delivered)}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </Card>
+  );
+};
 
 export const JobsiteBOQView = () => {
   const { jobsiteId } = useParams<{ jobsiteId: string }>();
@@ -33,7 +188,7 @@ export const JobsiteBOQView = () => {
     const groups: Record<string, { 
       categoryName: string; 
       parentName?: string; 
-      items: typeof jobsiteBOQ 
+      itemGroups: Record<string, BOQItem[]> 
     }> = {};
 
     jobsiteBOQ.forEach(boq => {
@@ -46,19 +201,14 @@ export const JobsiteBOQView = () => {
         groups[groupId] = {
           categoryName: category?.name || 'Uncategorized',
           parentName: parentCategory?.name,
-          items: []
+          itemGroups: {}
         };
       }
-      groups[groupId].items.push(boq);
-    });
-
-    // Sort items within groups alphabetically
-    Object.values(groups).forEach(group => {
-      group.items.sort((a, b) => {
-        const nameA = items.find(i => i.id === a.itemId)?.name || '';
-        const nameB = items.find(i => i.id === b.itemId)?.name || '';
-        return nameA.localeCompare(nameB);
-      });
+      
+      if (!groups[groupId].itemGroups[boq.itemId]) {
+        groups[groupId].itemGroups[boq.itemId] = [];
+      }
+      groups[groupId].itemGroups[boq.itemId].push(boq);
     });
 
     // Sort groups alphabetically by parent name then category name
@@ -212,7 +362,8 @@ export const JobsiteBOQView = () => {
                   const needsCustomSpec = item.requireCustomSpec;
                   const needsSelection = hasVariants || needsCustomSpec;
                   const isSelecting = selectedItemForVariant === item.id;
-                  const isInBOQ = !needsSelection && jobsiteBOQ.some(b => b.itemId === item.id);
+                  const hasGenericInBOQ = jobsiteBOQ.some(b => b.itemId === item.id && (!b.variant || Object.keys(b.variant).length === 0) && !b.customSpec);
+                  const isInBOQ = !needsSelection && hasGenericInBOQ;
 
                   return (
                     <div key={item.id} className="border-b border-gray-50 last:border-0">
@@ -223,7 +374,7 @@ export const JobsiteBOQView = () => {
                         <div className="flex-1" onClick={() => needsSelection ? setSelectedItemForVariant(isSelecting ? null : item.id) : handleAdd(item.id)}>
                           <div className="flex items-center space-x-2">
                             <p className="text-sm font-bold text-gray-900">{item.name}</p>
-                            {isInBOQ && <span className="text-[8px] font-black bg-gray-200 text-gray-500 px-1.5 py-0.5 rounded uppercase tracking-widest">In BOQ</span>}
+                            {hasGenericInBOQ && <span className="text-[8px] font-black bg-gray-200 text-gray-500 px-1.5 py-0.5 rounded uppercase tracking-widest">In BOQ</span>}
                           </div>
                           <p className="text-[10px] text-gray-400 font-medium uppercase tracking-wider">
                             {uoms.find(u => u.id === item.uomId || u.symbol === item.uomId)?.symbol || item.uomId}
@@ -280,12 +431,11 @@ export const JobsiteBOQView = () => {
                           {(() => {
                             const isVariantInBOQ = jobsiteBOQ.some(b => 
                               b.itemId === item.id && 
-                              JSON.stringify(b.variant) === JSON.stringify(selectedVariant) &&
+                              normalizeVariant(b.variant) === normalizeVariant(selectedVariant) &&
                               b.customSpec === (selectedCustomSpec || undefined)
                             );
 
                             const canAdd = !isSubmitting && !isVariantInBOQ && 
-                              (!item.requireVariant || Object.keys(selectedVariant).length === (item.variantAttributes?.length || 0)) &&
                               (!item.requireCustomSpec || selectedCustomSpec.trim().length > 0);
 
                             return (
@@ -419,123 +569,17 @@ export const JobsiteBOQView = () => {
                   </div>
                   
                   <div className="grid grid-cols-1 gap-4">
-                    {group.items.map(boq => {
-                      const item = items.find(i => i.id === boq.itemId);
-                      const uom = uoms.find(u => u.id === item?.uomId || u.symbol === item?.uomId);
-                      const currentStock = inventory
-                        .filter(inv => {
-                          const matchesLocation = inv.locationId === jobsiteId;
-                          const matchesItem = inv.itemId === boq.itemId;
-                          const matchesVariant = !boq.variant || JSON.stringify(inv.variant) === JSON.stringify(boq.variant);
-                          return matchesLocation && matchesItem && matchesVariant;
-                        })
-                        .reduce((sum, inv) => sum + inv.quantity, 0);
-                      const isOverTarget = (boq.targetQuantity || 0) > 0 && currentStock > (boq.targetQuantity || 0);
-
-                      return (
-                        <Card key={boq.id} className={cn(
-                          "p-4 space-y-4 transition-all relative overflow-hidden",
-                          isOverTarget ? "border-red-200 bg-red-50/10" : "border-gray-100"
-                        )}>
-                          <div className="flex justify-between items-start">
-                            <div className="flex-1">
-                              <div className="flex items-center space-x-2">
-                                <h4 className="font-bold text-gray-900">{item?.name}</h4>
-                                {isOverTarget && (
-                                  <div className="flex items-center space-x-1 text-red-600 bg-red-100 px-2 py-0.5 rounded-full">
-                                    <AlertTriangle size={10} />
-                                    <span className="text-[8px] font-black uppercase tracking-tight">Over Target</span>
-                                  </div>
-                                )}
-                              </div>
-                              <div className="flex flex-wrap gap-2 mt-1">
-                                <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">{uom?.symbol || item?.uomId}</p>
-                                {boq.variant && Object.entries(boq.variant).map(([k, v]) => (
-                                  <span key={k} className="text-[8px] px-1.5 py-0.5 bg-blue-50 text-blue-600 rounded font-bold uppercase">
-                                    {v}
-                                  </span>
-                                ))}
-                                {boq.customSpec && (
-                                  <span key="spec" className="text-[8px] px-1.5 py-0.5 bg-purple-50 text-purple-600 rounded font-bold uppercase">
-                                    {boq.customSpec}
-                                  </span>
-                                )}
-                              </div>
-                            </div>
-                            <button 
-                              onClick={() => deleteBOQItem(boq.id)}
-                              className="p-2 text-gray-300 hover:text-red-500 hover:bg-red-50 rounded-xl transition-all"
-                            >
-                              <Trash2 size={16} />
-                            </button>
-                          </div>
-                          
-                          <div className="grid grid-cols-2 gap-4">
-                            <div className="space-y-1">
-                              <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest pl-1">Target Qty</label>
-                              <div className="relative">
-                                <input 
-                                  type="number"
-                                  placeholder="Unlimited"
-                                  defaultValue={boq.targetQuantity || ''}
-                                  onBlur={async (e) => {
-                                    const val = e.target.value === '' ? null : Number(e.target.value);
-                                    if (val !== boq.targetQuantity) {
-                                      await updateBOQItem(boq.id, { targetQuantity: val as any });
-                                    }
-                                  }}
-                                  className={cn(
-                                    "w-full p-3 rounded-xl text-xs font-bold outline-none focus:ring-2 focus:ring-blue-500 transition-colors",
-                                    isOverTarget ? "bg-red-50 border-red-100 text-red-900" : "bg-gray-50 border-transparent"
-                                  )}
-                                />
-                              </div>
-                            </div>
-                            <div className="space-y-1">
-                              <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest pl-1">Budget Price</label>
-                              <div className="relative">
-                                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-[10px] font-bold text-gray-400">₱</span>
-                                <input 
-                                  type="number"
-                                  step="0.01"
-                                  placeholder="0.00"
-                                  defaultValue={boq.unitPrice || ''}
-                                  onBlur={async (e) => {
-                                    const val = e.target.value === '' ? null : Number(e.target.value);
-                                    if (val !== boq.unitPrice) {
-                                      await updateBOQItem(boq.id, { unitPrice: val as any });
-                                    }
-                                  }}
-                                  className="w-full pl-6 pr-3 py-3 bg-gray-50 border-transparent rounded-xl text-xs font-bold outline-none focus:ring-2 focus:ring-blue-500"
-                                />
-                              </div>
-                            </div>
-                          </div>
-
-                          <div className="flex items-center justify-between pt-2 border-t border-gray-50">
-                            <div className="flex items-center space-x-2">
-                              <div className="w-2 h-2 rounded-full bg-blue-600" />
-                              <span className="text-[10px] font-bold text-gray-500 uppercase tracking-widest">Delivered: {currentStock}</span>
-                            </div>
-                            {boq.targetQuantity && (
-                              <div className="flex items-center space-x-2">
-                                <div className="w-2 h-2 rounded-full bg-gray-300" />
-                                <span className="text-[10px] font-bold text-gray-500 uppercase tracking-widest">Remaining: {Math.max(0, boq.targetQuantity - currentStock)}</span>
-                              </div>
-                            )}
-                          </div>
-
-                          {isOverTarget && (
-                            <div className="mt-2 p-2 bg-red-50 rounded-lg flex items-center space-x-2">
-                              <AlertTriangle size={12} className="text-red-600" />
-                              <p className="text-[9px] font-bold text-red-600 uppercase tracking-tight">
-                                Delivered ({currentStock}) exceeds target ({boq.targetQuantity})
-                              </p>
-                            </div>
-                          )}
-                        </Card>
-                      );
-                    })}
+                    {Object.entries(group.itemGroups).map(([itemId, boqItems]) => (
+                      <BOQItemGroup 
+                        key={itemId} 
+                        itemId={itemId}
+                        boqItems={boqItems} 
+                        items={items} 
+                        uoms={uoms} 
+                        inventory={inventory} 
+                        jobsiteId={jobsiteId!} 
+                      />
+                    ))}
                   </div>
                 </div>
               ))}

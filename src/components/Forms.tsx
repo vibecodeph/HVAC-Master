@@ -8,7 +8,7 @@ import {
   addPurchaseOrder, updatePurchaseOrder,
   addPOPayment, updatePOPayment, deletePOPayment, subscribeToPOPayments
 } from '../services/inventoryService';
-import { cn } from '../lib/utils';
+import { cn, normalizeVariant } from '../lib/utils';
 import { Modal } from './common/Modal';
 import { 
   Item, Category, UOM, Location, Inventory, Transaction, Request, 
@@ -26,15 +26,28 @@ interface RequestFormProps {
   uoms: UOM[];
   profile: UserProfile | null;
   defaultJobsiteId?: string;
+  initialVariant?: Record<string, string>;
+  initialCustomSpec?: string;
   onComplete: () => void;
 }
 
-export const RequestForm = ({ item, locations, uoms, profile, defaultJobsiteId, onComplete }: RequestFormProps) => {
+export const RequestForm = ({ 
+  item, locations, uoms, profile, 
+  defaultJobsiteId, initialVariant, initialCustomSpec,
+  onComplete 
+}: RequestFormProps) => {
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [selectedVariant, setSelectedVariant] = useState<Record<string, string>>({});
+  const [selectedVariant, setSelectedVariant] = useState<Record<string, string>>(initialVariant || {});
   const [selectedUomId, setSelectedUomId] = useState(() => {
     return uoms.find(u => u.id === item.uomId || u.symbol === item.uomId)?.id || item.uomId;
   });
+
+  // Reset variant when initialVariant changes (e.g. user clicks request on a different item variant)
+  useEffect(() => {
+    if (initialVariant) {
+      setSelectedVariant(initialVariant);
+    }
+  }, [initialVariant]);
 
   const isVariantComplete = useMemo(() => {
     if (!item.requireVariant || !item.variantAttributes || item.variantAttributes.length === 0) return true;
@@ -127,6 +140,7 @@ export const RequestForm = ({ item, locations, uoms, profile, defaultJobsiteId, 
               name="customSpec" 
               type="text" 
               required 
+              defaultValue={initialCustomSpec}
               placeholder={`Enter ${item.customSpecLabel || 'detail'}...`}
               className="w-full p-4 bg-gray-100 rounded-2xl text-sm font-medium outline-none focus:ring-2 focus:ring-blue-500" 
             />
@@ -868,7 +882,7 @@ export const ItemForm = ({ uoms, categories, locations, items, initialData, isDu
   const [variantConfigs, setVariantConfigs] = useState<Record<string, { reorderLevel?: number; averageCost?: number }>>(() => {
     const initial: Record<string, { reorderLevel?: number; averageCost?: number }> = {};
     initialData?.variantConfigs?.forEach(vc => {
-      initial[JSON.stringify(vc.variant)] = { reorderLevel: vc.reorderLevel, averageCost: vc.averageCost };
+      initial[normalizeVariant(vc.variant)] = { reorderLevel: vc.reorderLevel, averageCost: vc.averageCost };
     });
     return initial;
   });
@@ -943,7 +957,7 @@ export const ItemForm = ({ uoms, categories, locations, items, initialData, isDu
           averageCost: Number(formData.get('averageCost')) || 0,
           variantConfigs: combinations
             .map(variant => {
-              const key = JSON.stringify(variant);
+              const key = normalizeVariant(variant);
               const config = variantConfigs[key];
               if (!config) return null;
               if (config.reorderLevel === undefined && config.averageCost === undefined) return null;
@@ -1403,7 +1417,7 @@ export const ItemForm = ({ uoms, categories, locations, items, initialData, isDu
                 
                 <div className="space-y-3">
                   {combinations.map((variant, idx) => {
-                    const key = JSON.stringify(variant);
+                    const key = normalizeVariant(variant);
                     const config = variantConfigs[key] || {};
                     
                     return (
@@ -1538,7 +1552,7 @@ export const TransactionForm = ({ items, locations, inventory, uoms, purchaseOrd
   const currentVariantConfig = useMemo(() => {
     if (!selectedItem || Object.keys(selectedVariant).length === 0) return null;
     return selectedItem.variantConfigs?.find(vc => 
-      JSON.stringify(vc.variant) === JSON.stringify(selectedVariant)
+      normalizeVariant(vc.variant) === normalizeVariant(selectedVariant)
     );
   }, [selectedItem, selectedVariant]);
 

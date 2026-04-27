@@ -79,6 +79,31 @@ export const Transactions = () => {
       const to = locations.find(l => l.id === first.toLocationId);
       const isExpanded = expandedBatches[batchId];
 
+      // Consolidate duplicates within the batch (e.g. pick vs delivery for same request)
+      const consolidatedTransactions = Object.values(batchTransactions.reduce((acc, t) => {
+        // Group by Item + Variant + RequestID to follow the lifecycle of a specific request
+        const reqId = t.requestIds?.[0] || 'no-req';
+        const key = `${t.itemId}_${JSON.stringify(t.variant)}_${t.customSpec || ''}_${reqId}_${t.serialNumber || ''}`;
+        
+        if (!acc[key]) {
+          acc[key] = t;
+        } else {
+          // If we have both pick and delivery, prefer delivery as the final state
+          if (t.type === 'delivery' && acc[key].type === 'pick') {
+            acc[key] = t;
+          } else if (t.type === acc[key].type) {
+             // If same type (e.g. multiple picks for same item), we could sum, 
+             // but usually they are distinct requests. 
+             // If they share a request ID, they are truly duplicates or partials.
+             // For now, let's just keep the latest by timestamp.
+             if (t.timestamp && acc[key].timestamp && t.timestamp.toMillis() > acc[key].timestamp.toMillis()) {
+               acc[key] = t;
+             }
+          }
+        }
+        return acc;
+      }, {} as Record<string, Transaction>));
+
       return (
         <Card key={batchId} className="overflow-hidden">
           <div 
@@ -93,13 +118,18 @@ export const Transactions = () => {
                 {from?.name || first.fromLocationId || 'Warehouse'} &rarr; {to?.name || (first.toLocationId === 'in-transit' ? 'In Transit' : (first.toLocationId || 'Jobsite'))}
               </p>
               <p className="text-[10px] font-bold text-blue-600 uppercase tracking-widest">
-                {first.type === 'pick' ? 'Bulk Pick' : 'Bulk Delivery'}: {batchTransactions.length} items
+                {consolidatedTransactions.some(t => t.type === 'delivery') ? 'Bulk Delivery' : 'Bulk Pick'}: {consolidatedTransactions.length} items
               </p>
             </div>
-            <div className="text-right flex items-center space-x-2">
-              <p className="text-[10px] font-bold text-gray-400 uppercase">
-                {typeof first.timestamp?.toDate === 'function' ? first.timestamp.toDate().toLocaleDateString() : 'Just now'}
-              </p>
+            <div className="text-right flex items-center space-x-3">
+              <div className="flex flex-col items-end">
+                <span className="text-xs font-black text-blue-900 tracking-tighter">
+                  {batchId}
+                </span>
+                <p className="text-[8px] font-bold text-gray-400 uppercase tracking-widest">
+                  {typeof first.timestamp?.toDate === 'function' ? first.timestamp.toDate().toLocaleDateString() : 'Just now'}
+                </p>
+              </div>
               <ChevronRight size={16} className={cn("text-gray-400 transition-transform", isExpanded && "rotate-90")} />
             </div>
           </div>
@@ -112,12 +142,19 @@ export const Transactions = () => {
                 exit={{ height: 0 }}
                 className="border-t border-blue-100 bg-white"
               >
-                {batchTransactions.map(t => {
+                {consolidatedTransactions.map(t => {
                   const item = items.find(i => i.id === t.itemId);
                   return (
                     <div key={t.id} className="p-3 border-b border-gray-50 last:border-0 flex justify-between items-center">
                       <div>
-                        <p className="text-xs font-bold text-gray-900">{item?.name}</p>
+                        <div className="flex items-center space-x-2">
+                          <p className="text-xs font-bold text-gray-900">{item?.name}</p>
+                          {t.type === 'delivery' ? (
+                            <span className="text-[8px] font-black bg-green-100 text-green-600 px-1 rounded uppercase tracking-tighter">Delivered</span>
+                          ) : (
+                            <span className="text-[8px] font-black bg-blue-100 text-blue-600 px-1 rounded uppercase tracking-tighter">In Transit</span>
+                          )}
+                        </div>
                         {t.variant && Object.keys(t.variant).length > 0 && (
                           <p className="text-[10px] text-blue-500 font-bold uppercase">
                             {Object.values(t.variant).join(', ')}

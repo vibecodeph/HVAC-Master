@@ -15,3 +15,13 @@ export function getMillis(timestamp: any): number {
   }
   return 0;
 }
+
+export function normalizeVariant(variant?: Record<string, any>): string {
+  if (!variant || Object.keys(variant).length === 0) return '{}';
+  const sortedKeys = Object.keys(variant).sort();
+  const normalized: Record<string, any> = {};
+  sortedKeys.forEach(key => {
+    normalized[key] = variant[key];
+  });
+  return JSON.stringify(normalized);
+}

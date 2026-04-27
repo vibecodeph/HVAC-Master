@@ -22,6 +22,7 @@ import {
 } from 'firebase/firestore';
 import { db, auth, handleFirestoreError, OperationType } from '../firebase';
 import { Item, Category, Location, Inventory, Transaction, UOM, Tag, UserProfile, Asset, Request, BOQItem, UnplannedStock, SystemConfig, PurchaseOrder, POPayment } from '../types';
+import { normalizeVariant } from '../lib/utils';
 
 // --- Generic Helpers ---
 const getCollection = (name: string) => collection(db, name);
@@ -158,7 +159,7 @@ export const recordTransaction = async (transaction: Omit<Transaction, 'id' | 'u
     const findBoq = async (locId: string) => {
       const q = query(collection(db, 'boq'), where('jobsiteId', '==', locId), where('itemId', '==', itemId));
       const snap = await getDocs(q);
-      const match = snap.docs.find(d => JSON.stringify(d.data().variant || {}) === JSON.stringify(variant || {}));
+      const match = snap.docs.find(d => normalizeVariant(d.data().variant) === normalizeVariant(variant));
       return match?.id || null;
     };
 
@@ -1254,6 +1255,17 @@ export const updateRequest = async (id: string, data: Partial<Request>) => {
   }
 };
 
+export const cancelRequest = async (id: string) => {
+  try {
+    await updateDoc(doc(db, 'requests', id), {
+      status: 'cancelled',
+      updatedAt: serverTimestamp()
+    });
+  } catch (error) {
+    handleFirestoreError(error, OperationType.UPDATE, 'requests');
+  }
+};
+
 export const approveRequest = async (id: string, approvedQty: number, approverId: string, approverName?: string, engineerNote?: string) => {
   try {
     const requestRef = doc(db, 'requests', id);
@@ -1504,12 +1516,28 @@ export const recordBulkPick = async (
   options?: { customBatchId?: string; customDate?: Date }
 ) => {
   try {
+    // If no custom DR is provided, check if we can reuse an existing active batchId
+    let reusedBatchId = options?.customBatchId;
+    
+    if (!reusedBatchId) {
+      const activeDeliveriesQuery = query(
+        collection(db, 'requests'), 
+        where('status', '==', 'for delivery'), 
+        limit(1)
+      );
+      const activeDeliveriesSnap = await getDocs(activeDeliveriesQuery);
+      if (!activeDeliveriesSnap.empty) {
+        reusedBatchId = activeDeliveriesSnap.docs[0].data().batchId;
+        console.log("[BulkPick] Reusing existing batchId:", reusedBatchId);
+      }
+    }
+
     await runTransaction(db, async (dbTransaction) => {
-      let batchId = options?.customBatchId;
+      let batchId = reusedBatchId;
       let counterUpdate: any = null;
       let counterRef: any = null;
       
-      // If no custom DR is provided, generate one
+      // If no custom DR and no existing reused DR, generate a new one
       if (!batchId) {
         const now = new Date();
         const yearYY = now.getFullYear().toString().slice(-2);
@@ -1905,8 +1933,8 @@ export const recordBulkReceive = async (requestIds: string[], receiverId: string
       const { itemId, jobsiteId, variant } = data;
       const q = query(collection(db, 'boq'), where('jobsiteId', '==', jobsiteId), where('itemId', '==', itemId));
       const snap = await getDocs(q);
-      const variantStr = JSON.stringify(variant || {});
-      const match = snap.docs.find(d => JSON.stringify(d.data().variant || {}) === variantStr);
+      const variantStr = normalizeVariant(variant);
+      const match = snap.docs.find(d => normalizeVariant(d.data().variant) === variantStr);
       if (match) {
         const key = `${itemId}_${jobsiteId}_${variantStr}`;
         boqMap.set(key, match.id);
@@ -1915,9 +1943,44 @@ export const recordBulkReceive = async (requestIds: string[], receiverId: string
 
     await runTransaction(db, async (dbTransaction) => {
       console.log("[BulkReceive] Starting transaction for:", validRequests.length, "valid requests");
+      
+      // Determine shared batchId for grouping in transaction history
+      let sharedBatchId: string | null = null;
+      if (validRequests.length > 0) {
+        const firstBatchId = (validRequests[0].data() as Request).batchId;
+        const allSame = validRequests.every(d => (d.data() as Request).batchId === firstBatchId);
+        
+        if (allSame && firstBatchId) {
+          sharedBatchId = firstBatchId;
+        } else if (validRequests.length > 1) {
+          // Generate new one if multiple items received together don't share one
+          const now = new Date();
+          const yearYY = now.getFullYear().toString().slice(-2);
+          const counterRef = doc(db, 'counters', 'dr_number');
+          const counterDoc = await dbTransaction.get(counterRef);
+          let nextSeries = 1;
+          if (counterDoc.exists()) {
+            const data = counterDoc.data() as { year: string; lastSeries: number };
+            if (data.year === yearYY) {
+              nextSeries = (data.lastSeries || 0) + 1;
+            }
+          }
+          const seriesStr = nextSeries.toString().padStart(4, '0');
+          sharedBatchId = `DR#${yearYY}-${seriesStr}`;
+          dbTransaction.set(counterRef, {
+            year: yearYY,
+            lastSeries: nextSeries,
+            updatedAt: serverTimestamp()
+          });
+        } else {
+          sharedBatchId = firstBatchId || null;
+        }
+      }
+
       const requestData: any[] = [];
       const itemCache: Record<string, Item> = {};
       const invCache: Record<string, { ref: any, quantity: number, serialNumber?: string, metadata: any }> = {};
+      const boqCache: Record<string, { ref: any, quantity: number }> = {};
 
       const locMap = new Map();
       const isInternal = (loc: any) => loc?.exists() && (loc.data()?.type === 'warehouse' || loc.data()?.type === 'jobsite');
@@ -1944,6 +2007,21 @@ export const recordBulkReceive = async (requestIds: string[], receiverId: string
         if (!itemData) {
           console.warn("[BulkReceive] Item not found:", itemId);
           continue;
+        }
+
+        // Pre-fetch BOQ data
+        const variantStr = normalizeVariant(variant);
+        const boqKey = `${itemId}_${jobsiteId}_${variantStr}`;
+        const boqId = boqMap.get(boqKey);
+        if (boqId && !boqCache[boqId]) {
+          const boqRef = doc(db, 'boq', boqId);
+          const boqDoc = await dbTransaction.get(boqRef);
+          if (boqDoc.exists()) {
+            boqCache[boqId] = {
+              ref: boqRef,
+              quantity: (boqDoc.data().currentQuantity || 0) as number
+            };
+          }
         }
 
         if (serialNumbers && serialNumbers.length > 0) {
@@ -2015,6 +2093,7 @@ export const recordBulkReceive = async (requestIds: string[], receiverId: string
               userId: receiverId,
               userName: receiverName || '',
               timestamp: serverTimestamp(),
+              batchId: sharedBatchId,
               requestIds: [requestId]
             }));
 
@@ -2048,6 +2127,7 @@ export const recordBulkReceive = async (requestIds: string[], receiverId: string
             userId: receiverId,
             userName: receiverName || '',
             timestamp: serverTimestamp(),
+            batchId: sharedBatchId,
             requestIds: [requestId]
           }));
         }
@@ -2055,25 +2135,22 @@ export const recordBulkReceive = async (requestIds: string[], receiverId: string
         // Update Request Status to 'delivered'
         dbTransaction.update(requestRef, cleanData({
           status: 'delivered',
+          batchId: sharedBatchId,
           deliveredAt: serverTimestamp(),
           receiverId,
           receiverName: receiverName || ''
         }));
 
         // Update Jobsite BOQ currentQuantity
-        const variantStr = JSON.stringify(variant || {});
+        const variantStr = normalizeVariant(variant);
         const key = `${itemId}_${jobsiteId}_${variantStr}`;
         const boqId = boqMap.get(key);
-        if (boqId) {
-          const boqRef = doc(db, 'boq', boqId);
-          // We need current quantity from the BOQ doc
-          // Since we already did a query outside, we might as well have fetched the quantities too,
-          // but fetching inside transaction is safer if we have the Ref.
-          const boqDoc = await dbTransaction.get(boqRef);
-          if (boqDoc.exists()) {
-            const current = (boqDoc.data().currentQuantity || 0) as number;
-            dbTransaction.update(boqRef, { currentQuantity: current + baseQuantity });
-          }
+        if (boqId && boqCache[boqId]) {
+          const { ref, quantity } = boqCache[boqId];
+          const newQty = quantity + baseQuantity;
+          dbTransaction.update(ref, { currentQuantity: newQty });
+          // Update cache for consecutive requests for the same BOQ item in this batch
+          boqCache[boqId].quantity = newQty;
         }
       }
 
@@ -2229,37 +2306,71 @@ export const recordBulkPullout = async (
 
   try {
     await runTransaction(db, async (dbTransaction) => {
+      // 1. READS
+      const invCache: Record<string, { ref: any, quantity: number, exists: boolean, data?: any }> = {};
+      
+      for (const selection of selections) {
+        if (selection.quantity <= 0) continue;
+        
+        // Source Inventory
+        const fromInvRef = doc(db, 'inventory', selection.invId);
+        if (!invCache[fromInvRef.path]) {
+          const snap = await dbTransaction.get(fromInvRef);
+          invCache[fromInvRef.path] = {
+            ref: fromInvRef,
+            quantity: (snap.exists() ? snap.data()?.quantity : 0) || 0,
+            exists: snap.exists(),
+            data: snap.data()
+          };
+        }
+
+        // Destination Inventory
+        if (toLocationId) {
+          const toInvRef = getInventoryRef(selection.itemId, toLocationId, selection.variant || undefined, selection.customSpec || undefined);
+          if (!invCache[toInvRef.path]) {
+            const snap = await dbTransaction.get(toInvRef);
+            invCache[toInvRef.path] = {
+              ref: toInvRef,
+              quantity: (snap.exists() ? snap.data()?.quantity : 0) || 0,
+              exists: snap.exists(),
+              data: snap.data()
+            };
+          }
+        }
+      }
+
+      // 2. WRITES
       for (const selection of selections) {
         if (selection.quantity <= 0) continue;
 
-        const fromInvRef = doc(db, 'inventory', selection.invId);
-        const fromInvDoc = await dbTransaction.get(fromInvRef);
+        const fromInvPath = doc(db, 'inventory', selection.invId).path;
+        const fromInvInfo = invCache[fromInvPath];
         
-        if (!fromInvDoc.exists()) continue;
-        const invData = fromInvDoc.data() as Inventory;
+        if (!fromInvInfo || !fromInvInfo.exists) continue;
 
-        if (invData.quantity < selection.quantity) {
+        if (fromInvInfo.quantity < selection.quantity) {
           throw new Error(`Insufficient stock for ${selection.itemId}`);
         }
 
         // Update Source Inventory
-        dbTransaction.update(fromInvRef, {
-          quantity: invData.quantity - selection.quantity,
+        fromInvInfo.quantity -= selection.quantity;
+        dbTransaction.update(fromInvInfo.ref, {
+          quantity: fromInvInfo.quantity,
           updatedAt: serverTimestamp()
         });
 
         // Update Destination Inventory
         if (toLocationId) {
           const toInvRef = getInventoryRef(selection.itemId, toLocationId, selection.variant || undefined, selection.customSpec || undefined);
-          const toInvDoc = await dbTransaction.get(toInvRef);
-          const currentToQty = (toInvDoc.exists() ? toInvDoc.data()?.quantity : 0) || 0;
+          const toInvInfo = invCache[toInvRef.path];
           
-          dbTransaction.set(toInvRef, {
+          toInvInfo.quantity += selection.quantity;
+          dbTransaction.set(toInvInfo.ref, {
             itemId: selection.itemId,
             locationId: toLocationId,
             variant: selection.variant || null,
             customSpec: selection.customSpec || null,
-            quantity: currentToQty + selection.quantity,
+            quantity: toInvInfo.quantity,
             updatedAt: serverTimestamp()
           }, { merge: true });
         }

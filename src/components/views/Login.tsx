@@ -35,24 +35,54 @@ export const Login = () => {
 
       {authError && (
         <div className="mb-6 p-4 bg-red-50 rounded-2xl border border-red-100 text-left max-w-xs relative animate-in fade-in slide-in-from-top-2 duration-300">
-          {authError !== 'Sign-in was cancelled.' && (
-            <p className="text-[10px] font-black text-red-900 uppercase tracking-widest mb-1">Sign-in Error</p>
-          )}
-          <p className="text-[10px] text-red-700 font-bold leading-relaxed mb-1">
-            {authError}
-          </p>
-          {authError !== 'Sign-in was cancelled.' && (
-            <div className="mt-3 space-y-3">
-              <p className="text-[9px] text-red-600 font-medium leading-tight italic">
-                Tip: If popups are failing, try the redirect method or open in a new tab.
+          {authError.includes('Domain Unauthorized') ? (
+            <div className="space-y-4">
+              <p className="text-[10px] font-black text-red-900 uppercase tracking-widest mb-1">Authorization Error</p>
+              <p className="text-[10px] text-red-700 font-bold leading-relaxed">
+                The domain <strong>{window.location.hostname}</strong> is not authorized in your Firebase project.
               </p>
+              <div className="p-3 bg-white/50 rounded-xl border border-red-100 flex flex-col space-y-2">
+                <p className="text-[9px] text-red-600 font-medium leading-relaxed">
+                  1. Open <a href={`https://console.firebase.google.com/project/${(window as any).firebaseConfig?.projectId || 'gen-lang-client-0430534848'}/authentication/settings`} target="_blank" rel="noopener noreferrer" className="underline font-bold">Firebase Console</a>
+                </p>
+                <p className="text-[9px] text-red-600 font-medium leading-relaxed">
+                  2. Go to <strong>Settings</strong> &gt; <strong>Authorized domains</strong>
+                </p>
+                <p className="text-[9px] text-red-600 font-medium leading-relaxed">
+                  3. Add <strong>{window.location.hostname}</strong>
+                </p>
+              </div>
               <button 
-                onClick={() => signIn('redirect')}
-                className="w-full py-2 px-3 bg-white border border-red-200 text-red-600 rounded-xl text-[10px] font-black uppercase tracking-wider active:scale-95 transition-transform"
+                onClick={() => {
+                  navigator.clipboard.writeText(window.location.hostname);
+                }}
+                className="w-full py-2 px-3 bg-red-600 text-white rounded-xl text-[10px] font-black uppercase tracking-wider active:scale-95 transition-all shadow-sm"
               >
-                Try Redirect Method
+                Copy Domain to Clipboard
               </button>
             </div>
+          ) : (
+            <>
+              {authError !== 'Sign-in was cancelled.' && (
+                <p className="text-[10px] font-black text-red-900 uppercase tracking-widest mb-1">Sign-in Error</p>
+              )}
+              <p className="text-[10px] text-red-700 font-bold leading-relaxed mb-1">
+                {authError}
+              </p>
+              {authError !== 'Sign-in was cancelled.' && (
+                <div className="mt-3 space-y-3">
+                  <p className="text-[9px] text-red-600 font-medium leading-tight italic">
+                    Tip: If popups are failing, try the redirect method or open in a new tab.
+                  </p>
+                  <button 
+                    onClick={() => signIn('redirect')}
+                    className="w-full py-2 px-3 bg-white border border-red-200 text-red-600 rounded-xl text-[10px] font-black uppercase tracking-wider active:scale-95 transition-transform"
+                  >
+                    Try Redirect Method
+                  </button>
+                </div>
+              )}
+            </>
           )}
         </div>
       )}

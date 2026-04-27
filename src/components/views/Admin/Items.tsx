@@ -4,7 +4,7 @@ import { Search, Plus, Box, Wrench, AlertTriangle, Trash2, X, Settings2, Downloa
 import { useAuth, useData } from '../../../App';
 import { deleteItem } from '../../../services/inventoryService';
 import { exportItemsToCSV, importItemsFromCSV } from '../../../services/csvService';
-import { cn, getMillis } from '../../../lib/utils';
+import { cn, getMillis, normalizeVariant } from '../../../lib/utils';
 import { Header } from '../../common/Header';
 import { Card } from '../../common/Card';
 import { Swipeable } from '../../common/Swipeable';
@@ -38,7 +38,7 @@ const VariantDetailsModal = ({ item, uoms, onClose }: { item: Item, uoms: any[],
 
     return allCombinations.map(variant => {
       const config = item.variantConfigs?.find(vc => 
-        JSON.stringify(vc.variant) === JSON.stringify(variant)
+        normalizeVariant(vc.variant) === normalizeVariant(variant)
       );
       
       return {

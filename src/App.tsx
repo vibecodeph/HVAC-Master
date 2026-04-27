@@ -172,6 +172,9 @@ const AuthProvider = ({ children }: { children: React.ReactNode }) => {
         setAuthError('Sign-in was cancelled.');
       } else if (isPopupBlocked) {
         setAuthError('The sign-in popup was blocked. Please enable popups for this site or try the "Redirect" method below.');
+      } else if (error.code === 'auth/unauthorized-domain') {
+        const domain = window.location.hostname;
+        setAuthError(`Domain Unauthorized: "${domain}" is not in the authorized list in Firebase Console. Please add it in Authentication > Settings > Authorized domains.`);
       } else {
         setAuthError(error.message || 'An error occurred during sign-in. Please try again.');
       }

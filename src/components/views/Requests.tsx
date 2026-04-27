@@ -3,7 +3,7 @@ import { ChevronRight, ChevronDown, MapPin, Truck, Wrench, Package, ArrowLeftRig
 import { motion, AnimatePresence } from 'motion/react';
 import { useAuth, useData } from '../../App';
 import { onSnapshot, collection, query, where, orderBy, limit, serverTimestamp } from 'firebase/firestore';
-import { subscribeToRequests, approveRequest, updateRequest, recordBulkPick, recordBulkReceive, approveBulkRequests, updateDeliveryQuantity } from '../../services/inventoryService';
+import { subscribeToRequests, approveRequest, updateRequest, recordBulkPick, recordBulkReceive, approveBulkRequests, updateDeliveryQuantity, cancelRequest } from '../../services/inventoryService';
 import { cn } from '../../lib/utils';
 import { Header } from '../common/Header';
 import { Card } from '../common/Card';
@@ -14,7 +14,7 @@ import { Request } from '../../types';
 export const RequestsView = () => {
   const { profile } = useAuth();
   const { items, locations, uoms, users, inventory } = useData();
-  const [filter, setFilter] = useState<'pending' | 'approved' | 'for delivery' | 'delivered' | 'rejected'>('pending');
+  const [filter, setFilter] = useState<'pending' | 'approved' | 'for delivery' | 'delivered' | 'rejected' | 'cancelled'>('pending');
   const [hasSetDefaultFilter, setHasSetDefaultFilter] = useState(false);
 
   useEffect(() => {
@@ -201,6 +201,19 @@ export const RequestsView = () => {
     }
   };
 
+  const handleCancel = async (request: Request) => {
+    if (!confirm('Are you sure you want to cancel this request?')) return;
+    setIsProcessing(true);
+    try {
+      await cancelRequest(request.id);
+    } catch (error) {
+      console.error(error);
+      alert('Failed to cancel request');
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
   const handleDeliver = async (
     selections: { requestId: string; deliveredQty: number; sourceLocationId: string; variant?: Record<string, string>; backorder?: boolean; serialNumbers?: string[] }[],
     options?: { customBatchId?: string; customDate?: Date }
@@ -292,7 +305,7 @@ export const RequestsView = () => {
         </div>
 
         <div className="flex bg-gray-100 p-1 rounded-2xl mb-6 overflow-x-auto no-scrollbar">
-          {(['pending', 'approved', 'for delivery', 'delivered', 'rejected'] as const).map((s) => (
+          {(['pending', 'approved', 'for delivery', 'delivered', 'rejected', 'cancelled'] as const).map((s) => (
             <button
               key={s}
               onClick={() => setFilter(s)}
@@ -360,7 +373,8 @@ export const RequestsView = () => {
                   const item = items.find(i => i.id === r.itemId);
                   const requestor = users.find(u => u.uid === r.requestorId);
                   const isWarehouseman = profile?.role === 'warehouseman' || profile?.role === 'admin';
-                  const isEditable = filter === 'for delivery' && isWarehouseman;
+                  const canReceive = filter === 'for delivery' && profile?.role !== 'warehouseman';
+                  const isEditable = filter === 'for delivery' && isWarehouseman && !canReceive;
                   
                   return (
                     <Card 
@@ -440,6 +454,15 @@ export const RequestsView = () => {
                           )}
                         </div>
                         <div className="flex space-x-2 self-end shrink-0">
+                          {filter === 'pending' && r.requestorId === profile?.uid && (
+                            <button 
+                              onClick={() => handleCancel(r)}
+                              className="w-10 h-10 flex items-center justify-center text-gray-400 bg-gray-50 rounded-xl active:scale-95 transition-transform hover:text-red-500"
+                              title="Cancel Request"
+                            >
+                              <X size={16} />
+                            </button>
+                          )}
                           {filter === 'pending' && (profile?.role === 'admin' || profile?.role === 'manager' || profile?.role === 'engineer') && (
                             <>
                               <button 

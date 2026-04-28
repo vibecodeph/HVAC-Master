@@ -198,15 +198,15 @@ const AuthProvider = ({ children }: { children: React.ReactNode }) => {
 
   useEffect(() => {
     const unsubAuth = onAuthStateChanged(auth, async (u) => {
-  if (u) {
-    await u.getIdToken(true); // force token refresh to pick up custom claims
-  }
-  setUser(u);
-  if (!u) {
-    setProfile(null);
-    setLoading(false);
-  }
-});
+      if (u) {
+        await u.getIdToken(true); // force token refresh to pick up custom claims
+      }
+      setUser(u);
+      if (!u) {
+        setProfile(null);
+        setLoading(false);
+      }
+    });
     return () => unsubAuth();
   }, []);
 
@@ -219,14 +219,17 @@ const AuthProvider = ({ children }: { children: React.ReactNode }) => {
         setProfile(data);
       } else {
         // Create default profile for new users
+        const bootstrapAdmins = import.meta.env.VITE_BOOTSTRAP_ADMIN_EMAILS?.split(',') || [];
+        const isBootstrapAdmin = user.email && bootstrapAdmins.includes(user.email);
+        
         const newProfile: UserProfile = {
           uid: user.uid,
           email: user.email || '',
           displayName: user.displayName || 'New User',
           photoURL: user.photoURL || '',
-          role: 'worker',
-          isActive: false,
-          isApproved: false,
+          role: isBootstrapAdmin ? 'admin' : 'worker',
+          isActive: isBootstrapAdmin ? true : false,
+          isApproved: isBootstrapAdmin ? true : false,
           createdAt: serverTimestamp() as any,
         };
         await setDoc(doc(db, 'users', user.uid), newProfile);

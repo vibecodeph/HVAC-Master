@@ -444,7 +444,7 @@ service cloud.firestore {
     match /items/{itemId} {
       allow read: if isApproved();
       allow create: if isAdmin() && hasRequiredFields(['id', 'name', 'uomId', 'isTool', 'isActive', 'createdAt']) && isValidItem(request.resource.data);
-      allow update: if isAdmin() || (isApproved() && isValidItem(request.resource.data) && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['averageCost', 'totalQuantity', 'updatedAt', 'updatedBy']));
+      allow update: if isAdmin() || (isApproved() && (isWarehouseman() || isEngineer()) && isValidItem(request.resource.data) && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['averageCost', 'totalQuantity', 'updatedAt', 'updatedBy']));
       allow delete: if isAdmin();
     }
 

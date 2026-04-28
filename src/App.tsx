@@ -32,6 +32,8 @@ import { JobsiteBOQView } from './components/views/Admin/JobsiteBOQ';
 import { PurchaseOrderList } from './components/views/PurchaseOrderList';
 import { PurchaseOrderForm } from './components/Forms';
 import { LocationsView } from './components/views/Locations';
+import { POTemplateSettings } from './components/views/Admin/POTemplateSettings';
+import { POPrintView } from './components/views/POPrintView';
 
 const PurchaseOrderView = () => {
   const { purchaseOrders, locations, items, uoms } = useData();
@@ -461,6 +463,20 @@ const App = () => {
                       <Layout>
                         <PurchaseOrderView />
                       </Layout>
+                    </ProtectedRoute>
+                  } />
+
+                  <Route path="/purchase-orders/template" element={
+                    <ProtectedRoute requireAdmin>
+                      <Layout>
+                        <POTemplateSettings />
+                      </Layout>
+                    </ProtectedRoute>
+                  } />
+
+                  <Route path="/purchase-orders/:id/print" element={
+                    <ProtectedRoute requireAdmin>
+                      <POPrintView />
                     </ProtectedRoute>
                   } />
 

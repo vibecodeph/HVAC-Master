@@ -780,7 +780,10 @@ export const updateTransaction = async (id: string, oldTransaction: Transaction,
 
 export const addItem = async (item: Omit<Item, 'id' | 'createdAt' | 'isActive'>) => {
   try {
-    const docRef = await addDoc(collection(db, 'items'), cleanData({
+    const itemRef = doc(collection(db, 'items'));
+    const id = itemRef.id;
+    await setDoc(itemRef, cleanData({
+      id,
       averageCost: 0,
       totalQuantity: 0,
       ...item,
@@ -788,7 +791,7 @@ export const addItem = async (item: Omit<Item, 'id' | 'createdAt' | 'isActive'>)
       createdAt: serverTimestamp(),
       updatedAt: serverTimestamp()
     }));
-    return docRef.id;
+    return id;
   } catch (error) {
     handleFirestoreError(error, OperationType.CREATE, 'items');
   }

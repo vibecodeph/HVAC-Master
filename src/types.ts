@@ -83,8 +83,13 @@ export interface Category {
 export interface Location {
   id: string;
   name: string;
+  longName?: string;
   type: 'warehouse' | 'jobsite' | 'supplier' | 'system';
   parentId?: string;
+  address?: string;
+  contactPerson?: string;
+  contactNumber?: string;
+  terms?: string;
   isActive: boolean;
 }
 
@@ -208,31 +213,69 @@ export interface SystemConfig {
 }
 
 export interface PurchaseOrderItem {
+  id?: string;
   itemId: string;
   variant?: Record<string, string>;
   quantity: number;
   uomId: string;
+  srp?: number; // Added SRP field
+  discount?: number; // Added discount field
+  discountType?: 'amount' | 'percentage'; // Added discount type
   unitPrice: number;
   totalPrice: number;
   receivedQuantity: number;
   note?: string;
+  description?: string; // Snapshot for printing
+  uom?: string; // Snapshot for printing
+}
+
+export interface POTemplate {
+  id: string;
+  companyName: string;
+  companyAddress: string;
+  companyPhones: string;
+  companyEmail: string;
+  companyTIN: string;
+  signatories: {
+    preparedBy: string;
+    requestedBy: string;
+    approvedBy1: string;
+    approvedBy1Role: string;
+    approvedBy2: string;
+    approvedBy2Role: string;
+  };
+  updatedAt?: Timestamp;
+  updatedBy?: string;
 }
 
 export interface PurchaseOrder {
   id: string;
   poNumber: string;
   supplierId: string;
+  supplierName?: string;
+  supplierLongName?: string;
+  supplierAddress?: string;
+  requestedBy?: string;
+  attention?: string;
+  contactNo?: string;
+  project?: string;
+  terms?: string;
+  deliverTo?: string;
   status: 'draft' | 'sent' | 'partially_received' | 'received' | 'cancelled';
   paymentStatus?: 'unpaid' | 'processing' | 'prepared' | 'paid';
-  items: PurchaseOrderItem[];
+  items?: PurchaseOrderItem[];
+  discount?: number; // Added PO-level discount
+  discountType?: 'amount' | 'percentage'; // Added PO-level discount type
+  discountAmount?: number; // Calculated numeric discount
   totalAmount: number;
   notes?: string;
+  generalNotes?: string;
   date: Timestamp;
   createdAt: Timestamp;
   createdBy: string;
   createdByName?: string;
-  updatedAt: Timestamp;
-  updatedBy: string;
+  updatedAt?: Timestamp;
+  updatedBy?: string;
 }
 
 export interface POPayment {

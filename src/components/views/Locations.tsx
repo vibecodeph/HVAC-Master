@@ -24,7 +24,7 @@ export const LocationsView = () => {
 
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [selectedSite, setSelectedSite] = useState<Location | null>(null);
-  const [siteTab, setSiteTab] = useState<'Inventory' | 'History'>('Inventory');
+  const [siteTab, setSiteTab] = useState<'Details' | 'Inventory' | 'History'>('Details');
   const [showInactive, setShowInactive] = useState(false);
 
   // Group and sort locations
@@ -164,10 +164,10 @@ export const LocationsView = () => {
       <Modal isOpen={!!selectedSite} onClose={() => setSelectedSite(null)} title={selectedSite?.name || 'Site Details'}>
         <div className="space-y-6">
           <div className="flex p-1 bg-gray-100 rounded-2xl">
-            {['Inventory', 'History'].map((tab) => (
+            {['Details', 'Inventory', 'History'].map((tab) => (
               <button 
                 key={tab}
-                onClick={() => setSiteTab(tab as 'Inventory' | 'History')}
+                onClick={() => setSiteTab(tab as 'Details' | 'Inventory' | 'History')}
                 className={cn(
                   "flex-1 py-2 text-xs font-bold rounded-xl transition-colors",
                   siteTab === tab ? "bg-white text-gray-900 shadow-sm" : "text-gray-500"
@@ -178,7 +178,38 @@ export const LocationsView = () => {
             ))}
           </div>
 
-          {siteTab === 'Inventory' ? (
+          {siteTab === 'Details' ? (
+            <div className="space-y-6">
+              <div className="grid grid-cols-2 gap-4">
+                <div className="p-4 bg-gray-50 rounded-2xl">
+                  <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1">Legal Name</p>
+                  <p className="text-sm font-bold text-gray-900">{selectedSite?.longName || selectedSite?.name || 'N/A'}</p>
+                </div>
+                <div className="p-4 bg-gray-50 rounded-2xl">
+                  <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1">Type</p>
+                  <p className="text-sm font-bold text-gray-900 uppercase tracking-tight">{selectedSite?.type}</p>
+                </div>
+              </div>
+              <div className="p-4 bg-gray-50 rounded-2xl">
+                <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1">Address</p>
+                <p className="text-sm font-bold text-gray-900 leading-relaxed">{selectedSite?.address || 'No address provided'}</p>
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div className="p-4 bg-gray-50 rounded-2xl">
+                  <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1">Contact Person</p>
+                  <p className="text-sm font-bold text-gray-900">{selectedSite?.contactPerson || 'N/A'}</p>
+                </div>
+                <div className="p-4 bg-gray-50 rounded-2xl">
+                  <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1">Contact Number</p>
+                  <p className="text-sm font-bold text-gray-900">{selectedSite?.contactNumber || 'N/A'}</p>
+                </div>
+              </div>
+              <div className="p-4 bg-gray-50 rounded-2xl">
+                <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1">Terms</p>
+                <p className="text-sm font-bold text-gray-900">{selectedSite?.terms || 'N/A'}</p>
+              </div>
+            </div>
+          ) : siteTab === 'Inventory' ? (
             <div className="space-y-4">
               <h4 className="text-xs font-bold text-gray-400 uppercase tracking-widest">Current Stock</h4>
               <div className="space-y-2">
@@ -262,9 +293,16 @@ export const LocationsView = () => {
         <form className="space-y-4" onSubmit={async (e) => {
           e.preventDefault();
           const formData = new FormData(e.currentTarget);
+          const name = formData.get('name') as string;
+          const longName = formData.get('longName') as string;
           await addLocation({
-            name: formData.get('name') as string,
+            name,
+            longName: longName || name,
             type: formData.get('type') as 'warehouse' | 'jobsite' | 'supplier',
+            address: formData.get('address') as string,
+            contactPerson: formData.get('contactPerson') as string,
+            contactNumber: formData.get('contactNumber') as string,
+            terms: formData.get('terms') as string,
           });
           setIsAddModalOpen(false);
         }}>
@@ -272,13 +310,37 @@ export const LocationsView = () => {
             <label className="text-xs font-bold text-gray-400 uppercase tracking-wider">Location Name</label>
             <input name="name" required className="w-full p-4 bg-gray-100 rounded-2xl text-sm font-medium outline-none focus:ring-2 focus:ring-blue-500" placeholder="e.g. Site C: North Towers" />
           </div>
+          <div className="grid grid-cols-2 gap-4">
+            <div className="space-y-1">
+              <label className="text-xs font-bold text-gray-400 uppercase tracking-wider">Long Name (Legal)</label>
+              <input name="longName" className="w-full p-4 bg-gray-100 rounded-2xl text-sm font-medium outline-none focus:ring-2 focus:ring-blue-500" placeholder="Legal Entity Name..." />
+            </div>
+            <div className="space-y-1">
+              <label className="text-xs font-bold text-gray-400 uppercase tracking-wider">Type</label>
+              <select name="type" className="w-full p-4 bg-gray-100 rounded-2xl text-sm font-medium outline-none focus:ring-2 focus:ring-blue-500 appearance-none">
+                <option value="jobsite">Jobsite</option>
+                <option value="warehouse">Warehouse</option>
+                <option value="supplier">Supplier</option>
+              </select>
+            </div>
+          </div>
           <div className="space-y-1">
-            <label className="text-xs font-bold text-gray-400 uppercase tracking-wider">Type</label>
-            <select name="type" className="w-full p-4 bg-gray-100 rounded-2xl text-sm font-medium outline-none focus:ring-2 focus:ring-blue-500 appearance-none">
-              <option value="jobsite">Jobsite</option>
-              <option value="warehouse">Warehouse</option>
-              <option value="supplier">Supplier</option>
-            </select>
+            <label className="text-xs font-bold text-gray-400 uppercase tracking-wider">Address</label>
+            <textarea name="address" className="w-full p-4 bg-gray-100 rounded-2xl text-sm font-medium outline-none focus:ring-2 focus:ring-blue-500 min-h-[80px]" placeholder="Complete address..." />
+          </div>
+          <div className="grid grid-cols-2 gap-4">
+            <div className="space-y-1">
+              <label className="text-xs font-bold text-gray-400 uppercase tracking-wider">Contact Person</label>
+              <input name="contactPerson" className="w-full p-4 bg-gray-100 rounded-2xl text-sm font-medium outline-none focus:ring-2 focus:ring-blue-500" />
+            </div>
+            <div className="space-y-1">
+              <label className="text-xs font-bold text-gray-400 uppercase tracking-wider">Contact Number</label>
+              <input name="contactNumber" className="w-full p-4 bg-gray-100 rounded-2xl text-sm font-medium outline-none focus:ring-2 focus:ring-blue-500" />
+            </div>
+          </div>
+          <div className="space-y-1">
+            <label className="text-xs font-bold text-gray-400 uppercase tracking-wider">Terms</label>
+            <input name="terms" className="w-full p-4 bg-gray-100 rounded-2xl text-sm font-medium outline-none focus:ring-2 focus:ring-blue-500" placeholder="e.g. COD, 30 Days" />
           </div>
           <button type="submit" className="w-full py-4 bg-blue-600 text-white rounded-2xl font-bold flex items-center justify-center space-x-2">
             <Check size={20} />

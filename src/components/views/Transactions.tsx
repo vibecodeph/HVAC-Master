@@ -114,22 +114,17 @@ export const Transactions = () => {
               <Truck size={16} />
             </div>
             <div className="flex-1 min-w-0">
-              <p className="text-sm font-bold text-gray-900">
-                {from?.name || first.fromLocationId || 'Warehouse'} &rarr; {to?.name || (first.toLocationId === 'in-transit' ? 'In Transit' : (first.toLocationId || 'Jobsite'))}
+              <p className="text-sm font-black text-blue-900 uppercase tracking-tighter">
+                {batchId}
               </p>
               <p className="text-[10px] font-bold text-blue-600 uppercase tracking-widest">
-                {consolidatedTransactions.some(t => t.type === 'delivery') ? 'Bulk Delivery' : 'Bulk Pick'}: {consolidatedTransactions.length} items
+                {consolidatedTransactions.length} items
               </p>
             </div>
             <div className="text-right flex items-center space-x-3">
-              <div className="flex flex-col items-end">
-                <span className="text-xs font-black text-blue-900 tracking-tighter">
-                  {batchId}
-                </span>
-                <p className="text-[8px] font-bold text-gray-400 uppercase tracking-widest">
-                  {typeof first.timestamp?.toDate === 'function' ? first.timestamp.toDate().toLocaleDateString() : 'Just now'}
-                </p>
-              </div>
+              <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">
+                {typeof first.timestamp?.toDate === 'function' ? first.timestamp.toDate().toLocaleDateString() : 'Just now'}
+              </p>
               <ChevronRight size={16} className={cn("text-gray-400 transition-transform", isExpanded && "rotate-90")} />
             </div>
           </div>

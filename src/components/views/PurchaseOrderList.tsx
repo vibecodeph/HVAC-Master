@@ -1,5 +1,6 @@
-import React, { useState, useMemo, useRef } from 'react';
-import { Plus, Search, FileText, Calendar, User, ChevronRight, Filter, MoreVertical, Edit2, Trash2, ExternalLink, Package, Download, Upload, Loader2, AlertCircle, CheckCircle2 } from 'lucide-react';
+import React, { useState, useMemo, useRef, useEffect } from 'react';
+import { Plus, Search, FileText, Calendar, User, ChevronRight, Filter, MoreVertical, Edit2, Trash2, ExternalLink, Package, Download, Upload, Loader2, AlertCircle, CheckCircle2, Printer, Settings } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 import { PurchaseOrder, Location, Item, UOM, UserProfile } from '../../types';
 import { deletePurchaseOrder } from '../../services/inventoryService';
 import { cn } from '../../lib/utils';
@@ -18,6 +19,7 @@ interface PurchaseOrderListProps {
 }
 
 export const PurchaseOrderList = ({ purchaseOrders, locations, items, uoms, profile, onAdd, onEdit }: PurchaseOrderListProps) => {
+  const navigate = useNavigate();
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [isImporting, setIsImporting] = useState(false);
@@ -104,10 +106,20 @@ export const PurchaseOrderList = ({ purchaseOrders, locations, items, uoms, prof
 
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-2xl font-black text-gray-900 tracking-tight">Purchase Orders</h2>
-          <p className="text-xs font-bold text-gray-400 uppercase tracking-widest">Manage supplier orders</p>
+          <h2 className="text-2xl font-black text-gray-900 tracking-tight underline underline-offset-8 decoration-blue-600 decoration-4">Purchase Orders</h2>
+          <p className="text-xs font-bold text-gray-400 uppercase tracking-widest mt-2 ml-1">Manage supplier orders & template</p>
         </div>
         <div className="flex items-center space-x-3">
+          {profile?.role === 'admin' && (
+            <button 
+              onClick={() => navigate('/purchase-orders/template')}
+              title="Template Settings"
+              className="p-4 bg-white text-gray-600 rounded-2xl shadow-sm border border-gray-100 active:scale-95 transition-transform flex items-center space-x-2"
+            >
+              <Settings size={20} />
+              <span className="text-[10px] font-black uppercase tracking-widest hidden sm:inline">Template</span>
+            </button>
+          )}
           <button 
             onClick={handleExport}
             title="Export to CSV"
@@ -158,7 +170,7 @@ export const PurchaseOrderList = ({ purchaseOrders, locations, items, uoms, prof
                   "text-sm font-black uppercase tracking-widest",
                   importResult.errors.length > 0 ? "text-red-900" : "text-green-900"
                 )}>
-                  Import {importResult.errors.length > 0 ? 'Completed with Errors' : 'Successful'}
+                   Import {importResult.errors.length > 0 ? 'Completed with Errors' : 'Successful'}
                 </p>
                 <p className={cn(
                   "text-[10px] font-bold",
@@ -236,11 +248,23 @@ export const PurchaseOrderList = ({ purchaseOrders, locations, items, uoms, prof
                       <p className="text-xs font-bold text-gray-400 uppercase tracking-widest">{supplier?.name || po.supplierId || 'Unknown Supplier'}</p>
                     </div>
                   </div>
-                  <div className={cn(
-                    "px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest",
-                    getStatusColor(po.status)
-                  )}>
-                    {po.status.replace('_', ' ')}
+                  <div className="flex items-center space-x-2">
+                    <button 
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        navigate(`/purchase-orders/${po.id}/print`);
+                      }}
+                      className="p-2 text-blue-600 hover:bg-blue-50 rounded-xl transition-colors bg-blue-50/50"
+                      title="View/Print PO"
+                    >
+                      <Printer size={18} />
+                    </button>
+                    <div className={cn(
+                      "px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest",
+                      getStatusColor(po.status)
+                    )}>
+                      {po.status.replace('_', ' ')}
+                    </div>
                   </div>
                 </div>
 
@@ -281,10 +305,10 @@ export const PurchaseOrderList = ({ purchaseOrders, locations, items, uoms, prof
                     <div className="flex items-center space-x-2 mb-1">
                       <Package size={14} className="text-gray-400" />
                       <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">
-                        {po.items.length} {po.items.length === 1 ? 'Item' : 'Items'}
+                        {po.items?.length || 0} {po.items?.length === 1 ? 'Item' : 'Items'}
                       </span>
                     </div>
-                    {po.status !== 'draft' && po.status !== 'cancelled' && (
+                    {po.status !== 'draft' && po.status !== 'cancelled' && po.items && po.items.length > 0 && (
                       <div className="w-full max-w-[120px] h-1 bg-gray-100 rounded-full overflow-hidden">
                         <div 
                           className={cn(
@@ -292,7 +316,7 @@ export const PurchaseOrderList = ({ purchaseOrders, locations, items, uoms, prof
                             po.status === 'received' ? "bg-green-500" : "bg-orange-500"
                           )}
                           style={{ 
-                            width: `${Math.min(100, (po.items.reduce((acc, item) => acc + (item.receivedQuantity || 0), 0) / po.items.reduce((acc, item) => acc + item.quantity, 0)) * 100)}%` 
+                            width: `${Math.min(100, (po.items.reduce((acc, item) => acc + (item.receivedQuantity || 0), 0) / po.items.reduce((acc, item) => acc + (item.quantity || 0), 0)) * 100)}%` 
                           }}
                         />
                       </div>

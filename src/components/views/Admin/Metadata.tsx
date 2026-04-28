@@ -94,11 +94,8 @@ export const MetadataAdminView = () => {
           const hasLinkedAssets = assets.some(a => a.locationId === l.id);
           const isSystem = l.type === 'system';
           return { 
-            id: l.id, 
-            name: l.name, 
+            ...l,
             sub: l.type.toUpperCase(),
-            isActive: l.isActive,
-            type: l.type,
             canDelete: !isSystem && !hasLinkedInventory && !hasLinkedTransactions && !hasLinkedAssets
           };
         });
@@ -305,7 +302,22 @@ export const MetadataAdminView = () => {
               }
               if (type === 'locations') {
                 const locType = formData.get('type') as 'warehouse' | 'jobsite' | 'supplier';
-                const data = { name, type: locType, isActive };
+                const longName = formData.get('longName') as string;
+                const address = formData.get('address') as string;
+                const contactPerson = formData.get('contactPerson') as string;
+                const contactNumber = formData.get('contactNumber') as string;
+                const terms = formData.get('terms') as string;
+                
+                const data = { 
+                  name, 
+                  longName: longName || name, // Default to short name if blank
+                  type: locType, 
+                  address,
+                  contactPerson,
+                  contactNumber,
+                  terms,
+                  isActive 
+                };
                 if (editingEntity) await updateLocation(editingEntity.id, data);
                 else await addLocation(data);
               }
@@ -354,17 +366,66 @@ export const MetadataAdminView = () => {
               </div>
             )}
             {type === 'locations' && (
-              <div className="space-y-1">
-                <label className="text-xs font-bold text-gray-400 uppercase tracking-wider">Type</label>
-                <select 
-                  name="type" 
-                  defaultValue={editingEntity?.type || 'jobsite'}
-                  className="w-full p-4 bg-gray-100 rounded-2xl text-sm font-medium outline-none focus:ring-2 focus:ring-blue-500 appearance-none"
-                >
-                  <option value="jobsite">Jobsite</option>
-                  <option value="warehouse">Warehouse</option>
-                  <option value="supplier">Supplier</option>
-                </select>
+              <div className="space-y-4 pt-2">
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-1">
+                    <label className="text-xs font-bold text-gray-400 uppercase tracking-wider">Long Name (Legal)</label>
+                    <input 
+                      name="longName" 
+                      defaultValue={editingEntity?.longName}
+                      className="w-full p-4 bg-gray-100 rounded-2xl text-sm font-medium outline-none focus:ring-2 focus:ring-blue-500" 
+                      placeholder="Legal Entity Name..."
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-xs font-bold text-gray-400 uppercase tracking-wider">Type</label>
+                    <select 
+                      name="type" 
+                      defaultValue={editingEntity?.type || 'jobsite'}
+                      className="w-full p-4 bg-gray-100 rounded-2xl text-sm font-medium outline-none focus:ring-2 focus:ring-blue-500 appearance-none"
+                    >
+                      <option value="jobsite">Jobsite</option>
+                      <option value="warehouse">Warehouse</option>
+                      <option value="supplier">Supplier</option>
+                    </select>
+                  </div>
+                </div>
+                <div className="space-y-1">
+                  <label className="text-xs font-bold text-gray-400 uppercase tracking-wider">Address</label>
+                  <textarea 
+                    name="address" 
+                    defaultValue={editingEntity?.address}
+                    className="w-full p-4 bg-gray-100 rounded-2xl text-sm font-medium outline-none focus:ring-2 focus:ring-blue-500 min-h-[80px]" 
+                    placeholder="Complete address..."
+                  />
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-1">
+                    <label className="text-xs font-bold text-gray-400 uppercase tracking-wider">Contact Person</label>
+                    <input 
+                      name="contactPerson" 
+                      defaultValue={editingEntity?.contactPerson}
+                      className="w-full p-4 bg-gray-100 rounded-2xl text-sm font-medium outline-none focus:ring-2 focus:ring-blue-500" 
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-xs font-bold text-gray-400 uppercase tracking-wider">Contact Number</label>
+                    <input 
+                      name="contactNumber" 
+                      defaultValue={editingEntity?.contactNumber}
+                      className="w-full p-4 bg-gray-100 rounded-2xl text-sm font-medium outline-none focus:ring-2 focus:ring-blue-500" 
+                    />
+                  </div>
+                </div>
+                <div className="space-y-1">
+                  <label className="text-xs font-bold text-gray-400 uppercase tracking-wider">Terms</label>
+                  <input 
+                    name="terms" 
+                    defaultValue={editingEntity?.terms}
+                    className="w-full p-4 bg-gray-100 rounded-2xl text-sm font-medium outline-none focus:ring-2 focus:ring-blue-500" 
+                    placeholder="e.g. COD, 30 Days"
+                  />
+                </div>
               </div>
             )}
             {type === 'uoms' && (

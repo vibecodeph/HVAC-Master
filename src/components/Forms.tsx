@@ -5,9 +5,9 @@ import {
   recordTransaction, updateTransaction,
   addRequest, recordBulkPullout,
   recordBulkReceivePO,
-  addPurchaseOrder, updatePurchaseOrder,
   addPOPayment, updatePOPayment, deletePOPayment, subscribeToPOPayments
 } from '../services/inventoryService';
+import { createPurchaseOrder, updatePurchaseOrder as updatePO } from '../services/purchaseOrderService';
 import { cn, normalizeVariant } from '../lib/utils';
 import { Modal } from './common/Modal';
 import { 
@@ -2596,6 +2596,13 @@ export const PurchaseOrderForm = ({ items, locations, uoms, profile, initialData
 
   const [status, setStatus] = useState<PurchaseOrder['status']>(initialData?.status || 'draft');
   const [notes, setNotes] = useState(initialData?.notes || '');
+  const [generalNotes, setGeneralNotes] = useState(initialData?.generalNotes || '');
+  const [project, setProject] = useState(initialData?.project || '');
+  const [terms, setTerms] = useState(initialData?.terms || '');
+  const [deliverTo, setDeliverTo] = useState(initialData?.deliverTo || '');
+  const [requestedBy, setRequestedBy] = useState(initialData?.requestedBy || '');
+  const [discount, setDiscount] = useState(initialData?.discount || 0);
+  const [discountType, setDiscountType] = useState<'amount' | 'percentage'>(initialData?.discountType || 'amount');
   const [deletingPaymentId, setDeletingPaymentId] = useState<string | null>(null);
   const [poItems, setPoItems] = useState<PurchaseOrderItem[]>(initialData?.items || []);
   
@@ -2613,9 +2620,20 @@ export const PurchaseOrderForm = ({ items, locations, uoms, profile, initialData
     }
   }, [initialData?.id, isAdminOrManager]);
 
-  const totalAmount = useMemo(() => {
+  const subtotal = useMemo(() => {
     return poItems.reduce((sum, item) => sum + item.totalPrice, 0);
   }, [poItems]);
+
+  const globalDiscountAmount = useMemo(() => {
+    if (discountType === 'percentage') {
+      return subtotal * (discount / 100);
+    }
+    return discount;
+  }, [subtotal, discount, discountType]);
+
+  const totalAmount = useMemo(() => {
+    return Math.max(0, subtotal - globalDiscountAmount);
+  }, [subtotal, globalDiscountAmount]);
 
   const totalPaid = useMemo(() => payments.reduce((acc, p) => acc + p.amount, 0), [payments]);
 
@@ -2642,20 +2660,62 @@ export const PurchaseOrderForm = ({ items, locations, uoms, profile, initialData
 
     setIsSubmitting(true);
     try {
+      const supplier = suppliers.find(s => s.id === supplierId);
       const data = {
         poNumber,
         supplierId,
+        supplierName: supplier?.name || '',
+        supplierLongName: supplier?.longName || supplier?.name || '',
+        supplierAddress: supplier?.address || '',
+        requestedBy,
         status,
         notes,
+        generalNotes,
+        attention: supplier?.contactPerson || '',
+        contactNo: supplier?.contactNumber || '',
+        project,
+        terms,
+        deliverTo,
+        discount,
+        discountType,
+        discountAmount: globalDiscountAmount,
         items: poItems,
         totalAmount,
         date: Timestamp.fromDate(new Date(date))
       };
 
       if (initialData) {
-        await updatePurchaseOrder(initialData.id, data);
+        await updatePO(initialData.id, data as any, poItems.map(pi => {
+          const item = items.find(i => i.id === pi.itemId);
+          const uom = uoms.find(u => u.id === pi.uomId || u.symbol === pi.uomId);
+          let desc = item?.name || 'Unknown Item';
+          if (pi.variant) {
+            const variantStr = Object.values(pi.variant).join(', ');
+            if (variantStr) desc += ` (${variantStr})`;
+          }
+          
+          return {
+            ...pi,
+            description: desc,
+            uom: uom?.symbol || pi.uomId,
+          } as PurchaseOrderItem;
+        }));
       } else {
-        await addPurchaseOrder(data, profile?.displayName);
+        await createPurchaseOrder(data as any, poItems.map(pi => {
+          const item = items.find(i => i.id === pi.itemId);
+          const uom = uoms.find(u => u.id === pi.uomId || u.symbol === pi.uomId);
+          let desc = item?.name || 'Unknown Item';
+          if (pi.variant) {
+            const variantStr = Object.values(pi.variant).join(', ');
+            if (variantStr) desc += ` (${variantStr})`;
+          }
+
+          return {
+            ...pi,
+            description: desc,
+            uom: uom?.symbol || pi.uomId,
+          } as PurchaseOrderItem;
+        }));
       }
       onComplete();
     } catch (error) {
@@ -2680,6 +2740,9 @@ export const PurchaseOrderForm = ({ items, locations, uoms, profile, initialData
       itemId: item.id,
       quantity: 1,
       uomId: item.uomId,
+      srp: item.averageCost || 0,
+      discount: 0,
+      discountType: 'amount',
       unitPrice: item.averageCost || 0,
       totalPrice: item.averageCost || 0,
       receivedQuantity: 0,
@@ -2699,8 +2762,26 @@ export const PurchaseOrderForm = ({ items, locations, uoms, profile, initialData
 
   const updatePOItem = (idx: number, updates: Partial<PurchaseOrderItem>) => {
     const next = [...poItems];
-    next[idx] = { ...next[idx], ...updates };
-    next[idx].totalPrice = next[idx].quantity * next[idx].unitPrice;
+    const item = { ...next[idx], ...updates };
+    
+    // Recalculate unit price based on srp and discount
+    const srp = item.srp || 0;
+    const disc = item.discount || 0;
+    const discType = item.discountType || 'amount';
+    
+    let unitPrice = srp;
+    if (disc > 0) {
+      if (discType === 'percentage') {
+        unitPrice = srp * (1 - disc / 100);
+      } else {
+        unitPrice = Math.max(0, srp - disc);
+      }
+    }
+    
+    item.unitPrice = unitPrice;
+    item.totalPrice = item.quantity * unitPrice;
+    
+    next[idx] = item;
     setPoItems(next);
   };
 
@@ -2750,21 +2831,99 @@ export const PurchaseOrderForm = ({ items, locations, uoms, profile, initialData
           </div>
         </div>
 
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div className="space-y-1">
+            <label className="text-xs font-bold text-gray-400 uppercase tracking-wider pl-1">Supplier</label>
+            <div className="relative">
+              <select 
+                value={supplierId}
+                onChange={e => {
+                  const sid = e.target.value;
+                  setSupplierId(sid);
+                  const supplier = suppliers.find(s => s.id === sid);
+                  if (supplier) {
+                    setTerms(supplier.terms || '');
+                  }
+                }}
+                required
+                className="w-full p-4 bg-gray-100 rounded-2xl text-sm font-medium outline-none focus:ring-2 focus:ring-blue-500 appearance-none"
+              >
+                <option value="">Select Supplier...</option>
+                {suppliers
+                  .sort((a, b) => a.name.localeCompare(b.name))
+                  .map(s => (
+                    <option key={s.id} value={s.id}>{s.name}</option>
+                  ))}
+              </select>
+              <ChevronDown className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" size={18} />
+            </div>
+          </div>
+          <div className="space-y-1">
+            <label className="text-xs font-bold text-gray-400 uppercase tracking-wider pl-1">Requested By</label>
+            <input 
+              value={requestedBy}
+              onChange={e => setRequestedBy(e.target.value)}
+              placeholder="e.g. John Doe"
+              className="w-full p-4 bg-gray-100 rounded-2xl text-sm font-medium outline-none focus:ring-2 focus:ring-blue-500" 
+            />
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div className="space-y-1">
+            <label className="text-xs font-bold text-gray-400 uppercase tracking-wider pl-1">Project</label>
+            <div className="relative">
+              <select 
+                value={project}
+                onChange={e => setProject(e.target.value)}
+                className="w-full p-4 bg-gray-100 rounded-2xl text-sm font-medium outline-none focus:ring-2 focus:ring-blue-500 appearance-none"
+              >
+                <option value="">Select Project...</option>
+                {locations
+                  .filter(l => l.type === 'jobsite' && l.isActive)
+                  .sort((a, b) => a.name.localeCompare(b.name))
+                  .map(l => (
+                    <option key={l.id} value={l.name}>{l.name}</option>
+                  ))}
+              </select>
+              <ChevronDown className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" size={18} />
+            </div>
+          </div>
+          <div className="space-y-1">
+            <label className="text-xs font-bold text-gray-400 uppercase tracking-wider pl-1">Terms</label>
+            <input 
+              value={terms}
+              onChange={e => setTerms(e.target.value)}
+              placeholder="e.g. Net 30"
+              className="w-full p-4 bg-gray-100 rounded-2xl text-sm font-medium outline-none focus:ring-2 focus:ring-blue-500" 
+            />
+          </div>
+          <div className="space-y-1">
+            <label className="text-xs font-bold text-gray-400 uppercase tracking-wider pl-1">Deliver To</label>
+            <div className="relative">
+              <select 
+                value={deliverTo}
+                onChange={e => setDeliverTo(e.target.value)}
+                className="w-full p-4 bg-gray-100 rounded-2xl text-sm font-medium outline-none focus:ring-2 focus:ring-blue-500 appearance-none"
+              >
+                <option value="">Select Destination...</option>
+                <option value="WP Head Office">WP Head Office</option>
+                <option value="Store Pick-up">Store Pick-up</option>
+                <option value="Jobsite">Jobsite</option>
+              </select>
+              <ChevronDown className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" size={18} />
+            </div>
+          </div>
+        </div>
+
         <div className="space-y-1">
-          <label className="text-xs font-bold text-gray-400 uppercase tracking-wider pl-1">Supplier</label>
-          <select 
-            value={supplierId}
-            onChange={e => setSupplierId(e.target.value)}
-            required
-            className="w-full p-4 bg-gray-100 rounded-2xl text-sm font-medium outline-none focus:ring-2 focus:ring-blue-500 appearance-none"
-          >
-            <option value="">Select Supplier...</option>
-            {suppliers
-              .sort((a, b) => a.name.localeCompare(b.name))
-              .map(s => (
-                <option key={s.id} value={s.id}>{s.name}</option>
-              ))}
-          </select>
+          <label className="text-xs font-bold text-gray-400 uppercase tracking-wider pl-1">General Notes (Printed on PO)</label>
+          <textarea 
+            value={generalNotes}
+            onChange={e => setGeneralNotes(e.target.value)}
+            className="w-full p-4 bg-gray-100 rounded-2xl text-sm font-medium outline-none focus:ring-2 focus:ring-blue-500 min-h-[80px]" 
+            placeholder="Notes to be displayed above the items..." 
+          />
         </div>
 
         <div className="space-y-3">
@@ -2772,84 +2931,109 @@ export const PurchaseOrderForm = ({ items, locations, uoms, profile, initialData
           <div className="space-y-3">
             {poItems.map((poItem, idx) => {
               const item = items.find(i => i.id === poItem.itemId);
+              const uomSymbol = uoms.find(u => u.id === (item?.uomId || poItem.uomId) || u.symbol === (item?.uomId || poItem.uomId))?.symbol || item?.uomId || poItem.uomId;
+              
               return (
-                <div key={idx} className="p-4 bg-gray-50 rounded-2xl border border-gray-100 space-y-3">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center space-x-3">
-                      <div className="w-8 h-8 bg-white rounded-lg flex items-center justify-center text-blue-600 shadow-sm">
+                <div key={idx} className="p-4 bg-gray-50 rounded-2xl border border-gray-100 space-y-4">
+                  <div className="flex flex-col lg:flex-row gap-4 items-start">
+                    {/* Item Info */}
+                    <div className="flex gap-3 flex-1 min-w-0">
+                      <div className="w-8 h-8 bg-white rounded-lg flex items-center justify-center text-blue-600 shadow-sm shrink-0">
                         {item?.isTool ? <Wrench size={16} /> : <Box size={16} />}
                       </div>
-                      <div>
-                        <p className="text-sm font-bold text-gray-900">{item?.name || 'Unknown Item'}</p>
-                        <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">
-                          {uoms.find(u => u.id === item?.uomId || u.symbol === item?.uomId)?.symbol || item?.uomId}
-                        </p>
+                      <div className="flex-1 min-w-0">
+                        <div className="mb-2">
+                          <p className="text-sm font-bold text-gray-900 truncate">{item?.name || 'Unknown Item'}</p>
+                          <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">{uomSymbol}</p>
+                        </div>
+                        <input 
+                          type="text"
+                          value={poItem.note || ''}
+                          onChange={e => updatePOItem(idx, { note: e.target.value })}
+                          placeholder="Add item note (Size, Color, Brand, etc.)"
+                          className="w-full p-2 bg-white border border-gray-200 rounded-xl text-[10px] font-bold outline-none focus:ring-2 focus:ring-blue-500 h-9"
+                        />
+
+                        {/* Variant Selection if exists */}
+                        {item?.variantAttributes && item.variantAttributes.length > 0 && (
+                          <div className="grid grid-cols-2 gap-2 mt-2 px-1">
+                            {item.variantAttributes.map(attr => (
+                              <div key={attr.name} className="space-y-1">
+                                <label className="text-[8px] font-black text-gray-400 uppercase tracking-widest pl-1">{attr.name}</label>
+                                <select 
+                                  required={item.requireVariant}
+                                  value={poItem.variant?.[attr.name] || ''}
+                                  onChange={e => {
+                                    const nextVariant = { ...(poItem.variant || {}), [attr.name]: e.target.value };
+                                    updatePOItem(idx, { variant: nextVariant });
+                                  }}
+                                  className="w-full p-2 bg-white border border-gray-200 rounded-xl text-[10px] font-bold outline-none"
+                                >
+                                  <option value="">{item.requireVariant ? 'Select...' : 'Optional...'}</option>
+                                  {attr.values.map(v => <option key={v} value={v}>{v}</option>)}
+                                </select>
+                              </div>
+                            ))}
+                          </div>
+                        )}
                       </div>
                     </div>
-                    <button type="button" onClick={() => setPoItems(poItems.filter((_, i) => i !== idx))} className="text-red-500 p-1">
-                      <X size={16} />
-                    </button>
-                  </div>
 
-                  {item?.variantAttributes && item.variantAttributes.length > 0 && (
-                    <div className="grid grid-cols-2 gap-2">
-                      {item.variantAttributes.map(attr => (
-                        <div key={attr.name} className="space-y-1">
-                          <label className="text-[8px] font-black text-gray-400 uppercase tracking-widest pl-1">{attr.name}</label>
-                          <select 
-                            required={item.requireVariant}
-                            value={poItem.variant?.[attr.name] || ''}
-                            onChange={e => {
-                              const nextVariant = { ...(poItem.variant || {}), [attr.name]: e.target.value };
-                              updatePOItem(idx, { variant: nextVariant });
-                            }}
-                            className="w-full p-2 bg-white border border-gray-200 rounded-xl text-[10px] font-bold outline-none"
+                    {/* Pricing Inputs - In-line with the top row */}
+                    <div className="flex flex-wrap items-start gap-2 shrink-0">
+                      <div className="w-[70px] space-y-1">
+                        <label className="text-[8px] font-black text-gray-400 uppercase tracking-widest pl-1">Quantity</label>
+                        <input 
+                          type="number"
+                          value={poItem.quantity}
+                          onChange={e => updatePOItem(idx, { quantity: Number(e.target.value) })}
+                          className="w-full p-2 bg-white border border-gray-200 rounded-xl text-xs font-bold outline-none focus:ring-2 focus:ring-blue-500 text-center"
+                        />
+                      </div>
+
+                      <div className="w-[90px] space-y-1">
+                        <label className="text-[8px] font-black text-gray-400 uppercase tracking-widest pl-1">SRP</label>
+                        <input 
+                          type="number"
+                          step="0.01"
+                          value={poItem.srp || poItem.unitPrice || 0}
+                          onChange={e => updatePOItem(idx, { srp: Number(e.target.value) })}
+                          className="w-full p-2 bg-white border border-gray-200 rounded-xl text-xs font-bold outline-none focus:ring-2 focus:ring-blue-500"
+                        />
+                      </div>
+
+                      <div className="w-[110px] space-y-1">
+                        <label className="text-[8px] font-black text-gray-400 uppercase tracking-widest pl-1">Discount</label>
+                        <div className="flex bg-white border border-gray-200 rounded-xl overflow-hidden focus-within:ring-2 focus-within:ring-blue-500">
+                          <input 
+                            type="number"
+                            step="0.01"
+                            value={poItem.discount || 0}
+                            onChange={e => updatePOItem(idx, { discount: Number(e.target.value) })}
+                            className="flex-1 min-w-0 p-2 text-xs font-bold outline-none"
+                          />
+                          <select
+                            value={poItem.discountType || 'amount'}
+                            onChange={e => updatePOItem(idx, { discountType: e.target.value as any })}
+                            className="p-1 px-2 text-[10px] font-bold bg-gray-50 outline-none border-l border-gray-100"
                           >
-                            <option value="">{item.requireVariant ? 'Select...' : 'Optional...'}</option>
-                            {attr.values.map(v => <option key={v} value={v}>{v}</option>)}
+                            <option value="amount">₱</option>
+                            <option value="percentage">%</option>
                           </select>
                         </div>
-                      ))}
-                    </div>
-                  )}
-
-                  <div className="grid grid-cols-3 gap-3">
-                    <div className="space-y-1">
-                      <label className="text-[8px] font-black text-gray-400 uppercase tracking-widest pl-1">Quantity</label>
-                      <input 
-                        type="number"
-                        value={poItem.quantity}
-                        onChange={e => updatePOItem(idx, { quantity: Number(e.target.value) })}
-                        className="w-full p-2 bg-white border border-gray-200 rounded-xl text-xs font-bold outline-none focus:ring-2 focus:ring-blue-500"
-                      />
-                    </div>
-                    <div className="space-y-1">
-                      <label className="text-[8px] font-black text-gray-400 uppercase tracking-widest pl-1">Unit Price</label>
-                      <input 
-                        type="number"
-                        step="0.01"
-                        value={poItem.unitPrice}
-                        onChange={e => updatePOItem(idx, { unitPrice: Number(e.target.value) })}
-                        className="w-full p-2 bg-white border border-gray-200 rounded-xl text-xs font-bold outline-none focus:ring-2 focus:ring-blue-500"
-                      />
-                    </div>
-                    <div className="space-y-1 flex flex-col justify-end">
-                      <label className="text-[8px] font-black text-gray-400 uppercase tracking-widest pl-1">Total</label>
-                      <div className="w-full p-2 bg-gray-100 rounded-xl text-xs font-bold text-gray-600 h-[34px] flex items-center">
-                        {poItem.totalPrice.toLocaleString()}
                       </div>
-                    </div>
-                  </div>
 
-                  <div className="space-y-1">
-                    <label className="text-[8px] font-black text-gray-400 uppercase tracking-widest pl-1">Item Note (Size, Color, etc.)</label>
-                    <input 
-                      type="text"
-                      value={poItem.note || ''}
-                      onChange={e => updatePOItem(idx, { note: e.target.value })}
-                      placeholder="e.g. 12 inch, Blue, Heavy Duty"
-                      className="w-full p-2 bg-white border border-gray-200 rounded-xl text-[10px] font-bold outline-none focus:ring-2 focus:ring-blue-500"
-                    />
+                      <div className="w-[100px] space-y-1">
+                        <p className="text-[8px] font-black text-gray-400 uppercase tracking-widest pl-1">Total</p>
+                        <div className="w-full p-2 bg-gray-100 rounded-xl text-xs font-bold text-gray-600 h-[34px] flex items-center justify-end">
+                          {poItem.totalPrice.toLocaleString()}
+                        </div>
+                      </div>
+
+                      <button type="button" onClick={() => setPoItems(poItems.filter((_, i) => i !== idx))} className="text-red-500 p-2 hover:bg-red-50 rounded-lg transition-colors shrink-0">
+                        <X size={18} />
+                      </button>
+                    </div>
                   </div>
                 </div>
               );
@@ -2918,9 +3102,53 @@ export const PurchaseOrderForm = ({ items, locations, uoms, profile, initialData
           />
         </div>
 
-        <div className="p-4 bg-blue-600 rounded-2xl text-white flex items-center justify-between">
-          <span className="text-xs font-black uppercase tracking-widest">Total Amount</span>
-          <span className="text-xl font-black">{totalAmount.toLocaleString()}</span>
+        <div className="pt-4 border-t border-gray-100 space-y-3">
+          <div className="flex justify-between items-center text-gray-500 px-1">
+            <span className="text-xs font-bold uppercase tracking-wider">Subtotal</span>
+            <span className="text-sm font-bold tracking-tight">₱ {subtotal.toLocaleString()}</span>
+          </div>
+
+          <div className="flex items-center justify-between px-1">
+            <div className="space-y-0.5">
+              <label className="text-xs font-bold text-gray-400 uppercase tracking-wider">PO Discount</label>
+              <p className="text-[10px] text-gray-300 font-medium">Extra deduction for whole PO</p>
+            </div>
+            <div className="flex items-center space-x-2">
+              <div className="flex bg-gray-50 border border-gray-100 rounded-xl overflow-hidden h-10 w-48 focus-within:ring-2 focus-within:ring-blue-500 transition-all">
+                <input 
+                  type="number"
+                  value={discount}
+                  onChange={e => setDiscount(Number(e.target.value))}
+                  placeholder="0.00"
+                  className="flex-1 min-w-0 px-4 text-sm font-bold outline-none bg-transparent"
+                />
+                <select
+                  value={discountType}
+                  onChange={e => setDiscountType(e.target.value as any)}
+                  className="px-3 text-xs font-black bg-gray-100 outline-none border-l border-gray-100 uppercase tracking-widest text-gray-500"
+                >
+                  <option value="amount">₱</option>
+                  <option value="percentage">%</option>
+                </select>
+              </div>
+            </div>
+          </div>
+          
+          <button type="submit" onClick={() => handleSubmit()} disabled={isSubmitting} className="w-full relative group">
+            <div className="absolute -inset-0.5 bg-gradient-to-r from-blue-600 to-indigo-600 rounded-2xl blur opacity-30 group-hover:opacity-100 transition duration-1000 group-hover:duration-200"></div>
+            <div className="relative w-full p-4 bg-blue-600 text-white rounded-2xl font-bold flex items-center justify-between overflow-hidden shadow-lg">
+              <span className="text-xs uppercase tracking-[0.2em] relative z-10">Total Amount</span>
+              <div className="flex items-center space-x-3 relative z-10">
+                <span className="text-2xl font-black tracking-tight">
+                  {totalAmount.toLocaleString('en-PH', { style: 'currency', currency: 'PHP' }).replace('PHP', '₱')}
+                </span>
+                <div className="w-8 h-8 bg-white/20 rounded-lg flex items-center justify-center">
+                  {isSubmitting ? <div className="w-4 h-4 border-2 border-white/50 border-t-white rounded-full animate-spin"></div> : <Check size={18} />}
+                </div>
+              </div>
+              <div className="absolute inset-0 bg-gradient-to-r from-white/0 via-white/10 to-white/0 translate-x-[-100%] group-hover:translate-x-[100%] transition-transform duration-1000"></div>
+            </div>
+          </button>
         </div>
 
         <Modal 

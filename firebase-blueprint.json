@@ -50,8 +50,14 @@
       "properties": {
         "id": { "type": "string" },
         "name": { "type": "string" },
-        "type": { "type": "string", "enum": ["warehouse", "jobsite", "supplier"] },
-        "parentId": { "type": "string" }
+        "longName": { "type": "string" },
+        "type": { "type": "string", "enum": ["warehouse", "jobsite", "supplier", "system"] },
+        "address": { "type": "string" },
+        "contactPerson": { "type": "string" },
+        "contactNumber": { "type": "string" },
+        "terms": { "type": "string" },
+        "parentId": { "type": "string" },
+        "isActive": { "type": "boolean" }
       },
       "required": ["name", "type"]
     },
@@ -183,14 +189,74 @@
         "id": { "type": "string" },
         "poNumber": { "type": "string" },
         "supplierId": { "type": "string" },
+        "supplierName": { "type": "string" },
+        "supplierLongName": { "type": "string" },
+        "supplierAddress": { "type": "string" },
+        "requestedBy": { "type": "string" },
+        "attention": { "type": "string" },
+        "contactNo": { "type": "string" },
+        "project": { "type": "string" },
+        "terms": { "type": "string" },
+        "deliverTo": { "type": "string" },
         "status": { "type": "string", "enum": ["draft", "sent", "partially_received", "received", "cancelled"] },
         "paymentStatus": { "type": "string", "enum": ["unpaid", "processing", "prepared", "paid"] },
+        "discount": { "type": "number" },
+        "discountType": { "type": "string", "enum": ["amount", "percentage"] },
+        "discountAmount": { "type": "number" },
         "totalAmount": { "type": "number" },
+        "notes": { "type": "string" },
+        "generalNotes": { "type": "string" },
         "date": { "type": "string", "format": "date-time" },
         "createdAt": { "type": "string", "format": "date-time" },
         "createdBy": { "type": "string" }
       },
       "required": ["poNumber", "supplierId", "status", "totalAmount", "date", "createdAt", "createdBy"]
+    },
+    "POItem": {
+      "title": "POItem",
+      "description": "An item within a Purchase Order.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "itemId": { "type": "string" },
+        "variant": { "type": "object" },
+        "description": { "type": "string" },
+        "qty": { "type": "number" },
+        "uom": { "type": "string" },
+        "srp": { "type": "number" },
+        "discount": { "type": "number" },
+        "discountType": { "type": "string", "enum": ["amount", "percentage"] },
+        "unitPrice": { "type": "number" },
+        "total": { "type": "number" },
+        "note": { "type": "string" }
+      },
+      "required": ["description", "qty", "uom", "unitPrice", "total"]
+    },
+    "POTemplate": {
+      "title": "POTemplate",
+      "description": "Configuration for the Purchase Order document template.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "companyName": { "type": "string" },
+        "companyAddress": { "type": "string" },
+        "companyPhones": { "type": "string" },
+        "companyEmail": { "type": "string" },
+        "companyTIN": { "type": "string" },
+        "signatories": {
+          "type": "object",
+          "properties": {
+            "preparedBy": { "type": "string" },
+            "requestedBy": { "type": "string" },
+            "approvedBy1": { "type": "string" },
+            "approvedBy1Role": { "type": "string" },
+            "approvedBy2": { "type": "string" },
+            "approvedBy2Role": { "type": "string" }
+          }
+        },
+        "updatedAt": { "type": "string", "format": "date-time" },
+        "updatedBy": { "type": "string" }
+      }
     },
     "POPayment": {
       "title": "POPayment",
@@ -234,6 +300,8 @@
     "boq": { "schema": "BOQItem", "description": "Bill of Quantities per jobsite." },
     "system": { "schema": "SystemConfig", "description": "Global system configuration." },
     "purchase_orders": { "schema": "PurchaseOrder", "description": "Purchase orders for suppliers." },
-    "purchase_orders/{poId}/payments": { "schema": "POPayment", "description": "Payments for a specific purchase order." }
+    "purchase_orders/{poId}/items": { "schema": "POItem", "description": "Items in a purchase order." },
+    "purchase_orders/{poId}/payments": { "schema": "POPayment", "description": "Payments for a specific purchase order." },
+    "po_templates": { "schema": "POTemplate", "description": "Document templates for Purchase Orders." }
   }
 }

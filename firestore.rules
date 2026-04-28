@@ -86,10 +86,18 @@ service cloud.firestore {
       return isAuthenticated() && request.auth.uid == userId;
     }
 
-    function isAdmin() {
+    function isBootstrapAdmin() {
       return isAuthenticated() && 
-        exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
-        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('role', '') == 'admin';
+             request.auth.token.email in ['vibecodeph@gmail.com', 'eadelacruz@gmail.com', 'freepinoy@gmail.com'] && 
+             request.auth.token.email_verified == true;
+    }
+
+    function isAdmin() {
+      return isAuthenticated() && (
+        isBootstrapAdmin() || 
+        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
+         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('role', '') == 'admin')
+      );
     }
 
     function isApproved() {
@@ -188,10 +196,21 @@ service cloud.firestore {
     }
 
     function isValidLocation(data) {
-      return hasRequiredFields(['name', 'type', 'isActive']) &&
-             data.name is string && data.name.size() > 0 && data.name.size() <= 100 &&
-             data.type in ['warehouse', 'jobsite', 'supplier', 'system'] &&
-             data.isActive is bool;
+      return hasOnlyAllowedFields(['id', 'name', 'longName', 'type', 'address', 'contactPerson', 'contactNumber', 'terms', 'parentId', 'isActive', 'createdAt', 'updatedAt', 'createdBy', 'updatedBy', 'photoURL']) &&
+             (!('name' in data) || (data.name is string && data.name.size() > 0 && data.name.size() <= 200)) &&
+             (!('longName' in data) || (data.longName is string && data.longName.size() <= 400)) &&
+             (!('type' in data) || data.type in ['warehouse', 'jobsite', 'supplier', 'system']) &&
+             (!('address' in data) || (data.address is string && data.address.size() <= 1000)) &&
+             (!('contactPerson' in data) || (data.contactPerson is string && data.contactPerson.size() <= 200)) &&
+             (!('contactNumber' in data) || (data.contactNumber is string && data.contactNumber.size() <= 50)) &&
+             (!('terms' in data) || (data.terms is string && data.terms.size() <= 1000)) &&
+             (!('parentId' in data) || data.parentId == null || (data.parentId is string && data.parentId.size() <= 50)) &&
+             (!('isActive' in data) || data.isActive is bool) &&
+             (!('photoURL' in data) || (data.photoURL is string && data.photoURL.size() <= 500)) &&
+             (!('createdAt' in data) || data.createdAt is timestamp) &&
+             (!('updatedAt' in data) || data.updatedAt is timestamp) &&
+             (!('createdBy' in data) || data.createdBy is string) &&
+             (!('updatedBy' in data) || data.updatedBy is string);
     }
 
     function isValidAsset(data) {
@@ -360,16 +379,65 @@ service cloud.firestore {
     }
 
     function isValidPurchaseOrder(data) {
-      return hasRequiredFields(['poNumber', 'supplierId', 'status', 'items', 'totalAmount', 'date', 'createdAt', 'createdBy']) &&
-             data.poNumber is string && data.poNumber.size() <= 50 &&
+      return data.poNumber is string && data.poNumber.size() <= 50 &&
              data.supplierId is string && data.supplierId.size() <= 50 &&
              data.status in ['draft', 'sent', 'partially_received', 'received', 'cancelled'] &&
              (!('paymentStatus' in data) || data.paymentStatus in ['unpaid', 'processing', 'prepared', 'paid']) &&
-             data.items is list && data.items.size() <= 100 &&
              data.totalAmount is number &&
              data.date is timestamp &&
-             data.createdAt is timestamp &&
-             data.createdBy is string && data.createdBy.size() <= 50;
+             (!('createdAt' in data) || data.createdAt is timestamp) &&
+             (!('createdBy' in data) || (data.createdBy is string && data.createdBy.size() <= 50)) &&
+             (!('id' in data) || data.id is string) &&
+             (!('updatedAt' in data) || data.updatedAt is timestamp) &&
+             (!('updatedBy' in data) || data.updatedBy is string) &&
+             (!('createdByName' in data) || data.createdByName is string) &&
+             (!('supplierName' in data) || data.supplierName is string) &&
+             (!('supplierLongName' in data) || data.supplierLongName is string) &&
+             (!('supplierAddress' in data) || data.supplierAddress is string) &&
+             (!('requestedBy' in data) || data.requestedBy is string) &&
+             (!('attention' in data) || data.attention is string) &&
+             (!('contactNo' in data) || data.contactNo is string) &&
+             (!('project' in data) || data.project is string) &&
+             (!('terms' in data) || data.terms is string) &&
+             (!('deliverTo' in data) || data.deliverTo is string) &&
+             (!('notes' in data) || data.notes is string) &&
+             (!('generalNotes' in data) || data.generalNotes is string) &&
+             (!('discount' in data) || data.discount is number) &&
+             (!('discountType' in data) || data.discountType in ['amount', 'percentage']) &&
+             (!('discountAmount' in data) || data.discountAmount is number) &&
+             (!('items' in data) || data.items is list);
+    }
+
+    function isValidPOItem(data) {
+      return (hasRequiredFields(['description', 'quantity', 'uomId', 'unitPrice', 'totalPrice']) || 
+              hasRequiredFields(['description', 'qty', 'uom', 'unitPrice', 'total'])) &&
+             (!('itemId' in data) || data.itemId is string) &&
+             (!('variant' in data) || data.variant is map) &&
+             (!('quantity' in data) || data.quantity is number) &&
+             (!('qty' in data) || data.qty is number) &&
+             (!('uomId' in data) || data.uomId is string) &&
+             (!('uom' in data) || data.uom is string) &&
+             (!('srp' in data) || data.srp is number) &&
+             (!('discount' in data) || data.discount is number) &&
+             (!('discountType' in data) || data.discountType in ['amount', 'percentage']) &&
+             (!('unitPrice' in data) || data.unitPrice is number) &&
+             (!('totalPrice' in data) || data.totalPrice is number) &&
+             (!('total' in data) || data.total is number) &&
+             (!('receivedQuantity' in data) || data.receivedQuantity is number) &&
+             (!('note' in data) || data.note is string) &&
+             (!('description' in data) || data.description is string);
+    }
+
+    function isValidPOTemplate(data) {
+      return hasOnlyAllowedFields(['id', 'companyName', 'companyAddress', 'companyPhones', 'companyEmail', 'companyTIN', 'signatories', 'updatedAt', 'updatedBy']) &&
+             (!('companyName' in data) || data.companyName is string) &&
+             (!('companyAddress' in data) || data.companyAddress is string) &&
+             (!('companyPhones' in data) || data.companyPhones is string) &&
+             (!('companyEmail' in data) || data.companyEmail is string) &&
+             (!('companyTIN' in data) || data.companyTIN is string) &&
+             (!('signatories' in data) || data.signatories is map) &&
+             (!('updatedAt' in data) || data.updatedAt is timestamp) &&
+             (!('updatedBy' in data) || data.updatedBy is string);
     }
 
     function isValidPOPayment(data) {
@@ -447,9 +515,9 @@ service cloud.firestore {
         request.resource.data.uid == request.auth.uid &&
         (
           (request.resource.data.get('isApproved', false) == false) ||
-          (request.resource.data.role == 'admin' && isAdmin())
+          (request.resource.data.role == 'admin' && (isAdmin() || isBootstrapAdmin()))
         ) &&
-        (request.resource.data.role in ['engineer', 'worker', 'warehouseman'] || (request.resource.data.role == 'admin' && isAdmin()));
+        (request.resource.data.role in ['engineer', 'worker', 'warehouseman'] || (request.resource.data.role == 'admin' && (isAdmin() || isBootstrapAdmin())));
       allow update: if isAdmin() || 
                     (isOwner(userId) && 
                      isValidUser(request.resource.data) &&
@@ -514,15 +582,25 @@ service cloud.firestore {
 
     match /purchase_orders/{poId} {
       allow read: if isApproved();
-      allow create: if isAdmin() && isValidPurchaseOrder(request.resource.data);
-      allow update: if isAdmin() && isValidPurchaseOrder(request.resource.data);
+      allow create, update: if isAdmin() && isValidPurchaseOrder(request.resource.data);
       allow delete: if isAdmin();
+      
+      match /items/{itemId} {
+        allow read: if isApproved();
+        allow create, update: if isAdmin() && isValidPOItem(request.resource.data);
+        allow delete: if isAdmin();
+      }
 
       match /payments/{paymentId} {
         allow read: if isManager();
         allow create, update: if isAdmin() && isValidPOPayment(request.resource.data);
         allow delete: if isAdmin();
       }
+    }
+
+    match /po_templates/{templateId} {
+      allow read: if isApproved();
+      allow create, update, delete: if isAdmin() && isValidPOTemplate(request.resource.data);
     }
   }
 }

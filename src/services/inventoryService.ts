@@ -81,6 +81,15 @@ const getInventoryRef = (
   return doc(db, 'inventory', id);
 };
 
+const sortVariant = (v: any): string => {
+  if (!v) return "{}";
+  const sorted = Object.keys(v).sort().reduce((acc, key) => {
+    acc[key] = v[key];
+    return acc;
+  }, {} as any);
+  return JSON.stringify(sorted);
+};
+
 // --- System Config ---
 export const subscribeToSystemConfig = (callback: (config: SystemConfig | null) => void) => {
   return onSnapshot(doc(db, 'system', 'config'), (snapshot) => {
@@ -268,14 +277,6 @@ export const recordTransaction = async (transaction: Omit<Transaction, 'id' | 'u
       // 3. PURCHASE ORDER UPDATE
       if (poDoc?.exists() && poRef) {
         const poData = poDoc.data() as PurchaseOrder;
-        const sortVariant = (v: any) => {
-          if (!v) return "{}";
-          const sorted = Object.keys(v).sort().reduce((acc, key) => {
-            acc[key] = v[key];
-            return acc;
-          }, {} as any);
-          return JSON.stringify(sorted);
-        };
         const targetVariantStr = sortVariant(variant);
 
         const updatedItems = poData.items.map(item => {
@@ -417,14 +418,6 @@ export const deleteTransaction = async (transaction: Transaction) => {
         const itemDoc = await dbTransaction.get(itemRef);
         const itemData = itemDoc.data() as Item;
 
-        const sortVariant = (v: any) => {
-          if (!v) return "{}";
-          const sorted = Object.keys(v).sort().reduce((acc, key) => {
-            acc[key] = v[key];
-            return acc;
-          }, {} as any);
-          return JSON.stringify(sorted);
-        };
         const targetVariantStr = sortVariant(variant);
 
         const updatedItems = poData.items.map(item => {
@@ -587,15 +580,6 @@ export const updateTransaction = async (id: string, oldTransaction: Transaction,
         const currentQty = (d?.exists() ? d.data()?.quantity : 0) || 0;
         docMap.set(oldToRef.path, { exists: () => true, data: () => ({ ...d?.data(), quantity: currentQty - oldTransaction.baseQuantity }) });
       }
-
-      const sortVariant = (v: any) => {
-        if (!v) return "{}";
-        const sorted = Object.keys(v).sort().reduce((acc, key) => {
-          acc[key] = v[key];
-          return acc;
-        }, {} as any);
-        return JSON.stringify(sorted);
-      };
 
       // Revert PO if needed
       if (oldPoDoc?.exists() && oldPoRef) {
@@ -2392,7 +2376,7 @@ export const subscribeToInventory = (callback: (data: Inventory[]) => void, loca
 };
 
 export const subscribeToItems = (callback: (data: Item[]) => void) => {
-  return onSnapshot(collection(db, 'items'), (snapshot) => {
+  return onSnapshot(query(collection(db, 'items'), where('isActive', '==', true)), (snapshot) => {
     const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Item));
     callback(data);
   }, (error) => {
@@ -2428,7 +2412,7 @@ export const subscribeToLocations = (callback: (data: Location[]) => void, locat
 };
 
 export const subscribeToTags = (callback: (data: Tag[]) => void) => {
-  return onSnapshot(collection(db, 'tags'), (snapshot) => {
+  return onSnapshot(query(collection(db, 'tags'), orderBy('name', 'asc')), (snapshot) => {
     const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Tag));
     callback(data);
   }, (error) => {
@@ -2492,7 +2476,7 @@ export const subscribeToUnplannedStock = (callback: (data: UnplannedStock[]) => 
 };
 
 export const subscribeToCategories = (callback: (data: Category[]) => void) => {
-  return onSnapshot(collection(db, 'categories'), (snapshot) => {
+  return onSnapshot(query(collection(db, 'categories'), orderBy('name', 'asc')), (snapshot) => {
     const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Category));
     callback(data);
   }, (error) => {
@@ -2502,7 +2486,7 @@ export const subscribeToCategories = (callback: (data: Category[]) => void) => {
 };
 
 export const subscribeToUOMs = (callback: (data: UOM[]) => void) => {
-  return onSnapshot(collection(db, 'uoms'), (snapshot) => {
+  return onSnapshot(query(collection(db, 'uoms'), where('isActive', '==', true)), (snapshot) => {
     const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as UOM));
     callback(data);
   }, (error) => {

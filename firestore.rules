@@ -87,16 +87,11 @@ service cloud.firestore {
     }
 
     function isAdmin() {
-      return isAuthenticated() && 
-        exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
-        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('role', '') == 'admin';
+      return isAuthenticated() && request.auth.token.get('role', '') == 'admin';
     }
 
     function isApproved() {
-      return isAuthenticated() && 
-        (isAdmin() || 
-         (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
-          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('isApproved', false) == true));
+      return isAuthenticated() && request.auth.token.get('isApproved', false) == true;
     }
 
     function isAssignedLocation(locationId) {
@@ -106,29 +101,25 @@ service cloud.firestore {
         (locationId == 'in-transit' || locationId == null || locationId == "") ||
         (exists(/databases/$(database)/documents/locations/$(locationId)) && 
          get(/databases/$(database)/documents/locations/$(locationId)).data.get('type', '') == 'system') ||
-        (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('role', '') in ['worker', 'engineer'] &&
-         locationId in get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('assignedLocationIds', []))
+        (request.auth.token.get('role', '') in ['worker', 'engineer'] &&
+         locationId in request.auth.token.get('assignedLocationIds', []))
       );
     }
 
     function isManager() {
-      return isAuthenticated() && 
-        ((exists(/databases/$(database)/documents/users/$(request.auth.uid)) && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('role', '') == 'manager') || isAdmin());
+      return isAuthenticated() && (request.auth.token.get('role', '') == 'manager' || isAdmin());
     }
 
     function isEngineer() {
-      return isAuthenticated() && 
-        ((exists(/databases/$(database)/documents/users/$(request.auth.uid)) && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('role', '') == 'engineer') || isManager());
+      return isAuthenticated() && (request.auth.token.get('role', '') == 'engineer' || isManager());
     }
 
     function isWarehouseman() {
-      return isAuthenticated() && 
-        ((exists(/databases/$(database)/documents/users/$(request.auth.uid)) && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('role', '') == 'warehouseman') || isManager());
+      return isAuthenticated() && (request.auth.token.get('role', '') == 'warehouseman' || isManager());
     }
 
     function isWorker() {
-      return isAuthenticated() && 
-        ((exists(/databases/$(database)/documents/users/$(request.auth.uid)) && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('role', '') == 'worker') || isEngineer() || isWarehouseman());
+      return isAuthenticated() && (request.auth.token.get('role', '') == 'worker' || isEngineer() || isWarehouseman());
     }
 
     function hasRequiredFields(fields) {

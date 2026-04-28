@@ -197,13 +197,16 @@ const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   }, []);
 
   useEffect(() => {
-    const unsubAuth = onAuthStateChanged(auth, (u) => {
-      setUser(u);
-      if (!u) {
-        setProfile(null);
-        setLoading(false);
-      }
-    });
+    const unsubAuth = onAuthStateChanged(auth, async (u) => {
+  if (u) {
+    await u.getIdToken(true); // force token refresh to pick up custom claims
+  }
+  setUser(u);
+  if (!u) {
+    setProfile(null);
+    setLoading(false);
+  }
+});
     return () => unsubAuth();
   }, []);
 
@@ -263,9 +266,12 @@ const DataProvider = ({ children }: { children: React.ReactNode }) => {
       collectionsToLoad.push(
         'items', 'categories', 'uoms', 'locations', 'inventory', 
         'transactions', 'requests', 'assets', 'boq', 'unplanned', 
-        'tags', 'purchase_orders'
+        'tags'
       );
-      if (profile.role === 'admin' || profile.role === 'engineer') {
+      if (profile.role === 'admin' || profile.role === 'manager') {
+        collectionsToLoad.push('users', 'purchase_orders');
+      }
+      if (profile.role === 'engineer') {
         collectionsToLoad.push('users');
       }
     }
@@ -323,19 +329,19 @@ const DataProvider = ({ children }: { children: React.ReactNode }) => {
       safeSubscribe('inventory', subscribeToInventory, assigned),
       safeSubscribe('transactions', subscribeToTransactions, assigned),
       safeSubscribe('requests', subscribeToRequests, assigned),
-      (profile?.role === 'admin' || profile?.role === 'engineer') ? safeSubscribe('users', subscribeToUsers, profile.role) : () => {},
+      (profile?.role === 'admin' || profile?.role === 'manager' || profile?.role === 'engineer') ? safeSubscribe('users', subscribeToUsers, profile.role) : () => {},
       safeSubscribe('assets', subscribeToAssets, assigned),
       safeSubscribe('boq', subscribeToBOQs, assigned),
       safeSubscribe('unplanned', subscribeToUnplannedStock, assigned),
       safeSubscribe('tags', subscribeToTags),
-      safeSubscribe('purchase_orders', subscribeToPurchaseOrders)
+      (profile?.role === 'admin' || profile?.role === 'manager') ? safeSubscribe('purchase_orders', subscribeToPurchaseOrders) : () => {}
     ];
 
     return () => {
       unsubConfig();
       unsubscribes.forEach(u => u());
     };
-  }, [user, profile]);
+  }, [user?.uid, profile?.isApproved, profile?.role, JSON.stringify(profile?.assignedLocationIds)]);
 
   return (
     <DataContext.Provider value={{ ...data, loading }}>

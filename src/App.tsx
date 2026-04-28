@@ -211,19 +211,9 @@ const AuthProvider = ({ children }: { children: React.ReactNode }) => {
     if (!user) return;
 
     const unsubProfile = onSnapshot(doc(db, 'users', user.uid), async (userDoc) => {
-      const BOOTSTRAP_EMAILS = import.meta.env.VITE_BOOTSTRAP_ADMIN_EMAILS?.split(',') || [];
-      const isBootstrapAdmin = user.email && BOOTSTRAP_EMAILS.includes(user.email);
-      
       if (userDoc.exists()) {
         const data = userDoc.data() as UserProfile;
-        // Auto-activate admin if they are a bootstrap admin email but not active
-        if (isBootstrapAdmin && !data.isActive) {
-          const updatedProfile = { ...data, isActive: true, isApproved: true, role: 'admin' as const };
-          await setDoc(doc(db, 'users', user.uid), updatedProfile, { merge: true });
-          setProfile(updatedProfile);
-        } else {
-          setProfile(data);
-        }
+        setProfile(data);
       } else {
         // Create default profile for new users
         const newProfile: UserProfile = {
@@ -231,9 +221,9 @@ const AuthProvider = ({ children }: { children: React.ReactNode }) => {
           email: user.email || '',
           displayName: user.displayName || 'New User',
           photoURL: user.photoURL || '',
-          role: isBootstrapAdmin ? 'admin' : 'worker',
-          isActive: !!isBootstrapAdmin, // Admins are active by default
-          isApproved: !!isBootstrapAdmin, // Admins are approved by default
+          role: 'worker',
+          isActive: false,
+          isApproved: false,
           createdAt: serverTimestamp() as any,
         };
         await setDoc(doc(db, 'users', user.uid), newProfile);
@@ -369,10 +359,7 @@ const ProtectedRoute = ({ children, requireAdmin }: { children: React.ReactNode,
   if (!user) return <Navigate to="/login" state={{ from: location }} replace />;
   
   // Maintenance Mode Check
-  const BOOTSTRAP_EMAILS = import.meta.env.VITE_BOOTSTRAP_ADMIN_EMAILS?.split(',') || [];
-  const isBootstrapAdminFromEnv = user.email && BOOTSTRAP_EMAILS.includes(user.email);
-  
-  if (systemConfig?.maintenanceMode && profile?.role !== 'admin' && !isBootstrapAdminFromEnv) {
+  if (systemConfig?.maintenanceMode && profile?.role !== 'admin') {
     return <Navigate to="/maintenance" replace />;
   }
 

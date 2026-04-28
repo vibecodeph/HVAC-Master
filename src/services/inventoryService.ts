@@ -59,6 +59,28 @@ const cleanData = (data: any): any => {
   return clean;
 };
 
+const getInventoryRef = (
+  itemId: string,
+  locationId: string,
+  variant?: Record<string, string>,
+  serialNumber?: string,
+  propertyNumber?: string,
+  customSpec?: string
+) => {
+  let id = `${itemId}_${locationId}`;
+  if (variant && Object.keys(variant).length > 0) {
+    const sortedVariant = Object.keys(variant).sort().reduce((acc, key) => {
+      acc[key] = variant[key]; return acc;
+    }, {} as any);
+    id += `_${encodeURIComponent(JSON.stringify(sortedVariant)).replace(/%/g, '_').replace(/\./g, '-')}`;
+  }
+  if (customSpec) id += `_SPEC-${encodeURIComponent(customSpec).replace(/%/g, '_')}`;
+  if (serialNumber) id += `_SN-${encodeURIComponent(serialNumber).replace(/%/g, '_')}`;
+  if (propertyNumber) id += `_PN-${encodeURIComponent(propertyNumber).replace(/%/g, '_')}`;
+  if (id.length > 1000) id = id.substring(0, 1000);
+  return doc(db, 'inventory', id);
+};
+
 // --- System Config ---
 export const subscribeToSystemConfig = (callback: (config: SystemConfig | null) => void) => {
   return onSnapshot(doc(db, 'system', 'config'), (snapshot) => {
@@ -125,32 +147,6 @@ export const recordTransaction = async (transaction: Omit<Transaction, 'id' | 'u
   if (supplierInvoice) transactionData.supplierInvoice = supplierInvoice;
   if (supplierDR) transactionData.supplierDR = supplierDR;
 
-  const getInventoryRef = (itemId: string, locationId: string, variant?: Record<string, string>, serialNumber?: string, propertyNumber?: string, customSpec?: string) => {
-    let id = `${itemId}_${locationId}`;
-    if (variant && Object.keys(variant).length > 0) {
-      const sortedVariant = Object.keys(variant).sort().reduce((acc, key) => {
-        acc[key] = variant[key];
-        return acc;
-      }, {} as any);
-      const variantStr = JSON.stringify(sortedVariant);
-      const variantHash = encodeURIComponent(variantStr).replace(/%/g, '_').replace(/\./g, '-');
-      id += `_${variantHash}`;
-    }
-    if (customSpec) {
-      id += `_SPEC-${encodeURIComponent(customSpec).replace(/%/g, '_')}`;
-    }
-    if (serialNumber) {
-      id += `_SN-${encodeURIComponent(serialNumber).replace(/%/g, '_')}`;
-    }
-    if (propertyNumber) {
-      id += `_PN-${encodeURIComponent(propertyNumber).replace(/%/g, '_')}`;
-    }
-    if (id.length > 1000) {
-      id = id.substring(0, 1000);
-    }
-    return doc(db, 'inventory', id);
-  };
-
   try {
     // PRE-FETCH BOQ IDs (Queries not allowed in transactions)
     let boqToId: string | null = null;
@@ -163,18 +159,8 @@ export const recordTransaction = async (transaction: Omit<Transaction, 'id' | 'u
       return match?.id || null;
     };
 
-    if (toLocationId) {
-      const locSnap = await getDoc(doc(db, 'locations', toLocationId));
-      if (locSnap.exists() && locSnap.data().type === 'jobsite') {
-        boqToId = await findBoq(toLocationId);
-      }
-    }
-    if (fromLocationId) {
-      const locSnap = await getDoc(doc(db, 'locations', fromLocationId));
-      if (locSnap.exists() && locSnap.data().type === 'jobsite') {
-        boqFromId = await findBoq(fromLocationId);
-      }
-    }
+    if (toLocationId) boqToId = await findBoq(toLocationId);
+    if (fromLocationId) boqFromId = await findBoq(fromLocationId);
 
     const boqToRef = boqToId ? doc(db, 'boq', boqToId) : null;
     const boqFromRef = boqFromId ? doc(db, 'boq', boqFromId) : null;
@@ -365,11 +351,14 @@ export const recordTransaction = async (transaction: Omit<Transaction, 'id' | 'u
       }
 
       // 4. BOQ QUANTITY UPDATE
-      if (boqToRef && boqToDoc?.exists()) {
+      const toIsJobsite = toLocDoc?.exists() && toLocDoc.data()?.type === 'jobsite';
+      const fromIsJobsite = fromLocDoc?.exists() && fromLocDoc.data()?.type === 'jobsite';
+
+      if (toIsJobsite && boqToRef && boqToDoc?.exists()) {
         const current = boqToDoc.data()?.currentQuantity || 0;
         dbTransaction.update(boqToRef, { currentQuantity: current + baseQuantity });
       }
-      if (boqFromRef && boqFromDoc?.exists()) {
+      if (fromIsJobsite && boqFromRef && boqFromDoc?.exists()) {
         const current = boqFromDoc.data()?.currentQuantity || 0;
         dbTransaction.update(boqFromRef, { currentQuantity: Math.max(0, current - baseQuantity) });
       }
@@ -381,28 +370,7 @@ export const recordTransaction = async (transaction: Omit<Transaction, 'id' | 'u
 };
 
 export const deleteTransaction = async (transaction: Transaction) => {
-  const { itemId, variant, serialNumber, propertyNumber, fromLocationId, toLocationId, baseQuantity } = transaction;
-
-  const getInventoryRef = (itemId: string, locationId: string, variant?: Record<string, string>, serialNumber?: string, propertyNumber?: string) => {
-    let id = `${itemId}_${locationId}`;
-    if (variant && Object.keys(variant).length > 0) {
-      const sortedVariant = Object.keys(variant).sort().reduce((acc, key) => {
-        acc[key] = variant[key];
-        return acc;
-      }, {} as any);
-      const variantStr = JSON.stringify(sortedVariant);
-      const variantHash = encodeURIComponent(variantStr).replace(/%/g, '_').replace(/\./g, '-');
-      id += `_${variantHash}`;
-    }
-    if (serialNumber) {
-      id += `_SN-${encodeURIComponent(serialNumber).replace(/%/g, '_')}`;
-    }
-    if (propertyNumber) {
-      id += `_PN-${encodeURIComponent(propertyNumber).replace(/%/g, '_')}`;
-    }
-    if (id.length > 1000) id = id.substring(0, 1000);
-    return doc(db, 'inventory', id);
-  };
+  const { itemId, variant, customSpec, serialNumber, propertyNumber, fromLocationId, toLocationId, baseQuantity } = transaction;
 
   try {
     await runTransaction(db, async (dbTransaction) => {
@@ -415,12 +383,12 @@ export const deleteTransaction = async (transaction: Transaction) => {
       let poRef = null;
 
       if (fromLocationId) {
-        fromInvRef = getInventoryRef(itemId, fromLocationId, variant, serialNumber, propertyNumber);
+        fromInvRef = getInventoryRef(itemId, fromLocationId, variant, serialNumber, propertyNumber, customSpec);
         fromInvDoc = await dbTransaction.get(fromInvRef);
       }
 
       if (toLocationId) {
-        toInvRef = getInventoryRef(itemId, toLocationId, variant, serialNumber, propertyNumber);
+        toInvRef = getInventoryRef(itemId, toLocationId, variant, serialNumber, propertyNumber, customSpec);
         toInvDoc = await dbTransaction.get(toInvRef);
       }
 
@@ -543,30 +511,6 @@ export const updateTransaction = async (id: string, oldTransaction: Transaction,
   if (!userId) throw new Error('User not authenticated');
 
   const { timestamp } = newTransactionData;
-
-  const getInventoryRef = (itemId: string, locationId: string, variant?: Record<string, string>, serialNumber?: string, propertyNumber?: string, customSpec?: string) => {
-    let id = `${itemId}_${locationId}`;
-    if (variant && Object.keys(variant).length > 0) {
-      const sortedVariant = Object.keys(variant).sort().reduce((acc, key) => {
-        acc[key] = variant[key];
-        return acc;
-      }, {} as any);
-      const variantStr = JSON.stringify(sortedVariant);
-      const variantHash = encodeURIComponent(variantStr).replace(/%/g, '_').replace(/\./g, '-');
-      id += `_${variantHash}`;
-    }
-    if (customSpec) {
-      id += `_SPEC-${encodeURIComponent(customSpec).replace(/%/g, '_')}`;
-    }
-    if (serialNumber) {
-      id += `_SN-${encodeURIComponent(serialNumber).replace(/%/g, '_')}`;
-    }
-    if (propertyNumber) {
-      id += `_PN-${encodeURIComponent(propertyNumber).replace(/%/g, '_')}`;
-    }
-    if (id.length > 1000) id = id.substring(0, 1000);
-    return doc(db, 'inventory', id);
-  };
 
   try {
     await runTransaction(db, async (dbTransaction) => {
@@ -1194,24 +1138,6 @@ export const deleteUnplannedStock = async (id: string) => {
 };
 
 // --- Request Operations ---
-
-// --- Helper Functions ---
-
-const getInventoryRef = (itemId: string, locationId: string, variant?: Record<string, string>, serialNumber?: string, customSpec?: string) => {
-  let id = `${itemId}_${locationId}`;
-  if (variant && Object.keys(variant).length > 0) {
-    const sortedVariant = Object.keys(variant).sort().reduce((acc, key) => { acc[key] = variant[key]; return acc; }, {} as any);
-    const variantHash = encodeURIComponent(JSON.stringify(sortedVariant)).replace(/%/g, '_').replace(/\./g, '-');
-    id += `_${variantHash}`;
-  }
-  if (customSpec) {
-    id += `_SPEC-${encodeURIComponent(customSpec).replace(/%/g, '_')}`;
-  }
-  if (serialNumber) {
-    id += `_SN-${encodeURIComponent(serialNumber).replace(/%/g, '_')}`;
-  }
-  return doc(db, 'inventory', id.substring(0, 1000));
-};
 
 export const createRequest = async (request: Omit<Request, 'id' | 'timestamp' | 'status' | 'requestorId'>, requestorName?: string) => {
   const userId = auth.currentUser?.uid;
@@ -2289,24 +2215,6 @@ export const recordBulkPullout = async (
   userName: string,
   notes: string
 ) => {
-  const getInventoryRef = (itemId: string, locationId: string, variant?: Record<string, string>, customSpec?: string) => {
-    let id = `${itemId}_${locationId}`;
-    if (variant && Object.keys(variant).length > 0) {
-      const sortedVariant = Object.keys(variant).sort().reduce((acc, key) => {
-        acc[key] = variant[key];
-        return acc;
-      }, {} as any);
-      const variantStr = JSON.stringify(sortedVariant);
-      const variantHash = encodeURIComponent(variantStr).replace(/%/g, '_').replace(/\./g, '-');
-      id += `_${variantHash}`;
-    }
-    if (customSpec) {
-      id += `_SPEC-${encodeURIComponent(customSpec).replace(/%/g, '_')}`;
-    }
-    if (id.length > 1000) id = id.substring(0, 1000);
-    return doc(db, 'inventory', id);
-  };
-
   try {
     await runTransaction(db, async (dbTransaction) => {
       // 1. READS

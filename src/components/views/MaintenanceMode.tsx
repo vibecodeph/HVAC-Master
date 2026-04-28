@@ -8,10 +8,7 @@ export const MaintenanceMode = () => {
   const { systemConfig } = useData();
   const navigate = useNavigate();
 
-  const BOOTSTRAP_EMAILS = import.meta.env.VITE_BOOTSTRAP_ADMIN_EMAILS?.split(',') || [];
-  const isBootstrapAdmin = user?.email && BOOTSTRAP_EMAILS.includes(user.email);
-
-  if (!systemConfig?.maintenanceMode || profile?.role === 'admin' || isBootstrapAdmin) {
+  if (!systemConfig?.maintenanceMode || profile?.role === 'admin') {
     return <Navigate to="/" replace />;
   }
 

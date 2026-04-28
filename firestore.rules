@@ -86,18 +86,10 @@ service cloud.firestore {
       return isAuthenticated() && request.auth.uid == userId;
     }
 
-    function isBootstrapAdmin() {
-      return isAuthenticated() && 
-             request.auth.token.email in ['vibecodeph@gmail.com', 'eadelacruz@gmail.com', 'freepinoy@gmail.com'] && 
-             request.auth.token.email_verified == true;
-    }
-
     function isAdmin() {
-      return isAuthenticated() && (
-        isBootstrapAdmin() || 
-        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
-         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('role', '') == 'admin')
-      );
+      return isAuthenticated() && 
+        exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('role', '') == 'admin';
     }
 
     function isApproved() {
@@ -515,9 +507,9 @@ service cloud.firestore {
         request.resource.data.uid == request.auth.uid &&
         (
           (request.resource.data.get('isApproved', false) == false) ||
-          (request.resource.data.role == 'admin' && (isAdmin() || isBootstrapAdmin()))
+          (request.resource.data.role == 'admin' && isAdmin())
         ) &&
-        (request.resource.data.role in ['engineer', 'worker', 'warehouseman'] || (request.resource.data.role == 'admin' && (isAdmin() || isBootstrapAdmin())));
+        (request.resource.data.role in ['engineer', 'worker', 'warehouseman'] || (request.resource.data.role == 'admin' && isAdmin()));
       allow update: if isAdmin() || 
                     (isOwner(userId) && 
                      isValidUser(request.resource.data) &&

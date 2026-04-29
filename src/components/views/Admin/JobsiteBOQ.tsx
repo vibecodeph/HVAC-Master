@@ -13,6 +13,7 @@ import { exportJobsiteBOQToCSV, importJobsiteBOQFromCSV } from '../../../service
 
 const BOQItemGroup = ({ itemId, boqItems, items, uoms, inventory, jobsiteId }: { itemId: string; boqItems: BOQItem[]; items: Item[]; uoms: any[]; inventory: any[]; jobsiteId: string }) => {
   const [isExpanded, setIsExpanded] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
   const item = items.find(i => i.id === itemId);
   const uom = uoms.find(u => u.id === item?.uomId || u.symbol === item?.uomId);
 
@@ -33,29 +34,69 @@ const BOQItemGroup = ({ itemId, boqItems, items, uoms, inventory, jobsiteId }: {
   if (activeEntries.length === 0) return null;
 
   return (
-    <Card className="border-gray-100 shadow-sm overflow-hidden">
+    <Card className="bg-white border-gray-100 shadow-sm overflow-hidden rounded-2xl">
       <div 
-        className="p-4 flex justify-between items-center cursor-pointer active:bg-gray-50 transition-colors"
+        className="p-4 flex justify-between items-center cursor-pointer hover:bg-gray-50/50 transition-colors"
         onClick={() => setIsExpanded(!isExpanded)}
       >
-        <div className="flex items-center space-x-3">
-          <div className="w-10 h-10 bg-blue-50 text-blue-600 rounded-xl flex items-center justify-center">
-            <Box size={20} />
+        <div className="flex items-center space-x-4 flex-1">
+          <div className="w-12 h-12 bg-blue-50 text-blue-600 rounded-xl flex items-center justify-center shrink-0">
+            <Box size={24} />
           </div>
-          <div>
-            <h4 className="font-bold text-gray-900">{item?.name}</h4>
-            <p className="text-[10px] text-gray-400 font-bold uppercase tracking-wider">
-              {activeEntries.length} {activeEntries.length === 1 ? 'Variant' : 'Variants'} in BOQ
-            </p>
+          <div className="min-w-0">
+            <h4 className="font-black text-gray-900 text-sm tracking-tight">
+              {item?.name}
+            </h4>
           </div>
         </div>
-        <motion.div
-          animate={{ rotate: isExpanded ? 180 : 0 }}
-          transition={{ duration: 0.3 }}
-          className="text-gray-400"
-        >
-          <ChevronDown size={18} />
-        </motion.div>
+        <div className="flex items-center space-x-3">
+          {confirmDelete === 'all' ? (
+            <div className="flex items-center space-x-2 bg-red-50 p-1.5 rounded-xl border border-red-100 animate-in fade-in zoom-in duration-200" onClick={e => e.stopPropagation()}>
+              <span className="text-[8px] font-black text-red-600 uppercase tracking-widest px-1">Delete All?</span>
+              <button 
+                onClick={async (e) => {
+                  e.stopPropagation();
+                  try {
+                    await Promise.all(boqItems.map(boq => deleteBOQItem(boq.id)));
+                  } catch (err: any) {
+                    console.error('Delete BOQ error:', err);
+                  }
+                  setConfirmDelete(null);
+                }}
+                className="px-2 py-1 bg-red-600 text-white rounded-lg text-[8px] font-black uppercase tracking-widest shadow-sm hover:bg-red-700 transition-colors"
+              >
+                Yes
+              </button>
+              <button 
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setConfirmDelete(null);
+                }}
+                className="px-2 py-1 bg-white border border-gray-200 text-gray-500 rounded-lg text-[8px] font-black uppercase tracking-widest shadow-sm hover:bg-gray-50 transition-colors"
+              >
+                No
+              </button>
+            </div>
+          ) : (
+            <button 
+              onClick={(e) => {
+                e.stopPropagation();
+                setConfirmDelete('all');
+              }}
+              className="p-2 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-all"
+              title="Remove all from BOQ"
+            >
+              <Trash2 size={18} />
+            </button>
+          )}
+          <motion.div
+            animate={{ rotate: isExpanded ? 180 : 0 }}
+            transition={{ duration: 0.3 }}
+            className="text-gray-400"
+          >
+            <ChevronDown size={20} />
+          </motion.div>
+        </div>
       </div>
 
       <AnimatePresence>
@@ -91,15 +132,44 @@ const BOQItemGroup = ({ itemId, boqItems, items, uoms, inventory, jobsiteId }: {
                           </div>
                         )}
                       </div>
-                      <button 
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          if (confirm('Remove this variant from BOQ?')) deleteBOQItem(boq.id);
-                        }}
-                        className="p-1.5 text-gray-300 hover:text-red-500 hover:bg-red-50 rounded-lg transition-all opacity-0 group-hover:opacity-100"
-                      >
-                        <Trash2 size={14} />
-                      </button>
+                      {confirmDelete === boq.id ? (
+                        <div className="flex items-center space-x-2 bg-red-50 p-1.5 rounded-xl border border-red-100 animate-in fade-in zoom-in duration-200">
+                          <span className="text-[8px] font-black text-red-600 uppercase tracking-widest px-1">Confirm?</span>
+                          <button 
+                            onClick={async (e) => {
+                              e.stopPropagation();
+                              try {
+                                await deleteBOQItem(boq.id);
+                              } catch (err: any) {
+                                console.error('Delete BOQ error:', err);
+                              }
+                              setConfirmDelete(null);
+                            }}
+                            className="px-2 py-1 bg-red-600 text-white rounded-lg text-[8px] font-black uppercase tracking-widest shadow-sm hover:bg-red-700 transition-colors"
+                          >
+                            Yes
+                          </button>
+                          <button 
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setConfirmDelete(null);
+                            }}
+                            className="px-2 py-1 bg-white border border-gray-200 text-gray-500 rounded-lg text-[8px] font-black uppercase tracking-widest shadow-sm hover:bg-gray-50 transition-colors"
+                          >
+                            No
+                          </button>
+                        </div>
+                      ) : (
+                        <button 
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setConfirmDelete(boq.id);
+                          }}
+                          className="p-2 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-xl transition-all"
+                        >
+                          <Trash2 size={16} />
+                        </button>
+                      )}
                     </div>
 
                     <div className="grid grid-cols-2 gap-4">
@@ -146,7 +216,17 @@ const BOQItemGroup = ({ itemId, boqItems, items, uoms, inventory, jobsiteId }: {
                     <div className="flex items-center justify-between mt-3 px-1">
                       <div className="flex items-center space-x-2">
                         <div className="w-1.5 h-1.5 rounded-full bg-blue-500" />
-                        <span className="text-[9px] font-black text-gray-500 uppercase tracking-widest">Delivered: {delivered}</span>
+                        <div className="flex items-center space-x-1">
+                          <span className={cn(
+                            "text-[9px] font-black uppercase tracking-widest",
+                            delivered === 0 ? "text-gray-400" : "text-gray-500"
+                          )}>
+                            {delivered}
+                          </span>
+                          <span className="text-[9px] font-black text-gray-400 uppercase tracking-widest opacity-80">
+                            {uom?.symbol || item?.uomId} Delivered
+                          </span>
+                        </div>
                       </div>
                       {boq.targetQuantity && (
                         <span className="text-[9px] font-black text-gray-400 uppercase tracking-widest">
@@ -176,6 +256,7 @@ export const JobsiteBOQView = () => {
   const [error, setError] = useState<string | null>(null);
   const [importProgress, setImportProgress] = useState<{ current: number; total: number } | null>(null);
   const [pendingImportData, setPendingImportData] = useState<Omit<BOQItem, 'id' | 'timestamp'>[] | null>(null);
+  const [confirmClearBOQ, setConfirmClearBOQ] = useState(false);
   const [selectedItemForVariant, setSelectedItemForVariant] = useState<string | null>(null);
   const [selectedVariant, setSelectedVariant] = useState<Record<string, string>>({});
   const [selectedCustomSpec, setSelectedCustomSpec] = useState('');
@@ -277,7 +358,7 @@ export const JobsiteBOQView = () => {
       );
 
       if (result.errors.length > 0) {
-        setError(`Import completed with errors: ${result.errors.slice(0, 3).join(', ')}${result.errors.length > 3 ? '...' : ''}`);
+        setError(`IMPORT COMPLETED WITH ERRORS: ${result.errors.join(', ')}`.toUpperCase());
       }
 
       if (result.data && result.data.length > 0) {
@@ -307,8 +388,10 @@ export const JobsiteBOQView = () => {
     }
   };
 
-  if (!jobsite || profile?.role !== 'admin') {
-    return <div className="p-8 text-center">Access Denied or Jobsite not found.</div>;
+  const isAdminUser = profile?.role === 'admin' || profile?.role === 'manager' || profile?.role === 'engineer';
+
+  if (!jobsite || !isAdminUser) {
+    return <div className="p-8 text-center text-gray-500 font-bold uppercase tracking-widest">Access Denied or Jobsite not found.</div>;
   }
 
   return (
@@ -349,9 +432,11 @@ export const JobsiteBOQView = () => {
             </div>
 
             {error && (
-              <div className="p-3 bg-red-50 border border-red-100 rounded-xl flex items-center space-x-2 text-red-600 text-[10px] font-bold uppercase">
-                <AlertTriangle size={14} />
-                <span>{error}</span>
+              <div className="p-4 bg-red-50 border border-red-100 rounded-2xl flex items-start space-x-3 text-red-600 shadow-sm">
+                <AlertTriangle className="shrink-0 mt-0.5" size={16} />
+                <span className="text-[11px] font-black uppercase leading-relaxed tracking-wider">
+                  {error}
+                </span>
               </div>
             )}
             
@@ -371,7 +456,10 @@ export const JobsiteBOQView = () => {
                         "p-4 flex items-center justify-between hover:bg-gray-50 transition-colors",
                         isInBOQ && "opacity-50 pointer-events-none"
                       )}>
-                        <div className="flex-1" onClick={() => needsSelection ? setSelectedItemForVariant(isSelecting ? null : item.id) : handleAdd(item.id)}>
+                        <div 
+                          className="flex-1" 
+                          onClick={() => !hasGenericInBOQ && handleAdd(item.id)}
+                        >
                           <div className="flex items-center space-x-2">
                             <p className="text-sm font-bold text-gray-900">{item.name}</p>
                             {hasGenericInBOQ && <span className="text-[8px] font-black bg-gray-200 text-gray-500 px-1.5 py-0.5 rounded uppercase tracking-widest">In BOQ</span>}
@@ -380,12 +468,24 @@ export const JobsiteBOQView = () => {
                             {uoms.find(u => u.id === item.uomId || u.symbol === item.uomId)?.symbol || item.uomId}
                           </p>
                         </div>
+                        {needsSelection && (
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setSelectedItemForVariant(isSelecting ? null : item.id);
+                            }}
+                            disabled={isSubmitting}
+                            className="p-2 bg-blue-50 text-blue-600 rounded-xl hover:bg-blue-100 transition-colors mr-2"
+                          >
+                            <ChevronDown size={18} className={cn("transition-transform", isSelecting && "rotate-180")} />
+                          </button>
+                        )}
                         <button
-                          onClick={() => needsSelection ? setSelectedItemForVariant(isSelecting ? null : item.id) : handleAdd(item.id)}
-                          disabled={isSubmitting || isInBOQ}
+                          onClick={() => handleAdd(item.id)}
+                          disabled={isSubmitting || hasGenericInBOQ}
                           className="p-2 bg-blue-50 text-blue-600 rounded-xl hover:bg-blue-100 transition-colors"
                         >
-                          {needsSelection ? <ChevronDown size={18} className={cn("transition-transform", isSelecting && "rotate-180")} /> : <Plus size={18} />}
+                          <Plus size={18} />
                         </button>
                       </div>
 
@@ -435,8 +535,7 @@ export const JobsiteBOQView = () => {
                               b.customSpec === (selectedCustomSpec || undefined)
                             );
 
-                            const canAdd = !isSubmitting && !isVariantInBOQ && 
-                              (!item.requireCustomSpec || selectedCustomSpec.trim().length > 0);
+                            const canAdd = !isSubmitting && !isVariantInBOQ;
 
                             return (
                               <button
@@ -474,23 +573,33 @@ export const JobsiteBOQView = () => {
             <div className="space-y-1">
               <label className="text-[10px] font-black text-gray-400 uppercase tracking-[0.2em]">Current Bill of Quantities</label>
               <div className="flex items-center space-x-2">
-                <span className="text-[10px] font-black text-blue-600 bg-blue-50 px-2 py-1 rounded-lg uppercase tracking-widest">
+                <span className="text-[10px] font-black text-blue-600 bg-blue-100 px-3 py-1.5 rounded-full uppercase tracking-[0.15em] shadow-sm">
                   {jobsiteBOQ.length} Items
                 </span>
               </div>
             </div>
-            <div className="flex items-center space-x-2">
+            <div className="flex items-center gap-2">
+              {jobsiteBOQ.length > 0 && (
+                <button 
+                  onClick={() => setConfirmClearBOQ(true)}
+                  className="px-3 py-2 bg-red-50/50 border border-red-200 text-red-500 rounded-xl hover:bg-red-50 transition-all flex items-center gap-2 shadow-sm"
+                  title="Clear All BOQ"
+                >
+                  <Trash2 size={16} className="shrink-0" />
+                  <span className="text-[10px] font-black uppercase tracking-widest">Clear All</span>
+                </button>
+              )}
               <button 
                 onClick={handleExport}
-                className="p-2.5 bg-white border border-gray-100 text-gray-600 rounded-xl hover:bg-gray-50 transition-all shadow-sm flex items-center space-x-2"
+                className="px-3 py-2 bg-gray-100 border border-gray-200 text-gray-600 rounded-xl hover:bg-gray-200 transition-all flex items-center gap-2 shadow-sm"
                 title="Export BOQ"
               >
-                <Download size={16} />
-                <span className="text-[10px] font-black uppercase tracking-widest hidden sm:inline">Export</span>
+                <Download size={16} className="shrink-0" />
+                <span className="text-[10px] font-black uppercase tracking-widest">Export</span>
               </button>
-              <label className="p-2.5 bg-white border border-gray-100 text-gray-600 rounded-xl hover:bg-gray-50 transition-all shadow-sm flex items-center space-x-2 cursor-pointer">
-                <Upload size={16} />
-                <span className="text-[10px] font-black uppercase tracking-widest hidden sm:inline">Import</span>
+              <label className="px-3 py-2 bg-gray-100 border border-gray-200 text-gray-600 rounded-xl hover:bg-gray-200 transition-all flex items-center gap-2 shadow-sm cursor-pointer">
+                <Upload size={16} className="shrink-0" />
+                <span className="text-[10px] font-black uppercase tracking-widest">Import</span>
                 <input 
                   type="file" 
                   accept=".csv" 
@@ -501,6 +610,43 @@ export const JobsiteBOQView = () => {
               </label>
             </div>
           </div>
+
+          {confirmClearBOQ && (
+            <div className="p-6 bg-red-50 rounded-[2rem] border border-red-100 space-y-4 shadow-sm animate-in slide-in-from-top-4 duration-300">
+              <div className="flex items-start space-x-4">
+                <div className="p-3 bg-red-100 text-red-600 rounded-2xl">
+                  <AlertTriangle size={24} />
+                </div>
+                <div className="space-y-1">
+                  <p className="text-sm font-black text-red-900 uppercase tracking-widest">Clear Entire BOQ?</p>
+                  <p className="text-[11px] font-bold text-red-700 uppercase tracking-tight leading-relaxed">
+                    Are you sure you want to CLEAR the entire BOQ for {jobsite.name}? This cannot be undone.
+                  </p>
+                </div>
+              </div>
+              <div className="flex items-center space-x-4">
+                <button
+                  onClick={async () => {
+                    try {
+                      await Promise.all(jobsiteBOQ.map(b => deleteBOQItem(b.id)));
+                      setConfirmClearBOQ(false);
+                    } catch (err: any) {
+                      setError(err.message || "Failed to clear BOQ");
+                    }
+                  }}
+                  className="flex-[2] py-4 bg-red-600 text-white rounded-2xl text-[11px] font-black uppercase tracking-[0.2em] shadow-lg shadow-red-200 active:scale-[0.98] transition-all"
+                >
+                  Confirm Clear
+                </button>
+                <button
+                  onClick={() => setConfirmClearBOQ(false)}
+                  className="flex-1 py-4 bg-white border border-red-200 text-red-700 rounded-2xl text-[11px] font-black uppercase tracking-[0.2em] active:scale-[0.98] transition-all"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          )}
 
           {importProgress && (
             <div className="p-4 bg-blue-50 rounded-2xl border border-blue-100 space-y-2">
@@ -518,30 +664,30 @@ export const JobsiteBOQView = () => {
           )}
 
           {pendingImportData && (
-            <div className="p-4 bg-amber-50 rounded-2xl border border-amber-100 space-y-4">
-              <div className="flex items-start space-x-3">
-                <div className="p-2 bg-amber-100 text-amber-600 rounded-lg">
-                  <AlertTriangle size={20} />
+            <div className="p-6 bg-amber-50 rounded-[2rem] border border-amber-100 space-y-6 shadow-sm">
+              <div className="flex items-start space-x-4">
+                <div className="p-3 bg-amber-100 text-amber-600 rounded-2xl">
+                  <AlertTriangle size={24} />
                 </div>
                 <div className="space-y-1">
-                  <p className="text-xs font-black text-amber-900 uppercase tracking-widest">Confirm Replacement</p>
-                  <p className="text-[10px] font-bold text-amber-700 uppercase tracking-tight">
+                  <p className="text-sm font-black text-amber-900 uppercase tracking-widest">Confirm Replacement</p>
+                  <p className="text-[11px] font-bold text-amber-700 uppercase tracking-tight leading-relaxed">
                     This will REPLACE the current BOQ with {pendingImportData.length} items from the CSV. This action cannot be undone.
                   </p>
                 </div>
               </div>
-              <div className="flex items-center space-x-3">
+              <div className="flex items-center space-x-4">
                 <button
                   onClick={confirmImport}
                   disabled={isSubmitting}
-                  className="flex-1 py-3 bg-amber-600 text-white rounded-xl text-[10px] font-black uppercase tracking-[0.2em] shadow-lg shadow-amber-200 disabled:opacity-50"
+                  className="flex-[2] py-4 bg-gradient-to-r from-orange-500 to-amber-600 text-white rounded-2xl text-[11px] font-black uppercase tracking-[0.2em] shadow-lg shadow-orange-200 disabled:opacity-50 active:scale-[0.98] transition-all"
                 >
                   {isSubmitting ? 'Processing...' : 'Confirm & Replace'}
                 </button>
                 <button
                   onClick={() => setPendingImportData(null)}
                   disabled={isSubmitting}
-                  className="flex-1 py-3 bg-white border border-amber-200 text-amber-700 rounded-xl text-[10px] font-black uppercase tracking-[0.2em] disabled:opacity-50"
+                  className="flex-1 py-4 bg-white border border-amber-200 text-amber-700 rounded-2xl text-[11px] font-black uppercase tracking-[0.2em] disabled:opacity-50 active:scale-[0.98] transition-all"
                 >
                   Cancel
                 </button>
@@ -562,8 +708,8 @@ export const JobsiteBOQView = () => {
               {groupedBOQ.map(([groupId, group]) => (
                 <div key={groupId} className="space-y-4">
                   <div className="flex items-center space-x-2 px-1">
-                    <div className="h-4 w-1 bg-blue-600 rounded-full" />
-                    <h3 className="text-xs font-black text-gray-900 uppercase tracking-widest">
+                    <div className="h-4 w-1.5 bg-blue-600 rounded-full" />
+                    <h3 className="text-[11px] font-black text-gray-900 uppercase tracking-[0.2em]">
                       {group.parentName ? `${group.parentName} / ` : ''}{group.categoryName}
                     </h3>
                   </div>

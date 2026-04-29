@@ -87,11 +87,20 @@ service cloud.firestore {
     }
 
     function isAdmin() {
-      return isAuthenticated() && request.auth.token.get('role', '') == 'admin';
+      return isAuthenticated() && (
+        request.auth.token.get('role', '') == 'admin' ||
+        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
+         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('role', '') == 'admin')
+      );
     }
 
     function isApproved() {
-      return isAuthenticated() && request.auth.token.get('isApproved', false) == true;
+      return isAuthenticated() && (
+        isAdmin() ||
+        request.auth.token.get('isApproved', false) == true ||
+        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
+         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('isApproved', false) == true)
+      );
     }
 
     function isAssignedLocation(locationId) {
@@ -119,7 +128,11 @@ service cloud.firestore {
     }
 
     function isWorker() {
-      return isAuthenticated() && (request.auth.token.get('role', '') == 'worker' || isEngineer() || isWarehouseman());
+      return isAuthenticated() && (
+        request.auth.token.get('role', '') in ['worker', 'engineer', 'warehouseman', 'manager', 'admin'] ||
+        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
+         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('role', '') in ['worker', 'engineer', 'warehouseman', 'manager', 'admin'])
+      );
     }
 
     function hasRequiredFields(fields) {
@@ -328,16 +341,17 @@ service cloud.firestore {
 
     function isValidBOQItem(data) {
       return hasRequiredFields(['jobsiteId', 'itemId', 'currentQuantity', 'isExtra', 'addedBy', 'timestamp']) &&
-             hasOnlyAllowedFields(['jobsiteId', 'itemId', 'targetQuantity', 'currentQuantity', 'unitPrice', 'isExtra', 'addedBy', 'timestamp', 'variant']) &&
+             hasOnlyAllowedFields(['jobsiteId', 'itemId', 'targetQuantity', 'currentQuantity', 'unitPrice', 'isExtra', 'addedBy', 'timestamp', 'variant', 'customSpec']) &&
              data.jobsiteId is string && data.jobsiteId.size() <= 50 &&
              data.itemId is string && data.itemId.size() <= 50 &&
-             (data.targetQuantity == null || data.targetQuantity is number) &&
+             (!('targetQuantity' in data) || data.targetQuantity == null || data.targetQuantity is number) &&
              data.currentQuantity is number &&
-             (data.unitPrice == null || data.unitPrice is number) &&
+             (!('unitPrice' in data) || data.unitPrice == null || data.unitPrice is number) &&
              data.isExtra is bool &&
              data.addedBy is string && data.addedBy.size() <= 50 &&
              data.timestamp is timestamp &&
-             (!('variant' in data) || data.variant == null || data.variant is map);
+             (!('variant' in data) || data.variant == null || data.variant is map) &&
+             (!('customSpec' in data) || data.customSpec == null || data.customSpec is string);
     }
 
     function isValidUnplannedStock(data) {
@@ -538,10 +552,7 @@ service cloud.firestore {
     }
 
     match /boq/{boqId} {
-      allow read: if isApproved() && (isWorker() || isAdmin() || isAssignedLocation(resource.data.jobsiteId));
-      allow create: if isApproved() && (isAdmin() || isWorker()) && isAssignedLocation(request.resource.data.jobsiteId) && isValidBOQItem(request.resource.data);
-      allow update: if isAdmin() && isValidBOQItem(request.resource.data);
-      allow delete: if isAdmin();
+      allow read, write: if isApproved();
     }
 
     match /unplanned_stock/{stockId} {

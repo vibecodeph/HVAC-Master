@@ -1041,7 +1041,7 @@ export const addBOQItem = async (boqItem: Omit<BOQItem, 'id' | 'timestamp'>) => 
     const snap = await getDocs(q);
     const existing = snap.docs.find(d => {
       const data = d.data();
-      return JSON.stringify(data.variant) === JSON.stringify(boqItem.variant);
+      return normalizeVariant(data.variant) === normalizeVariant(boqItem.variant);
     });
 
     if (existing) {
@@ -1065,6 +1065,7 @@ export const updateBOQItem = async (id: string, data: Partial<BOQItem>) => {
     await updateDoc(doc(db, 'boq', id), cleanData(data));
   } catch (error) {
     handleFirestoreError(error, OperationType.UPDATE, 'boq');
+    throw error;
   }
 };
 
@@ -1073,6 +1074,7 @@ export const deleteBOQItem = async (id: string) => {
     await deleteDoc(doc(db, 'boq', id));
   } catch (error) {
     handleFirestoreError(error, OperationType.DELETE, 'boq');
+    throw error;
   }
 };
 
@@ -2385,6 +2387,17 @@ export const subscribeToItems = (callback: (data: Item[]) => void) => {
   });
 };
 
+export const subscribeToAllItems = (callback: (data: Item[]) => void) => {
+  // This is used for admin/management views to include inactive items
+  return onSnapshot(collection(db, 'items'), (snapshot) => {
+    const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Item));
+    callback(data);
+  }, (error) => {
+    handleFirestoreError(error, OperationType.LIST, 'items', false);
+    callback([]);
+  });
+};
+
 export const subscribeToLocations = (callback: (data: Location[]) => void, locationIds?: string[], includeSuppliers: boolean = false) => {
   let q = query(collection(db, 'locations'));
   if (locationIds) {
@@ -2412,6 +2425,16 @@ export const subscribeToLocations = (callback: (data: Location[]) => void, locat
 };
 
 export const subscribeToTags = (callback: (data: Tag[]) => void) => {
+  return onSnapshot(query(collection(db, 'tags'), where('isActive', '==', true), orderBy('name', 'asc')), (snapshot) => {
+    const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Tag));
+    callback(data);
+  }, (error) => {
+    handleFirestoreError(error, OperationType.LIST, 'tags', false);
+    callback([]);
+  });
+};
+
+export const subscribeToAllTags = (callback: (data: Tag[]) => void) => {
   return onSnapshot(query(collection(db, 'tags'), orderBy('name', 'asc')), (snapshot) => {
     const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Tag));
     callback(data);
@@ -2476,6 +2499,16 @@ export const subscribeToUnplannedStock = (callback: (data: UnplannedStock[]) => 
 };
 
 export const subscribeToCategories = (callback: (data: Category[]) => void) => {
+  return onSnapshot(query(collection(db, 'categories'), where('isActive', '==', true), orderBy('name', 'asc')), (snapshot) => {
+    const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Category));
+    callback(data);
+  }, (error) => {
+    handleFirestoreError(error, OperationType.LIST, 'categories', false);
+    callback([]);
+  });
+};
+
+export const subscribeToAllCategories = (callback: (data: Category[]) => void) => {
   return onSnapshot(query(collection(db, 'categories'), orderBy('name', 'asc')), (snapshot) => {
     const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Category));
     callback(data);
@@ -2487,6 +2520,17 @@ export const subscribeToCategories = (callback: (data: Category[]) => void) => {
 
 export const subscribeToUOMs = (callback: (data: UOM[]) => void) => {
   return onSnapshot(query(collection(db, 'uoms'), where('isActive', '==', true)), (snapshot) => {
+    const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as UOM));
+    callback(data);
+  }, (error) => {
+    handleFirestoreError(error, OperationType.LIST, 'uoms', false);
+    callback([]);
+  });
+};
+
+export const subscribeToAllUOMs = (callback: (data: UOM[]) => void) => {
+  // This is used for admin/management views to include inactive UOMs
+  return onSnapshot(collection(db, 'uoms'), (snapshot) => {
     const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as UOM));
     callback(data);
   }, (error) => {

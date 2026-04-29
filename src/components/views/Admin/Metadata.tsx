@@ -27,6 +27,7 @@ export const MetadataAdminView = () => {
   const [selectedJobsiteId, setSelectedJobsiteId] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [expandedCategories, setExpandedCategories] = useState<Set<string>>(new Set());
+  const [filterType, setFilterType] = useState<string>('all');
 
   const getTitle = () => {
     switch (type) {
@@ -80,7 +81,11 @@ export const MetadataAdminView = () => {
           });
       case 'locations': 
         const sortedLocations = [...locations]
-          .filter(l => showInactive || l.isActive)
+          .filter(l => {
+            const matchesActivity = showInactive || l.isActive;
+            const matchesType = filterType === 'all' || l.type === filterType;
+            return matchesActivity && matchesType;
+          })
           .sort((a, b) => {
             const typeOrder = { warehouse: 1, jobsite: 2, supplier: 3, system: 4 };
             const orderA = typeOrder[a.type as keyof typeof typeOrder] || 99;
@@ -147,19 +152,60 @@ export const MetadataAdminView = () => {
     <div className="pb-20">
       <Header title={getTitle()} showBack />
       <div className="p-4 space-y-4">
-        <div className="flex justify-end px-1">
-          <button 
-            onClick={() => setShowInactive(!showInactive)}
-            className={cn(
-              "text-[10px] font-black uppercase tracking-[0.2em] px-3 py-1.5 rounded-xl transition-all border",
-              showInactive 
-                ? "bg-orange-100 text-orange-600 border-orange-200 shadow-sm" 
-                : "bg-gray-50 text-gray-400 border-gray-100"
-            )}
-          >
-            {showInactive ? "Showing Inactive" : "Show Inactive"}
-          </button>
-        </div>
+        {type === 'locations' && (
+          <div className="flex items-start justify-between space-x-4">
+            <div className="flex-1 min-w-0">
+              <label className="text-[10px] font-black text-gray-400 uppercase tracking-[0.2em] mb-1 block pl-1">
+                Filter Type
+              </label>
+              <div className="relative">
+                <select
+                  value={filterType}
+                  onChange={(e) => setFilterType(e.target.value)}
+                  className="w-full bg-white border border-gray-100 rounded-xl px-4 py-2.5 text-xs font-bold text-gray-700 outline-none appearance-none focus:border-gray-200 transition-colors shadow-sm"
+                >
+                  <option value="all">ALL LOCATIONS</option>
+                  <option value="warehouse">WAREHOUSE</option>
+                  <option value="jobsite">JOBSITE</option>
+                  <option value="supplier">SUPPLIER</option>
+                </select>
+                <div className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none text-gray-400">
+                  <ChevronRight size={14} className="rotate-90" />
+                </div>
+              </div>
+            </div>
+
+            <div className="pt-5 shrink-0">
+              <button 
+                onClick={() => setShowInactive(!showInactive)}
+                className={cn(
+                  "text-[10px] font-black uppercase tracking-[0.2em] px-3 py-2.5 rounded-xl transition-all border",
+                  showInactive 
+                    ? "bg-orange-100 text-orange-600 border-orange-200 shadow-sm" 
+                    : "bg-gray-50 text-gray-400 border-gray-100"
+                )}
+              >
+                {showInactive ? "Showing Inactive" : "Show Inactive"}
+              </button>
+            </div>
+          </div>
+        )}
+
+        {type !== 'locations' && (
+          <div className="flex justify-end px-1">
+            <button 
+              onClick={() => setShowInactive(!showInactive)}
+              className={cn(
+                "text-[10px] font-black uppercase tracking-[0.2em] px-3 py-1.5 rounded-xl transition-all border",
+                showInactive 
+                  ? "bg-orange-100 text-orange-600 border-orange-200 shadow-sm" 
+                  : "bg-gray-50 text-gray-400 border-gray-100"
+              )}
+            >
+              {showInactive ? "Showing Inactive" : "Show Inactive"}
+            </button>
+          </div>
+        )}
 
         <div className="space-y-4">
           <AnimatePresence mode="popLayout">

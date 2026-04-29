@@ -26,11 +26,13 @@ export const LocationsView = () => {
   const [selectedSite, setSelectedSite] = useState<Location | null>(null);
   const [siteTab, setSiteTab] = useState<'Details' | 'Inventory' | 'History'>('Details');
   const [showInactive, setShowInactive] = useState(false);
+  const [filterType, setFilterType] = useState<string>('all');
 
   // Group and sort locations
   const filteredLocations = locations.filter(l => {
-    if (profile?.role === 'admin' && showInactive) return true;
-    return l.isActive;
+    const matchesActivity = (profile?.role === 'admin' && showInactive) ? true : l.isActive;
+    const matchesType = filterType === 'all' || l.type === filterType;
+    return matchesActivity && matchesType;
   });
   const groupedLocations = filteredLocations.reduce((acc, site) => {
     const type = site.type || 'other';
@@ -58,23 +60,46 @@ export const LocationsView = () => {
     <div className="pb-20">
       <Header title="Locations" />
       <div className="p-4 space-y-8">
-        {profile?.role === 'admin' && (
-          <div className="flex justify-end px-1">
-            <button 
-              onClick={() => setShowInactive(!showInactive)}
-              className={cn(
-                "text-[10px] font-black uppercase tracking-[0.2em] px-3 py-1.5 rounded-xl transition-all border",
-                showInactive 
-                  ? "bg-orange-100 text-orange-600 border-orange-200 shadow-sm" 
-                  : "bg-gray-50 text-gray-400 border-gray-100"
-              )}
-            >
-              {showInactive ? "Showing Inactive" : "Show Inactive"}
-            </button>
+        <div className="flex items-start justify-between space-x-4">
+          <div className="flex-1 min-w-0">
+            <label className="text-[10px] font-black text-gray-400 uppercase tracking-[0.2em] mb-1 block pl-1">
+              Filter Type
+            </label>
+            <div className="relative">
+              <select
+                value={filterType}
+                onChange={(e) => setFilterType(e.target.value)}
+                className="w-full bg-white border border-gray-100 rounded-xl px-4 py-2.5 text-xs font-bold text-gray-700 outline-none appearance-none focus:border-gray-200 transition-colors shadow-sm"
+              >
+                <option value="all">ALL LOCATIONS</option>
+                <option value="warehouse">WAREHOUSE</option>
+                <option value="jobsite">JOBSITE</option>
+                <option value="supplier">SUPPLIER</option>
+              </select>
+              <div className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none text-gray-400">
+                <ChevronRight size={14} className="rotate-90" />
+              </div>
+            </div>
           </div>
-        )}
 
-        {sortedGroups.map((group) => (
+          {profile?.role === 'admin' && (
+            <div className="pt-5 shrink-0">
+              <button 
+                onClick={() => setShowInactive(!showInactive)}
+                className={cn(
+                  "text-[10px] font-black uppercase tracking-[0.2em] px-3 py-2.5 rounded-xl transition-all border",
+                  showInactive 
+                    ? "bg-orange-100 text-orange-600 border-orange-200 shadow-sm" 
+                    : "bg-gray-50 text-gray-400 border-gray-100"
+                )}
+              >
+                {showInactive ? "Showing Inactive" : "Show Inactive"}
+              </button>
+            </div>
+          )}
+        </div>
+
+      {sortedGroups.map((group) => (
           <div key={group} className="space-y-4">
             <h3 className="text-[10px] font-black text-gray-400 uppercase tracking-[0.2em] pl-1">
               {group}s

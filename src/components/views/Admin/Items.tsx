@@ -113,17 +113,18 @@ export const ItemManagementView = () => {
   const [isImporting, setIsImporting] = useState(false);
   const [importStatus, setImportStatus] = useState<{ success: number; errors: string[] } | null>(null);
 
-  if (profile?.role !== 'admin') {
+  if (profile?.role !== 'admin' && profile?.role !== 'manager') {
     return <Navigate to="/settings" />;
   }
 
   const filteredItems = useMemo(() => {
     return items
       .filter(item => {
+        const isItemActive = item.isActive !== false; // Treat undefined as active by default, or consistent with your data
         if (showInactive) {
-          if (item.isActive) return false;
+          if (isItemActive) return false;
         } else {
-          if (!item.isActive) return false;
+          if (!isItemActive) return false;
         }
         if (filter === 'Materials' && item.isTool) return false;
         if (filter === 'Tools' && !item.isTool) return false;
@@ -176,7 +177,7 @@ export const ItemManagementView = () => {
     setIsImporting(true);
     setImportStatus(null);
     try {
-      const result = await importItemsFromCSV(file, categories, uoms, tags);
+      const result = await importItemsFromCSV(file, categories, uoms, tags, items);
       setImportStatus(result);
     } catch (error: any) {
       setImportStatus({ success: 0, errors: [error.message || 'Import failed'] });

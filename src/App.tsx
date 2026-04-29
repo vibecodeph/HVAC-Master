@@ -8,10 +8,10 @@ import {
   Item, Category, UOM, Location, Inventory, Transaction, Request, UserProfile, Asset, BOQItem, UnplannedStock, Tag, SystemConfig, PurchaseOrder 
 } from './types';
 import { 
-  subscribeToItems, subscribeToCategories, subscribeToUOMs, 
+  subscribeToItems, subscribeToAllItems, subscribeToCategories, subscribeToAllCategories, subscribeToUOMs, subscribeToAllUOMs,
   subscribeToLocations, subscribeToInventory, subscribeToTransactions, 
   subscribeToRequests, subscribeToUsers, subscribeToAssets, 
-  subscribeToBOQs, subscribeToUnplannedStock, subscribeToTags,
+  subscribeToBOQs, subscribeToUnplannedStock, subscribeToTags, subscribeToAllTags,
   subscribeToPurchaseOrders
 } from './services/inventoryService';
 import { Layout } from './components/Layout';
@@ -197,10 +197,7 @@ const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   }, []);
 
   useEffect(() => {
-    const unsubAuth = onAuthStateChanged(auth, async (u) => {
-      if (u) {
-        await u.getIdToken(true); // force token refresh to pick up custom claims
-      }
+    const unsubAuth = onAuthStateChanged(auth, (u) => {
       setUser(u);
       if (!u) {
         setProfile(null);
@@ -324,19 +321,21 @@ const DataProvider = ({ children }: { children: React.ReactNode }) => {
       }
     };
 
+    const isAdmin = profile?.role === 'admin' || profile?.role === 'manager';
+
     const unsubscribes = [
-      safeSubscribe('items', subscribeToItems),
-      safeSubscribe('categories', subscribeToCategories),
-      safeSubscribe('uoms', subscribeToUOMs),
+      safeSubscribe('items', isAdmin ? subscribeToAllItems : subscribeToItems),
+      safeSubscribe('categories', isAdmin ? subscribeToAllCategories : subscribeToCategories),
+      safeSubscribe('uoms', isAdmin ? subscribeToAllUOMs : subscribeToUOMs),
       safeSubscribe('locations', subscribeToLocations, broadAssigned, includeSuppliers),
       safeSubscribe('inventory', subscribeToInventory, assigned),
       safeSubscribe('transactions', subscribeToTransactions, assigned),
       safeSubscribe('requests', subscribeToRequests, assigned),
-      (profile?.role === 'admin' || profile?.role === 'manager' || profile?.role === 'engineer') ? safeSubscribe('users', subscribeToUsers, profile.role) : () => {},
+      (profile?.role === 'admin' || profile?.role === 'manager') ? safeSubscribe('users', subscribeToUsers, profile.role) : () => {},
       safeSubscribe('assets', subscribeToAssets, assigned),
       safeSubscribe('boq', subscribeToBOQs, assigned),
       safeSubscribe('unplanned', subscribeToUnplannedStock, assigned),
-      safeSubscribe('tags', subscribeToTags),
+      safeSubscribe('tags', isAdmin ? subscribeToAllTags : subscribeToTags),
       (profile?.role === 'admin' || profile?.role === 'manager') ? safeSubscribe('purchase_orders', subscribeToPurchaseOrders) : () => {}
     ];
 

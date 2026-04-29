@@ -21,6 +21,7 @@ export interface CSVItemRow {
   'Variant Configurations'?: string;
   'Require Custom Spec'?: string;
   'Custom Spec Label'?: string;
+  'Components'?: string;
 }
 
 export interface CSVBOQRow {
@@ -72,7 +73,7 @@ export const exportPurchaseOrdersToCSV = (
     po.items.forEach(poItem => {
       const item = items.find(i => i.id === poItem.itemId);
       const uom = uoms.find(u => u.id === poItem.uomId);
-      const variantStr = poItem.variant ? `[${Object.entries(poItem.variant).map(([k, v]) => `${k}:${v}`).join(', ')}]` : '';
+      const variantStr = (poItem.variant && Object.keys(poItem.variant).length > 0) ? `[${Object.entries(poItem.variant).map(([k, v]) => `${k}:${v}`).join(', ')}]` : '';
 
       data.push({
         'PO Number': po.poNumber,
@@ -275,10 +276,14 @@ export const exportItemsToCSV = (
         const dataParts = [];
         if (config.averageCost !== undefined) dataParts.push(`Cost:${config.averageCost}`);
         if (config.reorderLevel !== undefined) dataParts.push(`Reorder:${config.reorderLevel}`);
-        return `[${variantStr}] -> ${dataParts.join(', ')}`;
+        return variantStr ? `[${variantStr}] -> ${dataParts.join(', ')}` : dataParts.join(', ');
       }).join(' | '),
       'Require Custom Spec': item.requireCustomSpec ? 'TRUE' : 'FALSE',
-      'Custom Spec Label': item.customSpecLabel || ''
+      'Custom Spec Label': item.customSpecLabel || '',
+      'Components': (item.components || []).map(comp => {
+        const compItem = items.find(i => i.id === comp.itemId);
+        return `${compItem?.name || comp.itemId}: ${comp.quantity}`;
+      }).join(' | ')
     };
   });
 
@@ -301,7 +306,7 @@ export const exportJobsiteBOQToCSV = (
 ) => {
   const data = boqItems.map(boq => {
     const item = items.find(i => i.id === boq.itemId);
-    const variantStr = boq.variant ? `[${Object.entries(boq.variant).map(([k, v]) => `${k}:${v}`).join(', ')}]` : '';
+    const variantStr = (boq.variant && Object.keys(boq.variant).length > 0) ? `[${Object.entries(boq.variant).map(([k, v]) => `${k}:${v}`).join(', ')}]` : '';
     
     return {
       'Item Name': item?.name || 'Unknown Item',
@@ -330,6 +335,7 @@ export const importItemsFromCSV = async (
   categories: Category[],
   uoms: UOM[],
   tags: Tag[],
+  allItems: Item[],
   onProgress?: (current: number, total: number) => void
 ) => {
   return new Promise<{ success: number; errors: string[] }>((resolve, reject) => {
@@ -357,6 +363,12 @@ export const importItemsFromCSV = async (
         uoms.forEach(u => uomMap.set(u.symbol.toLowerCase(), u.id));
 
         const tagSet = new Set(tags.map(t => t.name.toLowerCase()));
+
+        const itemByName = new Map<string, string>();
+        allItems.forEach(item => itemByName.set(item.name.toLowerCase().trim(), item.id));
+        // Also map existing items in the CSV to their name so we can try to resolve them
+        // if they are updated. But new items don't have IDs yet.
+        // We'll update this map as we add items.
 
         for (let i = 0; i < rows.length; i++) {
           const row = rows[i];
@@ -406,11 +418,14 @@ export const importItemsFromCSV = async (
             }
 
             // 4. Resolve Tags
-            const rowTags = row.Tags ? row.Tags.split(',').map(t => t.trim()).filter(t => t) : [];
-            const invalidTags = rowTags.filter(t => !tagSet.has(t.toLowerCase()));
-            if (invalidTags.length > 0) {
-              errors.push(`Row ${i + 1} (${row.Name}): Tags [${invalidTags.join(', ')}] do not exist.`);
-              continue;
+            let rowTags: string[] | undefined;
+            if (row.hasOwnProperty('Tags')) {
+              rowTags = (row.Tags || '').split(',').map(t => t.trim()).filter(t => t);
+              const invalidTags = rowTags.filter(t => !tagSet.has(t.toLowerCase()));
+              if (invalidTags.length > 0) {
+                errors.push(`Row ${i + 1} (${row.Name}): Tags [${invalidTags.join(', ')}] do not exist.`);
+                continue;
+              }
             }
 
             // 5. Prepare Item Data
@@ -427,22 +442,28 @@ export const importItemsFromCSV = async (
               customSpecLabel: row['Custom Spec Label']?.trim() || '',
               averageCost: parseFloat(row['Average Cost'] || '0') || 0,
               reorderLevel: parseFloat(row['Reorder Level'] || '0') || 0,
-              tags: rowTags,
             };
 
-            // 5. Parse Variants
-            itemData.variantAttributes = (row['Variant Attributes'] || '').split('|').map(s => {
-              const [name, valuesStr] = s.split(':');
-              if (name && valuesStr) {
-                return {
-                  name: name.trim(),
-                  values: valuesStr.split(',').map(v => v.trim()).filter(v => v)
-                };
-              }
-              return null;
-            }).filter(a => a);
+            if (rowTags !== undefined) {
+              itemData.tags = rowTags;
+            }
 
-            itemData.variantConfigs = (row['Variant Configurations'] || '').split('|').map(s => {
+            // 5. Parse Variants
+            if (row.hasOwnProperty('Variant Attributes')) {
+              itemData.variantAttributes = (row['Variant Attributes'] || '').split('|').map(s => {
+                const [name, valuesStr] = s.split(':');
+                if (name && valuesStr) {
+                  return {
+                    name: name.trim(),
+                    values: valuesStr.split(',').map(v => v.trim()).filter(v => v)
+                  };
+                }
+                return null;
+              }).filter(a => a);
+            }
+
+            if (row.hasOwnProperty('Variant Configurations')) {
+              itemData.variantConfigs = (row['Variant Configurations'] || '').split('|').map(s => {
               const [variantStr, dataStr] = s.split('->');
               if (variantStr && dataStr) {
                 const variant: Record<string, string> = {};
@@ -468,11 +489,38 @@ export const importItemsFromCSV = async (
               }
               return null;
             }).filter(c => c);
+            }
+
+            // 6. Parse Components
+            if (row.hasOwnProperty('Components')) {
+              itemData.components = (row.Components || '').split('|').map(s => {
+                const parts = s.split(':');
+                if (parts.length >= 2) {
+                  const name = parts[0].trim().toLowerCase();
+                  const qty = parseFloat(parts[1].trim()) || 0;
+                  const itemId = itemByName.get(name);
+                  if (itemId) {
+                    return { itemId, quantity: qty };
+                  } else {
+                    // Could not resolve component - try to find it in the CSV too?
+                    const csvComp = rows.find(r => r.Name?.toLowerCase().trim() === name);
+                    if (csvComp && csvComp.ID) {
+                      return { itemId: csvComp.ID, quantity: qty };
+                    }
+                    // If still not found, we'll skip this component
+                    return null;
+                  }
+                }
+                return null;
+              }).filter(c => (c as any) !== null);
+            }
 
             if (row.ID) {
               await updateItem(row.ID, itemData);
+              itemByName.set(itemData.name.toLowerCase(), row.ID);
             } else {
-              await addItem(itemData);
+              const newId = await addItem(itemData);
+              if (newId) itemByName.set(itemData.name.toLowerCase(), newId);
             }
 
             successCount++;
@@ -536,24 +584,20 @@ export const importJobsiteBOQFromCSV = async (
               continue; // Skip as per user request
             }
 
-            // Parse Variant
+            // Parse Variant - be more robust with formats [Key: Val, Key2: Val2] or Key: Val, Key2: Val2
             let variant: Record<string, string> | undefined = undefined;
-            const variantRaw = getVal('Variant');
+            const variantRaw = getVal('Variant')?.toString().trim();
             if (variantRaw) {
-              const vMatch = variantRaw.toString().match(/\[(.*)\]/);
-              if (vMatch) {
+              const cleanedRaw = variantRaw.replace(/^\[/, '').replace(/\]$/, '');
+              if (cleanedRaw) {
                 variant = {};
-                vMatch[1].split(',').forEach(pair => {
+                cleanedRaw.split(',').forEach(pair => {
                   const [k, v] = pair.split(':');
                   if (k && v) variant![k.trim()] = v.trim();
                 });
               }
             }
 
-            if (item.requireVariant && (!variant || Object.keys(variant).length === 0)) {
-              errors.push(`Row ${i + 1} (${item.name}): Variant is required for this item.`);
-              continue;
-            }
 
             const targetQtyRaw = getVal('Target Quantity');
             const unitPriceRaw = getVal('Unit Price');

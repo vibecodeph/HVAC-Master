@@ -398,12 +398,7 @@ export const ItemManagementView = () => {
                           </div>
                         </>
                       )}
-                      {!canDelete && (
-                        <div className="flex flex-col items-center space-y-0.5 opacity-80" title="Item has linked data and cannot be deleted">
-                          <AlertTriangle size={14} className="text-gray-400" />
-                          <span className="text-[7px] font-black text-gray-400 uppercase tracking-tighter">Linked</span>
-                        </div>
-                      )}
+
                     </div>
                   </Card>
                 </Swipeable>

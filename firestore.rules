@@ -341,9 +341,10 @@ service cloud.firestore {
 
     function isValidBOQItem(data) {
       return hasRequiredFields(['jobsiteId', 'itemId', 'currentQuantity', 'isExtra', 'addedBy', 'timestamp']) &&
-             hasOnlyAllowedFields(['jobsiteId', 'itemId', 'targetQuantity', 'currentQuantity', 'unitPrice', 'isExtra', 'addedBy', 'timestamp', 'variant', 'customSpec']) &&
+             hasOnlyAllowedFields(['jobsiteId', 'itemId', 'targetQuantity', 'currentQuantity', 'unitPrice', 'isExtra', 'addedBy', 'timestamp', 'variant', 'customSpec', 'note', 'uomId']) &&
              data.jobsiteId is string && data.jobsiteId.size() <= 50 &&
              data.itemId is string && data.itemId.size() <= 50 &&
+             (!('uomId' in data) || data.uomId == null || (data.uomId is string && data.uomId.size() <= 50)) &&
              (!('targetQuantity' in data) || data.targetQuantity == null || data.targetQuantity is number) &&
              data.currentQuantity is number &&
              (!('unitPrice' in data) || data.unitPrice == null || data.unitPrice is number) &&
@@ -351,7 +352,8 @@ service cloud.firestore {
              data.addedBy is string && data.addedBy.size() <= 50 &&
              data.timestamp is timestamp &&
              (!('variant' in data) || data.variant == null || data.variant is map) &&
-             (!('customSpec' in data) || data.customSpec == null || data.customSpec is string);
+             (!('customSpec' in data) || data.customSpec == null || data.customSpec is string) &&
+             (!('note' in data) || data.note == null || (data.note is string && data.note.size() <= 1000));
     }
 
     function isValidUnplannedStock(data) {

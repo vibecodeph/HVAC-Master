@@ -172,26 +172,44 @@ const BOQItemGroup = ({ itemId, boqItems, items, uoms, inventory, jobsiteId }: {
                       )}
                     </div>
 
-                    <div className="grid grid-cols-2 gap-4">
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                       <div className="space-y-1">
                         <label className="text-[9px] font-black text-gray-400 uppercase tracking-[0.2em] ml-1">Target Qty</label>
+                        <input 
+                          type="number"
+                          placeholder="Unlimited"
+                          defaultValue={boq.targetQuantity || ''}
+                          onBlur={async (e) => {
+                            const val = e.target.value === '' ? null : Number(e.target.value);
+                            if (val !== boq.targetQuantity) await updateBOQItem(boq.id, { targetQuantity: val as any });
+                          }}
+                          className={cn(
+                            "w-full px-3 py-2.5 rounded-xl text-xs font-bold ring-1 ring-inset ring-gray-100 outline-none focus:ring-2 focus:ring-blue-500",
+                            isOverTarget ? "bg-red-50 ring-red-100 text-red-900" : "bg-gray-50"
+                          )}
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <label className="text-[9px] font-black text-gray-400 uppercase tracking-[0.2em] ml-1">Unit of Measure</label>
                         <div className="relative">
-                          <input 
-                            type="number"
-                            placeholder="Unlimited"
-                            defaultValue={boq.targetQuantity || ''}
-                            onBlur={async (e) => {
-                              const val = e.target.value === '' ? null : Number(e.target.value);
-                              if (val !== boq.targetQuantity) await updateBOQItem(boq.id, { targetQuantity: val as any });
+                          <select 
+                            value={boq.uomId || item?.uomId || ''}
+                            onChange={async (e) => {
+                              const val = e.target.value;
+                              await updateBOQItem(boq.id, { uomId: val });
                             }}
-                            className={cn(
-                              "w-full pl-3 pr-12 py-2.5 rounded-xl text-xs font-bold ring-1 ring-inset ring-gray-100 outline-none focus:ring-2 focus:ring-blue-500",
-                              isOverTarget ? "bg-red-50 ring-red-100 text-red-900" : "bg-gray-50"
-                            )}
-                          />
-                          <span className="absolute right-3 top-1/2 -translate-y-1/2 text-[10px] font-black text-gray-400 uppercase">
-                            {uom?.symbol || item?.uomId}
-                          </span>
+                            className="w-full pl-3 pr-8 py-2.5 bg-gray-50 ring-1 ring-inset ring-gray-100 rounded-xl text-xs font-bold text-blue-600 outline-none focus:ring-2 focus:ring-blue-500 appearance-none"
+                          >
+                            {(() => {
+                              const validUomIds = new Set([item?.uomId, ...(item?.uomConversions?.map(c => c.uomId) || [])]);
+                              return uoms.filter(u => (validUomIds.has(u.id) && u.isActive) || u.id === boq.uomId)
+                                .sort((a, b) => a.name.localeCompare(b.name))
+                                .map(u => (
+                                  <option key={u.id} value={u.id}>{u.symbol} - {u.name}</option>
+                                ));
+                            })()}
+                          </select>
+                          <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-blue-400 pointer-events-none" size={14} />
                         </div>
                       </div>
                       <div className="space-y-1">
@@ -213,6 +231,20 @@ const BOQItemGroup = ({ itemId, boqItems, items, uoms, inventory, jobsiteId }: {
                       </div>
                     </div>
 
+                    <div className="mt-3 space-y-1">
+                      <label className="text-[9px] font-black text-gray-400 uppercase tracking-[0.2em] ml-1">Small Note</label>
+                      <input 
+                        type="text"
+                        placeholder="Add a small note for this site item..."
+                        defaultValue={boq.note || ''}
+                        onBlur={async (e) => {
+                          const val = e.target.value.trim();
+                          if (val !== (boq.note || '')) await updateBOQItem(boq.id, { note: val || null as any });
+                        }}
+                        className="w-full px-3 py-2.5 bg-gray-50 ring-1 ring-inset ring-gray-100 rounded-xl text-xs font-bold outline-none focus:ring-2 focus:ring-blue-500"
+                      />
+                    </div>
+
                     <div className="flex items-center justify-between mt-3 px-1">
                       <div className="flex items-center space-x-2">
                         <div className="w-1.5 h-1.5 rounded-full bg-blue-500" />
@@ -224,7 +256,7 @@ const BOQItemGroup = ({ itemId, boqItems, items, uoms, inventory, jobsiteId }: {
                             {delivered}
                           </span>
                           <span className="text-[9px] font-black text-gray-400 uppercase tracking-widest opacity-80">
-                            {uom?.symbol || item?.uomId} Delivered
+                            {uoms.find(u => u.id === boq.uomId)?.symbol || uom?.symbol || item?.uomId} Delivered
                           </span>
                         </div>
                       </div>
@@ -294,9 +326,9 @@ export const JobsiteBOQView = () => {
 
     // Sort groups alphabetically by parent name then category name
     return Object.entries(groups).sort(([, a], [, b]) => {
-      const nameA = `${a.parentName || ''} ${a.categoryName}`;
-      const nameB = `${b.parentName || ''} ${b.categoryName}`;
-      return nameA.localeCompare(nameB);
+      const nameA = `${a.parentName || ''} ${a.categoryName}`.trim();
+      const nameB = `${b.parentName || ''} ${b.categoryName}`.trim();
+      return nameA.localeCompare(nameB, undefined, { sensitivity: 'base' });
     });
   }, [jobsiteBOQ, items, categories]);
 
@@ -320,6 +352,7 @@ export const JobsiteBOQView = () => {
         itemId,
         variant: variant || null,
         customSpec: customSpec || null,
+        uomId: items.find(i => i.id === itemId)?.uomId || '',
         targetQuantity: 0,
         currentQuantity: 0,
         unitPrice: 0,
@@ -339,7 +372,7 @@ export const JobsiteBOQView = () => {
 
   const handleExport = () => {
     if (!jobsite) return;
-    exportJobsiteBOQToCSV(jobsiteBOQ, items, jobsite.name);
+    exportJobsiteBOQToCSV(jobsiteBOQ, items, uoms, jobsite.name);
   };
 
   const handleImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -353,6 +386,7 @@ export const JobsiteBOQView = () => {
         file,
         jobsiteId,
         items,
+        uoms,
         profile?.displayName || 'Admin',
         (current, total) => setImportProgress({ current, total })
       );
@@ -715,7 +749,13 @@ export const JobsiteBOQView = () => {
                   </div>
                   
                   <div className="grid grid-cols-1 gap-4">
-                    {Object.entries(group.itemGroups).map(([itemId, boqItems]) => (
+                    {Object.entries(group.itemGroups)
+                      .sort(([idA], [idB]) => {
+                        const nameA = items.find(i => i.id === idA)?.name || '';
+                        const nameB = items.find(i => i.id === idB)?.name || '';
+                        return nameA.localeCompare(nameB, undefined, { sensitivity: 'base' });
+                      })
+                      .map(([itemId, boqItems]) => (
                       <BOQItemGroup 
                         key={itemId} 
                         itemId={itemId}

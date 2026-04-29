@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { Navigate } from 'react-router-dom';
 import { Search, Plus, Box, Wrench, AlertTriangle, Trash2, X, Settings2, Download, Upload, Loader2 } from 'lucide-react';
 import { useAuth, useData } from '../../../App';
@@ -113,6 +113,11 @@ export const ItemManagementView = () => {
   const [isImporting, setIsImporting] = useState(false);
   const [importStatus, setImportStatus] = useState<{ success: number; errors: string[] } | null>(null);
 
+  // Reset pagination when filters change
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [debouncedSearchTerm, filter, selectedCategoryId, showInactive]);
+
   if (profile?.role !== 'admin' && profile?.role !== 'manager') {
     return <Navigate to="/settings" />;
   }
@@ -126,11 +131,13 @@ export const ItemManagementView = () => {
         } else {
           if (!isItemActive) return false;
         }
-        if (filter === 'Materials' && item.isTool) return false;
-        if (filter === 'Tools' && !item.isTool) return false;
+        if (!debouncedSearchTerm) {
+          if (filter === 'Materials' && item.isTool) return false;
+          if (filter === 'Tools' && !item.isTool) return false;
+        }
         if (selectedCategoryId !== 'all' && item.categoryId !== selectedCategoryId) return false;
         if (debouncedSearchTerm) {
-          const search = debouncedSearchTerm.toLowerCase();
+          const search = debouncedSearchTerm.toLowerCase().trim();
           const mainCat = categories.find(c => c.id === item.categoryId);
           const subCat = categories.find(c => c.id === item.subcategoryId);
           return item.name.toLowerCase().includes(search) || 
@@ -289,7 +296,7 @@ export const ItemManagementView = () => {
                 : "bg-gray-50 text-gray-400 border-gray-100"
             )}
           >
-            {showInactive ? "Showing Inactive Only" : "Show Inactive Only"}
+            {showInactive ? "SHOWING HIDDEN ITEMS" : "SHOW HIDDEN ITEMS"}
           </button>
         </div>
 
@@ -332,7 +339,14 @@ export const ItemManagementView = () => {
                   confirmMessage={`Delete ${item.name}?`}
                 >
                   <Card 
-                    onClick={() => setEditingItem(item)}
+                    onClick={() => {
+                      setEditingItem(item);
+                      if (item.isTool) {
+                        setFilter('Tools');
+                      } else {
+                        setFilter('Materials');
+                      }
+                    }}
                     className={cn(
                       "p-4 flex items-center space-x-4 bg-white",
                       !item.isActive && "bg-gray-50 border-dashed opacity-60"

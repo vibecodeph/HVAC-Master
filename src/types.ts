@@ -202,6 +202,8 @@ export interface BOQItem {
   unitPrice?: number;
   isExtra: boolean;
   addedBy: string;
+  uomId?: string;
+  note?: string;
   timestamp: Timestamp;
 }
 

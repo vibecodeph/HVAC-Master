@@ -30,7 +30,9 @@ export interface CSVBOQRow {
   'Custom Spec'?: string;
   'Target Quantity': string;
   'Unit Price'?: string;
+  'UOM'?: string;
   'Is Extra': string;
+  'Note'?: string;
 }
 
 export interface CSVPOItemRow {
@@ -302,10 +304,12 @@ export const exportItemsToCSV = (
 export const exportJobsiteBOQToCSV = (
   boqItems: BOQItem[],
   items: Item[],
+  uoms: UOM[],
   jobsiteName: string
 ) => {
   const data = boqItems.map(boq => {
     const item = items.find(i => i.id === boq.itemId);
+    const uom = uoms.find(u => u.id === boq.uomId || u.id === item?.uomId || u.symbol === item?.uomId);
     const variantStr = (boq.variant && Object.keys(boq.variant).length > 0) ? `[${Object.entries(boq.variant).map(([k, v]) => `${k}:${v}`).join(', ')}]` : '';
     
     return {
@@ -314,7 +318,9 @@ export const exportJobsiteBOQToCSV = (
       'Custom Spec': boq.customSpec || '',
       'Target Quantity': boq.targetQuantity || 0,
       'Unit Price': boq.unitPrice || 0,
-      'Is Extra': boq.isExtra ? 'TRUE' : 'FALSE'
+      'UOM': uom?.symbol || boq.uomId || item?.uomId || '',
+      'Is Extra': boq.isExtra ? 'TRUE' : 'FALSE',
+      'Note': boq.note || ''
     };
   });
 
@@ -543,6 +549,7 @@ export const importJobsiteBOQFromCSV = async (
   file: File,
   jobsiteId: string,
   items: Item[],
+  uoms: UOM[],
   userName: string,
   onProgress?: (current: number, total: number) => void
 ) => {
@@ -560,6 +567,9 @@ export const importJobsiteBOQFromCSV = async (
         items.forEach(item => itemMap.set(item.name.toLowerCase().trim(), item));
 
         const newBOQItems: Omit<BOQItem, 'id' | 'timestamp'>[] = [];
+
+        const uomMap = new Map<string, string>();
+        uoms.forEach(u => uomMap.set(u.symbol.toLowerCase().trim(), u.id));
 
         for (let i = 0; i < rows.length; i++) {
           const row = rows[i];
@@ -601,8 +611,12 @@ export const importJobsiteBOQFromCSV = async (
 
             const targetQtyRaw = getVal('Target Quantity');
             const unitPriceRaw = getVal('Unit Price');
+            const uomRaw = getVal('UOM');
             const isExtraRaw = getVal('Is Extra');
             const customSpecRaw = getVal('Custom Spec');
+            const noteRaw = getVal('Note');
+
+            const uomId = uomRaw ? (uomMap.get(uomRaw.toString().toLowerCase().trim()) || uomRaw.toString()) : item.uomId;
 
             newBOQItems.push({
               jobsiteId,
@@ -612,8 +626,10 @@ export const importJobsiteBOQFromCSV = async (
               targetQuantity: parseFloat(targetQtyRaw || '0') || 0,
               currentQuantity: 0,
               unitPrice: parseFloat(unitPriceRaw || '0') || 0,
+              uomId,
               isExtra: isExtraRaw?.toString().toUpperCase() === 'TRUE',
-              addedBy: userName
+              addedBy: userName,
+              note: noteRaw?.toString().trim() || undefined
             });
 
             successCount++;

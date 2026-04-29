@@ -24,7 +24,8 @@ const ItemCard = ({
   inventory, 
   selectedJobsiteId,
   setRequestingItem, 
-  setViewingTransactions 
+  setViewingTransactions,
+  setFilter
 }: any) => {
   const [isExpanded, setIsExpanded] = useState(false);
 
@@ -74,6 +75,7 @@ const ItemCard = ({
           <button 
             onClick={(e) => {
               e.stopPropagation();
+              setFilter(item.isTool ? 'Tools' : 'Materials');
               // If multiple variants, expand. If one, request.
               if (entries.length > 1 && !isExpanded) {
                 setIsExpanded(true);
@@ -135,7 +137,12 @@ const ItemCard = ({
                   <div 
                     key={`${item.id}-${eIdx}`}
                     className="p-4 hover:bg-gray-50/50 transition-colors cursor-pointer group"
-                    onClick={() => profile?.role === 'admin' && setViewingTransactions({ item, variant: variantToMatch || undefined })}
+                    onClick={() => {
+                      if (profile?.role === 'admin') {
+                        setFilter(item.isTool ? 'Tools' : 'Materials');
+                        setViewingTransactions({ item, variant: variantToMatch || undefined });
+                      }
+                    }}
                   >
                     <div className="flex items-start justify-between">
                       <div className="flex-1 min-w-0">
@@ -177,6 +184,14 @@ const ItemCard = ({
                               <span className="tracking-widest capitalize">Site Usage:</span>
                               <span className="text-gray-600 ml-1">{boq.currentQuantity || 0} / {boq.targetQuantity || '∞'}</span>
                             </div>
+                            {boq.note && (
+                              <div className="mt-1 flex items-start space-x-1.5 p-2 bg-amber-50/50 rounded-lg border border-amber-100/50">
+                                <AlertTriangle size={10} className="text-amber-500 mt-0.5 shrink-0" />
+                                <p className="text-[9px] font-medium text-amber-800 leading-tight italic truncate">
+                                  {boq.note}
+                                </p>
+                              </div>
+                            )}
                           </div>
                         )}
                         
@@ -217,6 +232,7 @@ const ItemCard = ({
                           <button 
                             onClick={(e) => {
                               e.stopPropagation();
+                              setFilter(item.isTool ? 'Tools' : 'Materials');
                               setRequestingItem({ 
                                 item, 
                                 variant: variantToMatch || undefined,
@@ -277,6 +293,12 @@ export const InventoryList = () => {
   } | null>(null);
   const [currentPage, setCurrentPage] = useState(1);
   const [showZeroQty, setShowZeroQty] = useState(false);
+
+  // Reset pagination when filters change
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [debouncedSearchTerm, filter, selectedJobsiteId, showZeroQty]);
+
   const [viewingTransactions, setViewingTransactions] = useState<{ item: Item, variant?: Record<string, string> } | null>(null);
   const [itemTransactions, setItemTransactions] = useState<Transaction[]>([]);
   const [isLoadingTransactions, setIsLoadingTransactions] = useState(false);
@@ -359,7 +381,7 @@ export const InventoryList = () => {
 
     const jobsiteBOQ = boqs.filter(b => b.jobsiteId === selectedJobsiteId);
     const jobsiteInv = inventory.filter(inv => inv.locationId === selectedJobsiteId);
-    const search = debouncedSearchTerm.toLowerCase();
+    const search = debouncedSearchTerm.toLowerCase().trim();
 
     // 1. Get all unique item IDs involved in this jobsite (BOQ or Stock)
     const itemIds = new Set([
@@ -374,7 +396,9 @@ export const InventoryList = () => {
       if (!item) return;
       
       // Filter by Tool/Material
-      if (filter === 'Tools' ? !item.isTool : item.isTool) return;
+      if (!debouncedSearchTerm) {
+        if (filter === 'Tools' ? !item.isTool : item.isTool) return;
+      }
       
       // Search filter
       if (search && !item.name.toLowerCase().includes(search) && !item.tags?.some(t => t.toLowerCase().includes(search))) return;
@@ -444,9 +468,15 @@ export const InventoryList = () => {
     const result = Object.values(groupedResult);
 
     return result.sort((a, b) => {
-      const catA = categories.find(c => c.id === a.item?.categoryId)?.name || 'General';
-      const catB = categories.find(c => c.id === b.item?.categoryId)?.name || 'General';
-      if (catA !== catB) return catA.localeCompare(catB);
+      const catA = categories.find(c => c.id === a.item?.categoryId);
+      const pA = catA?.parentId ? categories.find(c => c.id === catA.parentId) : null;
+      const fullCatA = `${pA?.name || ''} ${catA?.name || 'General'}`;
+      
+      const catB = categories.find(c => c.id === b.item?.categoryId);
+      const pB = catB?.parentId ? categories.find(c => c.id === catB.parentId) : null;
+      const fullCatB = `${pB?.name || ''} ${catB?.name || 'General'}`;
+
+      if (fullCatA !== fullCatB) return fullCatA.localeCompare(fullCatB);
       return (a.item?.name || '').localeCompare(b.item?.name || '');
     });
   }, [selectedJobsiteId, debouncedSearchTerm, filter, items, inventory, boqs, showZeroQty, categories]);
@@ -462,7 +492,7 @@ export const InventoryList = () => {
       .filter(item => 
         !jobsiteBOQ.some(b => b.itemId === item.id) && 
         !jobsiteInventory.some(inv => inv.itemId === item.id) &&
-        (filter === 'Tools' ? item.isTool : !item.isTool) &&
+        (!debouncedSearchTerm ? (filter === 'Tools' ? item.isTool : !item.isTool) : true) &&
         (item.name.toLowerCase().includes(search) || 
          item.tags?.some(t => t.toLowerCase().includes(search)))
       )
@@ -584,32 +614,52 @@ export const InventoryList = () => {
                   ) : (
                     <>
                       <div className="space-y-4">
-                        {paginatedItems.map((group: any, idx) => {
-                          const { item, entries } = group;
-                          if (!item) return null;
-                          
-                          return (
-                            <motion.div
-                              key={`group-${item.id}-${idx}`}
-                              initial={{ opacity: 0, y: 10 }}
-                              animate={{ opacity: 1, y: 0 }}
-                              transition={{ delay: idx * 0.05 }}
-                              className="space-y-4"
-                            >
-                              <ItemCard 
-                                item={item} 
-                                entries={entries} 
-                                profile={profile}
-                                categories={categories}
-                                uoms={uoms}
-                                inventory={inventory}
-                                selectedJobsiteId={selectedJobsiteId}
-                                setRequestingItem={setRequestingItem}
-                                setViewingTransactions={setViewingTransactions}
-                              />
-                            </motion.div>
-                          );
-                        })}
+                        {(() => {
+                          let lastCategory = '';
+                          return paginatedItems.map((group: any, idx) => {
+                            const { item, entries } = group;
+                            if (!item) return null;
+                            
+                            const category = categories.find(c => c.id === item.categoryId);
+                            const pCat = category?.parentId ? categories.find(c => c.id === category.parentId) : null;
+                            const catDisplay = category ? (pCat ? `${pCat.name} / ${category.name}` : category.name) : 'General';
+                            const showHeader = catDisplay !== lastCategory;
+                            lastCategory = catDisplay;
+
+                            return (
+                              <React.Fragment key={`group-wrapper-${item.id}-${idx}`}>
+                                {showHeader && (
+                                  <div className="flex items-center space-x-2 px-1 pt-4 first:pt-0 mb-4">
+                                    <div className="h-4 w-1.5 bg-blue-600 rounded-full" />
+                                    <h3 className="text-[11px] font-black text-gray-900 uppercase tracking-[0.2em]">
+                                      {catDisplay}
+                                    </h3>
+                                  </div>
+                                )}
+                                <motion.div
+                                  key={`group-${item.id}-${idx}`}
+                                  initial={{ opacity: 0, y: 10 }}
+                                  animate={{ opacity: 1, y: 0 }}
+                                  transition={{ delay: idx * 0.05 }}
+                                  className="space-y-4"
+                                >
+                                  <ItemCard 
+                                    item={item} 
+                                    entries={entries} 
+                                    profile={profile}
+                                    categories={categories}
+                                    uoms={uoms}
+                                    inventory={inventory}
+                                    selectedJobsiteId={selectedJobsiteId}
+                                    setRequestingItem={setRequestingItem}
+                                    setViewingTransactions={setViewingTransactions}
+                                    setFilter={setFilter}
+                                  />
+                                </motion.div>
+                              </React.Fragment>
+                            );
+                          });
+                        })()}
                       </div>
 
                       {globalSearchItems.length > 0 && (
@@ -626,7 +676,12 @@ export const InventoryList = () => {
                                   "p-4 bg-gray-50/50 border-dashed border-gray-200 transition-all group",
                                   profile?.role === 'admin' ? "hover:bg-white hover:border-solid hover:shadow-md cursor-pointer" : ""
                                 )}
-                                onClick={() => profile?.role === 'admin' && setViewingTransactions({ item })}
+                                onClick={() => {
+                                  if (profile?.role === 'admin') {
+                                    setFilter(item.isTool ? 'Tools' : 'Materials');
+                                    setViewingTransactions({ item });
+                                  }
+                                }}
                               >
                                 <div className="flex items-center justify-between">
                                   <div className="flex items-center space-x-3">
@@ -646,6 +701,7 @@ export const InventoryList = () => {
                                   <button 
                                     onClick={(e) => {
                                       e.stopPropagation();
+                                      setFilter(item.isTool ? 'Tools' : 'Materials');
                                       setRequestingItem({ item });
                                     }}
                                     className="px-4 h-10 bg-white text-blue-600 border border-blue-100 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-blue-600 hover:text-white transition-all shadow-sm"

@@ -164,6 +164,8 @@
         "unitPrice": { "type": "number" },
         "isExtra": { "type": "boolean" },
         "addedBy": { "type": "string" },
+        "uomId": { "type": "string" },
+        "note": { "type": "string" },
         "timestamp": { "type": "string", "format": "date-time" }
       },
       "required": ["jobsiteId", "itemId", "isExtra", "addedBy", "timestamp"]

@@ -147,37 +147,39 @@ export const RequestForm = ({
           </div>
         )}
 
-        <div className="grid grid-cols-2 gap-4">
-          <div className="space-y-1">
-            <label className="text-xs font-bold text-gray-400 uppercase tracking-wider pl-1 font-black">Quantity</label>
-            <input 
-              name="quantity" 
-              type="number" 
-              step="any" 
-              required 
-              className="w-full p-4 bg-gray-100 rounded-2xl text-sm font-medium outline-none focus:ring-2 focus:ring-blue-500" 
-              placeholder="0" 
-            />
-          </div>
-          <div className="space-y-1">
-            <label className="text-xs font-bold text-gray-400 uppercase tracking-wider pl-1 font-black">UOM</label>
-            <div className="relative">
-              <select 
-                value={selectedUomId}
-                onChange={e => setSelectedUomId(e.target.value)}
-                className="w-full p-4 bg-gray-100 rounded-2xl text-sm font-bold text-blue-600 outline-none focus:ring-2 focus:ring-blue-500 appearance-none pr-10"
-              >
-                <option value={baseUom?.id || item.uomId}>{baseUom?.symbol || item.uomId}</option>
-                {item.uomConversions?.map(conv => (
-                  <option key={conv.uomId} value={conv.uomId}>
-                    {uoms.find(u => u.id === conv.uomId)?.symbol || conv.uomId}
-                  </option>
-                ))}
-              </select>
-              <ChevronDown className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" size={16} />
-            </div>
+      <div className="space-y-4">
+        <div className="space-y-1">
+          <label className="text-xs font-bold text-gray-400 uppercase tracking-wider pl-1 font-black">Quantity</label>
+          <input 
+            name="quantity" 
+            type="number" 
+            step="any" 
+            required 
+            className="w-full p-4 bg-gray-100 rounded-2xl text-sm font-medium outline-none focus:ring-2 focus:ring-blue-500" 
+            placeholder="0" 
+          />
+        </div>
+        <div className="space-y-1">
+          <label className="text-xs font-bold text-gray-400 uppercase tracking-wider pl-1 font-black">Unit of Measure</label>
+          <div className="relative">
+            <select 
+              value={selectedUomId}
+              onChange={e => setSelectedUomId(e.target.value)}
+              className="w-full p-4 bg-gray-100 rounded-2xl text-sm font-bold text-blue-600 outline-none focus:ring-2 focus:ring-blue-500 appearance-none pr-10"
+            >
+              {(() => {
+                const validUomIds = new Set([item.uomId, ...(item.uomConversions?.map(c => c.uomId) || [])]);
+                return uoms.filter(u => validUomIds.has(u.id) || u.id === selectedUomId)
+                  .sort((a, b) => a.name.localeCompare(b.name))
+                  .map(u => (
+                    <option key={u.id} value={u.id}>{u.name} ({u.symbol})</option>
+                  ));
+              })()}
+            </select>
+            <ChevronDown className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" size={16} />
           </div>
         </div>
+      </div>
 
         {!defaultJobsiteId && (
           <div className="space-y-1">
@@ -556,8 +558,8 @@ export const WorkerRequestForm = ({ items, locations, uoms, inventory, profile, 
               </div>
             )}
 
-            <div className="grid grid-cols-2 gap-4">
-              <div className={cn("space-y-1 transition-all duration-300", selectedItemId ? "col-span-1" : "col-span-2")}>
+            <div className="space-y-4">
+              <div className="space-y-1">
                 <label className="text-xs font-bold text-gray-400 uppercase tracking-wider pl-1 font-black">Quantity</label>
                 <input 
                   required
@@ -569,8 +571,8 @@ export const WorkerRequestForm = ({ items, locations, uoms, inventory, profile, 
                 />
               </div>
               {selectedItemId && (
-                <div className="space-y-1 animate-in fade-in slide-in-from-right-4 duration-300">
-                  <label className="text-xs font-bold text-gray-400 uppercase tracking-wider pl-1 font-black">UOM</label>
+                <div className="space-y-1 animate-in fade-in slide-in-from-top-2 duration-300">
+                  <label className="text-xs font-bold text-gray-400 uppercase tracking-wider pl-1 font-black">Unit of Measure</label>
                   <div className="relative">
                     <select 
                       required
@@ -578,14 +580,14 @@ export const WorkerRequestForm = ({ items, locations, uoms, inventory, profile, 
                       onChange={e => setSelectedUomId(e.target.value)}
                       className="w-full p-4 bg-gray-100 rounded-2xl text-sm font-bold text-blue-600 outline-none focus:ring-2 focus:ring-blue-500 appearance-none pr-10"
                     >
-                      <option value={uoms.find(u => u.id === selectedItem?.uomId || u.symbol === selectedItem?.uomId)?.id || selectedItem?.uomId}>
-                        {uoms.find(u => u.id === selectedItem?.uomId || u.symbol === selectedItem?.uomId)?.symbol || selectedItem?.uomId}
-                      </option>
-                      {selectedItem?.uomConversions?.map(conv => (
-                        <option key={conv.uomId} value={conv.uomId}>
-                          {uoms.find(u => u.id === conv.uomId)?.symbol || conv.uomId}
-                        </option>
-                      ))}
+                      {(() => {
+                        const validUomIds = new Set([selectedItem?.uomId, ...(selectedItem?.uomConversions?.map(c => c.uomId) || [])]);
+                        return uoms.filter(u => (validUomIds.has(u.id) && u.isActive) || u.id === selectedUomId)
+                          .sort((a, b) => a.name.localeCompare(b.name))
+                          .map(u => (
+                            <option key={u.id} value={u.id}>{u.name} ({u.symbol})</option>
+                          ));
+                      })()}
                     </select>
                     <ChevronDown className="absolute right-4 top-1/2 -translate-y-1/2 text-blue-400 pointer-events-none" size={16} />
                   </div>
@@ -1521,6 +1523,7 @@ export const TransactionForm = ({ items, locations, inventory, uoms, purchaseOrd
   const [toLocationId, setToLocationId] = useState(initialData?.toLocationId || '');
   const [poId, setPoId] = useState(initialData?.poId || '');
   const [poNumber, setPoNumber] = useState(initialData?.poNumber || '');
+  const [selectedUomId, setSelectedUomId] = useState(initialData?.uomId || '');
   const [quantity, setQuantity] = useState<number | string>(initialData?.quantity || '');
   const [poItemQuantities, setPoItemQuantities] = useState<Record<string, number>>({});
   const [poItemSerials, setPoItemSerials] = useState<Record<string, string>>({});
@@ -1548,6 +1551,13 @@ export const TransactionForm = ({ items, locations, inventory, uoms, purchaseOrd
   }, [type, locations, initialData]);
 
   const selectedItem = items.find(i => i.id === selectedItemId);
+
+  useEffect(() => {
+    if (selectedItem && !selectedUomId) {
+      const baseUomId = uoms.find(u => u.id === selectedItem.uomId || u.symbol === selectedItem.uomId)?.id || selectedItem.uomId;
+      setSelectedUomId(baseUomId);
+    }
+  }, [selectedItem, selectedUomId, uoms]);
 
   const currentVariantConfig = useMemo(() => {
     if (!selectedItem || Object.keys(selectedVariant).length === 0) return null;
@@ -1637,7 +1647,7 @@ export const TransactionForm = ({ items, locations, inventory, uoms, purchaseOrd
       const supplierDR = formData.get('supplierDR') as string;
 
       const poItem = (poId && type === 'delivery' && selectedPO) ? selectedPO.items.find(i => i.itemId === selectedItemId) : null;
-      const targetUomId = poItem?.uomId || uoms.find(u => u.id === selectedItem?.uomId || u.symbol === selectedItem?.uomId)?.id || selectedItem?.uomId || '';
+      const targetUomId = selectedUomId || poItem?.uomId || uoms.find(u => u.id === selectedItem?.uomId || u.symbol === selectedItem?.uomId)?.id || selectedItem?.uomId || '';
       const conversionFactor = (targetUomId === selectedItem?.uomId) ? 1 : (selectedItem?.uomConversions?.find(c => c.uomId === targetUomId)?.factor || 1);
 
       const transactionData = {
@@ -1933,7 +1943,7 @@ export const TransactionForm = ({ items, locations, inventory, uoms, purchaseOrd
               </div>
             )}
 
-            <div className="grid grid-cols-2 gap-4">
+            <div className="space-y-4">
               <div className="space-y-1">
                 <label className="text-xs font-bold text-gray-400 uppercase tracking-wider pl-1">Quantity</label>
                 <div className="relative">
@@ -1955,21 +1965,43 @@ export const TransactionForm = ({ items, locations, inventory, uoms, purchaseOrd
                     }}
                     className="w-full p-4 bg-gray-100 rounded-2xl text-sm font-medium outline-none focus:ring-2 focus:ring-blue-500" 
                   />
-                  <span className="absolute right-4 top-1/2 -translate-y-1/2 text-[10px] font-black text-gray-400 uppercase">
-                    {(() => {
-                      if (selectedPO && selectedItemId) {
-                        const poItem = selectedPO.items.find(i => i.itemId === selectedItemId);
-                        if (poItem) {
-                          return uoms.find(u => u.id === poItem.uomId || u.symbol === poItem.uomId)?.symbol || poItem.uomId;
-                        }
-                      }
-                      return uoms.find(u => u.id === selectedItem?.uomId || u.symbol === selectedItem?.uomId)?.symbol || selectedItem?.uomId;
-                    })()}
-                  </span>
                 </div>
               </div>
+
+              {selectedItemId && (
+                <div className="space-y-1">
+                  <label className="text-xs font-bold text-gray-400 uppercase tracking-wider pl-1">Unit of Measure</label>
+                  <div className="relative">
+                    <select 
+                      required
+                      value={selectedUomId}
+                      onChange={e => {
+                        setSelectedUomId(e.target.value);
+                        if (selectedPO && selectedItemId) {
+                          const poItem = selectedPO.items.find(i => i.itemId === selectedItemId && i.uomId === e.target.value);
+                          if (poItem) {
+                            setTotalPrice(poItem.unitPrice * Number(quantity));
+                          }
+                        }
+                      }}
+                      className="w-full p-4 bg-gray-100 rounded-2xl text-sm font-bold text-blue-600 outline-none focus:ring-2 focus:ring-blue-500 appearance-none pr-10"
+                    >
+                      {(() => {
+                        const validUomIds = new Set([selectedItem?.uomId, ...(selectedItem?.uomConversions?.map(c => c.uomId) || [])]);
+                        return uoms.filter(u => (validUomIds.has(u.id) && u.isActive) || u.id === selectedUomId)
+                          .sort((a, b) => a.name.localeCompare(b.name))
+                          .map(u => (
+                            <option key={u.id} value={u.id}>{u.name} ({u.symbol})</option>
+                          ));
+                      })()}
+                    </select>
+                    <ChevronDown className="absolute right-4 top-1/2 -translate-y-1/2 text-blue-400 pointer-events-none" size={16} />
+                  </div>
+                </div>
+              )}
+
               {selectedItem?.isTool && (
-                <>
+                <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-1">
                     <label className="text-xs font-bold text-gray-400 uppercase tracking-wider pl-1">Serial Number</label>
                     <input 
@@ -1998,7 +2030,7 @@ export const TransactionForm = ({ items, locations, inventory, uoms, purchaseOrd
                   <p className="col-span-2 text-[10px] text-orange-600 font-bold px-1 italic">
                     * Tools require either a Serial Number or Property Number for tracking.
                   </p>
-                </>
+                </div>
               )}
             </div>
 

@@ -1522,35 +1522,10 @@ export const recordBulkPick = async (
     });
 
     await runTransaction(db, async (dbTransaction) => {
-      let batchId = reusedBatchId;
+      // Maps each destination jobsiteId to its assigned DR number
+      const jobsiteBatchIds = new Map<string, string>();
       let counterUpdate: any = null;
       let counterRef: any = null;
-      
-      // If no custom DR and no existing reused DR, generate a new one
-      if (!batchId) {
-        const now = new Date();
-        const yearYY = now.getFullYear().toString().slice(-2);
-        counterRef = doc(db, 'counters', 'dr_number');
-        const counterDoc = await dbTransaction.get(counterRef);
-        
-        let nextSeries = 1;
-        if (counterDoc.exists()) {
-          const data = counterDoc.data() as { year: string; lastSeries: number };
-          if (data.year === yearYY) {
-            nextSeries = (data.lastSeries || 0) + 1;
-          }
-        }
-        
-        const seriesStr = nextSeries.toString().padStart(4, '0');
-        batchId = `DR#${yearYY}-${seriesStr}`;
-
-        // Prepare counter update but DO NOT set it yet (must read all first)
-        counterUpdate = {
-          year: yearYY,
-          lastSeries: nextSeries,
-          updatedAt: serverTimestamp()
-        };
-      }
 
       const pickTime = options?.customDate ? Timestamp.fromDate(options.customDate) : serverTimestamp();
       const requestData: any[] = [];
@@ -1634,11 +1609,39 @@ export const recordBulkPick = async (
         });
       }
 
+      // Assign DR numbers: one per unique destination jobsite.
+      // If a custom/reused batchId was provided, all destinations share it.
+      if (reusedBatchId) {
+        for (const d of requestData) {
+          jobsiteBatchIds.set(d.request.jobsiteId || 'unknown', reusedBatchId);
+        }
+      } else {
+        const uniqueJobsiteIds = [...new Set(requestData.map(d => d.request.jobsiteId || 'unknown'))];
+        const now = new Date();
+        const yearYY = now.getFullYear().toString().slice(-2);
+        counterRef = doc(db, 'counters', 'dr_number');
+        const counterDoc = await dbTransaction.get(counterRef);
+        let nextSeries = 1;
+        if (counterDoc.exists()) {
+          const cData = counterDoc.data() as { year: string; lastSeries: number };
+          if (cData.year === yearYY) {
+            nextSeries = (cData.lastSeries || 0) + 1;
+          }
+        }
+        for (const jid of uniqueJobsiteIds) {
+          const seriesStr = nextSeries.toString().padStart(4, '0');
+          jobsiteBatchIds.set(jid, `DR#${yearYY}-${seriesStr}`);
+          nextSeries++;
+        }
+        counterUpdate = { year: yearYY, lastSeries: nextSeries - 1, updatedAt: serverTimestamp() };
+      }
+
       // 2. WRITES
       for (const data of requestData) {
         const { requestId, requestRef, request, selection, effectiveVariant, conversionFactor, baseQuantity, itemData } = data;
         const { deliveredQty, sourceLocationId, backorder, serialNumbers } = selection;
         const { itemId, uomId, approvedQty, customSpec } = request;
+        const batchId = jobsiteBatchIds.get(request.jobsiteId || 'unknown') || '';
 
         // Update inventory cache and record transactions
         if (serialNumbers && serialNumbers.length > 0) {

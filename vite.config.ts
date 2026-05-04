@@ -9,7 +9,17 @@ export default defineConfig(({mode}) => {
     plugins: [react(), tailwindcss()],
     define: {
       'process.env.GEMINI_API_KEY': JSON.stringify(env.GEMINI_API_KEY),
-      'process.env.APP_VERSION': JSON.stringify('v1.0.' + new Date(new Date().getTime() + 8 * 60 * 60 * 1000).toISOString().replace(/[-:T]/g, '').slice(0, 12)),
+      'import.meta.env.VITE_APP_VERSION': JSON.stringify(
+        new Date().toLocaleString('en-PH', {
+          timeZone: 'Asia/Manila',
+          year: 'numeric',
+          month: 'short',
+          day: '2-digit',
+          hour: '2-digit',
+          minute: '2-digit',
+          hour12: true,
+        })
+      ),
     },
     resolve: {
       alias: {

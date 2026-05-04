@@ -103,7 +103,7 @@ export const Login = () => {
       </button>
       
       <p className="mt-8 text-[10px] text-gray-400 uppercase font-bold tracking-widest">
-        VERSION {import.meta.env.VITE_APP_VERSION || 'v1.0'}
+        BUILT {import.meta.env.VITE_APP_VERSION}
       </p>
     </div>
   );

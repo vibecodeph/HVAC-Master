@@ -1,0 +1,594 @@
+// ===============================================================
+// Assumed Data Model
+// ===============================================================
+//
+// Collection: items
+// Fields:
+//   - name: string (required)
+//   - description: string (optional)
+//   - categoryId: string (optional)
+//   - subcategoryId: string (optional)
+//   - uomId: string (required)
+//   - tags: list (optional)
+//   - isTool: bool (required)
+//   - createdAt: timestamp (required)
+//
+// Collection: categories
+// Fields:
+//   - name: string (required)
+//   - parentId: string (optional)
+//
+// Collection: locations
+// Fields:
+//   - name: string (required)
+//   - type: string (required, 'warehouse' | 'jobsite' | 'supplier' | 'system')
+//   - parentId: string (optional)
+//   - isActive: bool (required)
+//
+// Collection: assets
+// Fields:
+//   - id: string (required, serial number)
+//   - itemId: string (required)
+//   - variant: map (optional)
+//   - locationId: string (required)
+//   - notes: string (optional)
+//   - updatedAt: timestamp (required)
+//
+// Collection: inventory
+// Fields:
+//   - itemId: string (required)
+//   - locationId: string (required)
+//   - quantity: number (required)
+//
+// Collection: transactions
+// Fields:
+//   - itemId: string (required)
+//   - fromLocationId: string (optional)
+//   - toLocationId: string (optional)
+//   - quantity: number (required)
+//   - type: string (required, 'delivery' | 'usage' | 'return' | 'adjustment')
+//   - timestamp: timestamp (required)
+//   - userId: string (required)
+//   - notes: string (optional)
+//
+// Collection: uoms
+// Fields:
+//   - name: string (required)
+//   - symbol: string (required)
+//   - baseUomId: string (optional)
+//   - conversionFactor: number (optional)
+//
+// Collection: tags
+// Fields:
+//   - name: string (required)
+//
+// Collection: users
+// Fields:
+//   - uid: string (required)
+//   - email: string (required)
+//   - role: string (required, 'admin' | 'manager' | 'worker' | 'engineer' | 'warehouseman')
+//   - displayName: string (optional)
+//
+// ===============================================================
+
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // ===============================================================
+    // Helper Functions
+    // ===============================================================
+    
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function isAdmin() {
+      return isAuthenticated() && request.auth.token.get('role', '') == 'admin';
+    }
+
+    function isApproved() {
+      return isAuthenticated() && (
+        isAdmin() ||
+        request.auth.token.get('isApproved', false) == true
+      );
+    }
+
+    function isAssignedLocation(locationId) {
+      return isApproved() && (
+        isAdmin() ||
+        isWarehouseman() ||
+        (locationId == 'in-transit' || locationId == null || locationId == "") ||
+        (exists(/databases/$(database)/documents/locations/$(locationId)) && 
+         get(/databases/$(database)/documents/locations/$(locationId)).data.get('type', '') == 'system') ||
+        (request.auth.token.get('role', '') in ['worker', 'engineer'] &&
+         locationId in request.auth.token.get('assignedLocationIds', []))
+      );
+    }
+
+    function isManager() {
+      return isAuthenticated() && (request.auth.token.get('role', '') == 'manager' || isAdmin());
+    }
+
+    function isEngineer() {
+      return isAuthenticated() && (request.auth.token.get('role', '') == 'engineer' || isManager());
+    }
+
+    function isWarehouseman() {
+      return isAuthenticated() && (request.auth.token.get('role', '') == 'warehouseman' || isManager());
+    }
+
+    function isWorker() {
+      return isAuthenticated() && (
+        request.auth.token.get('role', '') == 'worker' || isEngineer() || isWarehouseman()
+      );
+    }
+
+    function hasRequiredFields(fields) {
+      return request.resource.data.keys().hasAll(fields);
+    }
+
+    function hasOnlyAllowedFields(fields) {
+      return fields.hasAll(request.resource.data.keys());
+    }
+
+    function isValidString(field, minLen, maxLen) {
+      return request.resource.data[field] is string &&
+        request.resource.data[field].size() >= minLen &&
+        request.resource.data[field].size() <= maxLen;
+    }
+
+    function isValidEmail(email) {
+      return email is string &&
+        email.matches("^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$");
+    }
+
+    // ===============================================================
+    // Domain Validators
+    // ===============================================================
+
+    function isValidItem(data) {
+      return hasOnlyAllowedFields(['id', 'name', 'uomId', 'isTool', 'isActive', 'createdAt', 'updatedAt', 'createdBy', 'updatedBy', 'description', 'categoryId', 'subcategoryId', 'tags', 'variantAttributes', 'requireVariant', 'averageCost', 'totalQuantity', 'reorderLevel', 'preferredSupplierId', 'variantConfigs', 'components', 'uomConversions', 'requireCustomSpec', 'customSpecLabel']) &&
+             (!('name' in data) || (data.name is string && data.name.size() > 0 && data.name.size() <= 200)) &&
+             (!('description' in data) || data.description == null || (data.description is string && data.description.size() <= 1000)) &&
+             (!('uomId' in data) || (data.uomId is string && data.uomId.size() <= 50)) &&
+             (!('isTool' in data) || data.isTool is bool) &&
+             (!('isActive' in data) || data.isActive is bool) &&
+             (!('id' in data) || (data.id is string && data.id.size() <= 100)) &&
+             (!('categoryId' in data) || data.categoryId == null || data.categoryId == "" || (data.categoryId is string && data.categoryId.size() <= 50)) &&
+             (!('subcategoryId' in data) || data.subcategoryId == null || data.subcategoryId == "" || (data.subcategoryId is string && data.subcategoryId.size() <= 50)) &&
+             (!('tags' in data) || data.tags == null || (data.tags is list && data.tags.size() <= 100)) &&
+             (!('variantAttributes' in data) || data.variantAttributes == null || (data.variantAttributes is list && data.variantAttributes.size() <= 30)) &&
+             (!('requireVariant' in data) || data.requireVariant is bool) &&
+             (!('averageCost' in data) || data.averageCost == null || (data.averageCost is number && data.averageCost >= 0)) &&
+             (!('totalQuantity' in data) || data.totalQuantity == null || (data.totalQuantity is number)) &&
+             (!('reorderLevel' in data) || data.reorderLevel == null || (data.reorderLevel is number && data.reorderLevel >= 0)) &&
+             (!('preferredSupplierId' in data) || data.preferredSupplierId == null || (data.preferredSupplierId is string && data.preferredSupplierId.size() <= 50)) &&
+             (!('variantConfigs' in data) || data.variantConfigs == null || (data.variantConfigs is list && data.variantConfigs.size() <= 200)) &&
+             (!('components' in data) || data.components == null || (data.components is list && data.components.size() <= 100)) &&
+             (!('uomConversions' in data) || data.uomConversions == null || (data.uomConversions is list && data.uomConversions.size() <= 50)) &&
+             (!('requireCustomSpec' in data) || data.requireCustomSpec is bool) &&
+             (!('customSpecLabel' in data) || data.customSpecLabel == null || data.customSpecLabel is string) &&
+             (!('createdAt' in data) || data.createdAt is timestamp) &&
+             (!('updatedAt' in data) || data.updatedAt is timestamp) &&
+             (!('createdBy' in data) || data.createdBy is string) &&
+             (!('updatedBy' in data) || data.updatedBy is string);
+    }
+
+    function isValidCategory(data) {
+      return hasRequiredFields(['name']) &&
+             data.name is string && data.name.size() > 0 && data.name.size() <= 50;
+    }
+
+    function isValidLocation(data) {
+      return hasOnlyAllowedFields(['id', 'name', 'longName', 'type', 'address', 'contactPerson', 'contactNumber', 'terms', 'parentId', 'isActive', 'createdAt', 'updatedAt', 'createdBy', 'updatedBy', 'photoURL']) &&
+             (!('name' in data) || (data.name is string && data.name.size() > 0 && data.name.size() <= 200)) &&
+             (!('longName' in data) || (data.longName is string && data.longName.size() <= 400)) &&
+             (!('type' in data) || data.type in ['warehouse', 'jobsite', 'supplier', 'system']) &&
+             (!('address' in data) || (data.address is string && data.address.size() <= 1000)) &&
+             (!('contactPerson' in data) || (data.contactPerson is string && data.contactPerson.size() <= 200)) &&
+             (!('contactNumber' in data) || (data.contactNumber is string && data.contactNumber.size() <= 50)) &&
+             (!('terms' in data) || (data.terms is string && data.terms.size() <= 1000)) &&
+             (!('parentId' in data) || data.parentId == null || (data.parentId is string && data.parentId.size() <= 50)) &&
+             (!('isActive' in data) || data.isActive is bool) &&
+             (!('photoURL' in data) || (data.photoURL is string && data.photoURL.size() <= 500)) &&
+             (!('createdAt' in data) || data.createdAt is timestamp) &&
+             (!('updatedAt' in data) || data.updatedAt is timestamp) &&
+             (!('createdBy' in data) || data.createdBy is string) &&
+             (!('updatedBy' in data) || data.updatedBy is string);
+    }
+
+    function isValidAsset(data) {
+      return hasOnlyAllowedFields(['id', 'serialNumber', 'propertyNumber', 'itemId', 'variant', 'locationId', 'notes', 'updatedAt', 'status', 'createdBy', 'updatedBy', 'createdAt']) &&
+             (!('id' in data) || (data.id is string && data.id.size() <= 100)) &&
+             (!('serialNumber' in data) || data.serialNumber == null || data.serialNumber is string) &&
+             (!('propertyNumber' in data) || data.propertyNumber == null || data.propertyNumber is string) &&
+             (!('itemId' in data) || (data.itemId is string && data.itemId.size() <= 50)) &&
+             (!('variant' in data) || data.variant == null || data.variant is map) &&
+             (!('locationId' in data) || (data.locationId is string && data.locationId.size() <= 50)) &&
+             (!('notes' in data) || (data.notes is string && data.notes.size() <= 500)) &&
+             (!('status' in data) || data.status in ['available', 'in-use', 'maintenance', 'broken', 'in-transit']) &&
+             (!('updatedAt' in data) || data.updatedAt is timestamp) &&
+             (!('createdAt' in data) || data.createdAt is timestamp) &&
+             (!('createdBy' in data) || data.createdBy is string) &&
+             (!('updatedBy' in data) || data.updatedBy is string);
+    }
+
+    function isValidInventory(data) {
+      return hasOnlyAllowedFields(['id', 'itemId', 'locationId', 'quantity', 'variant', 'customSpec', 'serialNumber', 'propertyNumber', 'updatedAt', 'createdBy', 'updatedBy', 'status', 'createdAt']) &&
+             (!('itemId' in data) || (data.itemId is string && data.itemId.size() <= 50)) &&
+             (!('locationId' in data) || (data.locationId is string && data.locationId.size() <= 50)) &&
+             (!('quantity' in data) || data.quantity is number) &&
+             (!('id' in data) || data.id is string) &&
+             (!('variant' in data) || data.variant == null || data.variant is map) &&
+             (!('customSpec' in data) || data.customSpec == null || data.customSpec is string) &&
+             (!('serialNumber' in data) || data.serialNumber == null || data.serialNumber is string) &&
+             (!('propertyNumber' in data) || data.propertyNumber == null || data.propertyNumber is string) &&
+             (!('updatedAt' in data) || data.updatedAt is timestamp) &&
+             (!('createdAt' in data) || data.createdAt is timestamp) &&
+             (!('createdBy' in data) || data.createdBy is string) &&
+             (!('updatedBy' in data) || data.updatedBy is string) &&
+             (!('status' in data) || data.status is string);
+    }
+
+    function isValidTransaction(data) {
+      return hasRequiredFields(['itemId', 'quantity', 'type', 'timestamp', 'userId', 'uomId']) &&
+             hasOnlyAllowedFields(['itemId', 'quantity', 'type', 'timestamp', 'userId', 'uomId', 'conversionFactor', 'baseQuantity', 'notes', 'fromLocationId', 'toLocationId', 'variant', 'customSpec', 'serialNumber', 'propertyNumber', 'userName', 'totalPrice', 'unitPrice', 'poNumber', 'poId', 'supplierInvoice', 'supplierDR', 'batchId', 'requestIds', 'updatedAt', 'createdBy', 'updatedBy', 'createdAt', 'status']) &&
+             data.itemId is string && data.itemId.size() <= 50 &&
+             data.quantity is number &&
+             data.type in ['delivery', 'usage', 'return', 'adjustment', 'pick'] &&
+             data.timestamp is timestamp &&
+             data.userId == request.auth.uid &&
+             data.uomId is string && data.uomId.size() <= 50 &&
+             (!('conversionFactor' in data) || data.conversionFactor is number) &&
+             (!('baseQuantity' in data) || data.baseQuantity is number) &&
+             (!('notes' in data) || (data.notes is string && data.notes.size() <= 1000)) &&
+             (!('fromLocationId' in data) || data.fromLocationId == null || (data.fromLocationId is string && data.fromLocationId.size() <= 50)) &&
+             (!('toLocationId' in data) || data.toLocationId == null || (data.toLocationId is string && data.toLocationId.size() <= 50)) &&
+             (!('variant' in data) || data.variant == null || data.variant is map) &&
+             (!('customSpec' in data) || data.customSpec == null || (data.customSpec is string && data.customSpec.size() <= 1000)) &&
+             (!('serialNumber' in data) || data.serialNumber == null || (data.serialNumber is string && data.serialNumber.size() <= 100)) &&
+             (!('propertyNumber' in data) || data.propertyNumber == null || (data.propertyNumber is string && data.propertyNumber.size() <= 100)) &&
+             (!('userName' in data) || (data.userName is string && data.userName.size() <= 100)) &&
+             (!('totalPrice' in data) || data.totalPrice is number) &&
+             (!('unitPrice' in data) || data.unitPrice is number) &&
+             (!('poNumber' in data) || data.poNumber == null || (data.poNumber is string && data.poNumber.size() <= 50)) &&
+             (!('poId' in data) || data.poId == null || (data.poId is string && data.poId.size() <= 50)) &&
+             (!('supplierInvoice' in data) || data.supplierInvoice == null || (data.supplierInvoice is string && data.supplierInvoice.size() <= 100)) &&
+             (!('supplierDR' in data) || data.supplierDR == null || (data.supplierDR is string && data.supplierDR.size() <= 100)) &&
+             (!('batchId' in data) || (data.batchId is string && data.batchId.size() <= 50)) &&
+             (!('requestIds' in data) || (data.requestIds is list && data.requestIds.size() <= 100)) &&
+             (!('updatedAt' in data) || data.updatedAt is timestamp) &&
+             (!('createdAt' in data) || data.createdAt is timestamp) &&
+             (!('createdBy' in data) || data.createdBy is string) &&
+             (!('updatedBy' in data) || data.updatedBy is string) &&
+             (!('status' in data) || data.status is string);
+    }
+
+    function isValidUOM(data) {
+      return hasRequiredFields(['name', 'symbol']) &&
+             hasOnlyAllowedFields(['id', 'name', 'symbol', 'baseUomId', 'conversionFactor', 'isActive']) &&
+             data.name is string && data.name.size() > 0 && data.name.size() <= 50 &&
+             data.symbol is string && data.symbol.size() > 0 && data.symbol.size() <= 10 &&
+             (!('isActive' in data) || data.isActive is bool);
+    }
+
+    function isValidUser(data) {
+      return hasRequiredFields(['uid', 'email', 'role']) &&
+             hasOnlyAllowedFields(['uid', 'email', 'role', 'assignedLocationIds', 'isApproved', 'isActive', 'displayName', 'firstName', 'lastName', 'position', 'photoURL', 'skills', 'createdAt', 'updatedAt', 'updatedBy']) &&
+             isValidEmail(data.email) &&
+             data.role in ['admin', 'manager', 'worker', 'engineer', 'warehouseman'] &&
+             (!('assignedLocationIds' in data) || data.assignedLocationIds == null || data.assignedLocationIds is list) &&
+             (!('isApproved' in data) || data.isApproved == null || data.isApproved is bool) &&
+             (!('isActive' in data) || data.isActive == null || data.isActive is bool) &&
+             (!('displayName' in data) || data.displayName == null || data.displayName is string) &&
+             (!('firstName' in data) || data.firstName == null || data.firstName is string) &&
+             (!('lastName' in data) || data.lastName == null || data.lastName is string) &&
+             (!('position' in data) || data.position == null || data.position is string) &&
+             (!('photoURL' in data) || data.photoURL == null || data.photoURL is string) &&
+             (!('skills' in data) || data.skills == null || data.skills is list) &&
+             (!('createdAt' in data) || data.createdAt == null || data.createdAt is timestamp) &&
+             (!('updatedAt' in data) || data.updatedAt == null || data.updatedAt is timestamp) &&
+             (!('updatedBy' in data) || data.updatedBy == null || data.updatedBy is string);
+    }
+
+    function isValidRequest(data) {
+      return hasOnlyAllowedFields(['id', 'itemId', 'variant', 'customSpec', 'requestedQty', 'approvedQty', 'deliveredQty', 'uomId', 'jobsiteId', 'sourceLocationId', 'status', 'requestorId', 'requestorName', 'approverId', 'approverName', 'warehousemanId', 'warehousemanName', 'workerNote', 'engineerNote', 'adminNote', 'receiverId', 'receiverName', 'timestamp', 'approvedAt', 'deliveredAt', 'backorderOf', 'batchId', 'serialNumbers', 'updatedAt', 'createdBy', 'updatedBy', 'createdAt', 'pickedAt']) &&
+             (!('itemId' in data) || (data.itemId is string && data.itemId.size() <= 50)) &&
+             (!('requestedQty' in data) || data.requestedQty is number) &&
+             (!('uomId' in data) || (data.uomId is string && data.uomId.size() <= 50)) &&
+             (!('jobsiteId' in data) || (data.jobsiteId is string && data.jobsiteId.size() <= 50)) &&
+             (!('status' in data) || data.status in ['pending', 'approved', 'for delivery', 'delivered', 'rejected', 'cancelled']) &&
+             (!('timestamp' in data) || data.timestamp is timestamp) &&
+             (!('requestorId' in data) || (data.requestorId is string && data.requestorId.size() <= 50)) &&
+             (!('approvedQty' in data) || data.approvedQty == null || data.approvedQty is number) &&
+             (!('deliveredQty' in data) || data.deliveredQty == null || data.deliveredQty is number) &&
+             (!('workerNote' in data) || data.workerNote == null || (data.workerNote is string && data.workerNote.size() <= 1000)) &&
+             (!('adminNote' in data) || data.adminNote == null || (data.adminNote is string && data.adminNote.size() <= 1000)) &&
+             (!('engineerNote' in data) || data.engineerNote == null || (data.engineerNote is string && data.engineerNote.size() <= 1000)) &&
+             (!('customSpec' in data) || data.customSpec == null || (data.customSpec is string && data.customSpec.size() <= 1000)) &&
+             (!('deliveredAt' in data) || data.deliveredAt == null || data.deliveredAt is timestamp) &&
+             (!('receiverId' in data) || data.receiverId == null || (data.receiverId is string && data.receiverId.size() <= 50)) &&
+             (!('receiverName' in data) || data.receiverName == null || (data.receiverName is string && data.receiverName.size() <= 100)) &&
+             (!('pickedAt' in data) || data.pickedAt == null || data.pickedAt is timestamp) &&
+             (!('warehousemanId' in data) || data.warehousemanId == null || (data.warehousemanId is string && data.warehousemanId.size() <= 50)) &&
+             (!('warehousemanName' in data) || data.warehousemanName == null || (data.warehousemanName is string && data.warehousemanName.size() <= 100)) &&
+             (!('batchId' in data) || data.batchId == null || (data.batchId is string && data.batchId.size() <= 50)) &&
+             (!('sourceLocationId' in data) || data.sourceLocationId == null || (data.sourceLocationId is string && data.sourceLocationId.size() <= 50)) &&
+             (!('variant' in data) || data.variant == null || data.variant is map) &&
+             (!('backorderOf' in data) || data.backorderOf == null || (data.backorderOf is string && data.backorderOf.size() <= 50)) &&
+             (!('approverId' in data) || data.approverId == null || (data.approverId is string && data.approverId.size() <= 50)) &&
+             (!('approverName' in data) || data.approverName == null || (data.approverName is string && data.approverName.size() <= 100)) &&
+             (!('approvedAt' in data) || data.approvedAt == null || data.approvedAt is timestamp) &&
+             (!('requestorName' in data) || data.requestorName == null || (data.requestorName is string && data.requestorName.size() <= 100)) &&
+             (!('serialNumbers' in data) || data.serialNumbers == null || (data.serialNumbers is list && data.serialNumbers.size() <= 500)) &&
+             (!('updatedAt' in data) || data.updatedAt is timestamp) &&
+             (!('updatedBy' in data) || data.updatedBy is string) &&
+             (!('createdAt' in data) || data.createdAt is timestamp) &&
+             (!('createdBy' in data) || data.createdBy is string);
+    }
+
+    function isValidBOQItem(data) {
+      return hasRequiredFields(['jobsiteId', 'itemId', 'currentQuantity', 'isExtra', 'addedBy', 'timestamp']) &&
+             hasOnlyAllowedFields(['jobsiteId', 'itemId', 'targetQuantity', 'currentQuantity', 'unitPrice', 'isExtra', 'addedBy', 'timestamp', 'variant', 'customSpec', 'note', 'uomId']) &&
+             data.jobsiteId is string && data.jobsiteId.size() <= 50 &&
+             data.itemId is string && data.itemId.size() <= 50 &&
+             (!('uomId' in data) || data.uomId == null || (data.uomId is string && data.uomId.size() <= 50)) &&
+             (!('targetQuantity' in data) || data.targetQuantity == null || data.targetQuantity is number) &&
+             data.currentQuantity is number &&
+             (!('unitPrice' in data) || data.unitPrice == null || data.unitPrice is number) &&
+             data.isExtra is bool &&
+             data.addedBy is string && data.addedBy.size() <= 50 &&
+             data.timestamp is timestamp &&
+             (!('variant' in data) || data.variant == null || data.variant is map) &&
+             (!('customSpec' in data) || data.customSpec == null || data.customSpec is string) &&
+             (!('note' in data) || data.note == null || (data.note is string && data.note.size() <= 1000));
+    }
+
+    function isValidUnplannedStock(data) {
+      return hasRequiredFields(['itemId', 'jobsiteId', 'quantity', 'uomId', 'addedBy', 'timestamp']) &&
+             hasOnlyAllowedFields(['itemId', 'jobsiteId', 'quantity', 'uomId', 'addedBy', 'timestamp', 'variant']) &&
+             data.itemId is string && data.itemId.size() <= 50 &&
+             data.jobsiteId is string && data.jobsiteId.size() <= 50 &&
+             data.quantity is number &&
+             data.uomId is string && data.uomId.size() <= 50 &&
+             data.addedBy is string && data.addedBy.size() <= 50 &&
+             data.timestamp is timestamp &&
+             (!('variant' in data) || data.variant == null || data.variant is map);
+    }
+
+    function isValidSystemConfig(data) {
+      return hasRequiredFields(['maintenanceMode', 'updatedAt', 'updatedBy']) &&
+             data.maintenanceMode is bool &&
+             (!('maintenanceMessage' in data) || (data.maintenanceMessage is string && data.maintenanceMessage.size() <= 1000)) &&
+             (!('adminEmails' in data) || (data.adminEmails is list && data.adminEmails.size() <= 50)) &&
+             data.updatedAt is timestamp &&
+             data.updatedBy is string;
+    }
+
+    function isValidPurchaseOrder(data) {
+      return data.poNumber is string && data.poNumber.size() <= 50 &&
+             data.supplierId is string && data.supplierId.size() <= 50 &&
+             data.status in ['draft', 'sent', 'partially_received', 'received', 'cancelled'] &&
+             (!('paymentStatus' in data) || data.paymentStatus in ['unpaid', 'processing', 'prepared', 'paid']) &&
+             data.totalAmount is number &&
+             data.date is timestamp &&
+             (!('createdAt' in data) || data.createdAt is timestamp) &&
+             (!('createdBy' in data) || (data.createdBy is string && data.createdBy.size() <= 50)) &&
+             (!('id' in data) || data.id is string) &&
+             (!('updatedAt' in data) || data.updatedAt is timestamp) &&
+             (!('updatedBy' in data) || data.updatedBy is string) &&
+             (!('createdByName' in data) || data.createdByName is string) &&
+             (!('supplierName' in data) || data.supplierName is string) &&
+             (!('supplierLongName' in data) || data.supplierLongName is string) &&
+             (!('supplierAddress' in data) || data.supplierAddress is string) &&
+             (!('requestedBy' in data) || data.requestedBy is string) &&
+             (!('attention' in data) || data.attention is string) &&
+             (!('contactNo' in data) || data.contactNo is string) &&
+             (!('project' in data) || data.project is string) &&
+             (!('terms' in data) || data.terms is string) &&
+             (!('deliverTo' in data) || data.deliverTo is string) &&
+             (!('notes' in data) || data.notes is string) &&
+             (!('generalNotes' in data) || data.generalNotes is string) &&
+             (!('discount' in data) || data.discount is number) &&
+             (!('discountType' in data) || data.discountType in ['amount', 'percentage']) &&
+             (!('discountAmount' in data) || data.discountAmount is number) &&
+             (!('items' in data) || data.items is list);
+    }
+
+    function isValidPOItem(data) {
+      return (hasRequiredFields(['description', 'quantity', 'uomId', 'unitPrice', 'totalPrice']) || 
+              hasRequiredFields(['description', 'qty', 'uom', 'unitPrice', 'total'])) &&
+             (!('itemId' in data) || data.itemId is string) &&
+             (!('variant' in data) || data.variant is map) &&
+             (!('quantity' in data) || data.quantity is number) &&
+             (!('qty' in data) || data.qty is number) &&
+             (!('uomId' in data) || data.uomId is string) &&
+             (!('uom' in data) || data.uom is string) &&
+             (!('srp' in data) || data.srp is number) &&
+             (!('discount' in data) || data.discount is number) &&
+             (!('discountType' in data) || data.discountType in ['amount', 'percentage']) &&
+             (!('unitPrice' in data) || data.unitPrice is number) &&
+             (!('totalPrice' in data) || data.totalPrice is number) &&
+             (!('total' in data) || data.total is number) &&
+             (!('receivedQuantity' in data) || data.receivedQuantity is number) &&
+             (!('note' in data) || data.note is string) &&
+             (!('description' in data) || data.description is string);
+    }
+
+    function isValidPOTemplate(data) {
+      return hasOnlyAllowedFields(['id', 'companyName', 'companyAddress', 'companyPhones', 'companyEmail', 'companyTIN', 'signatories', 'updatedAt', 'updatedBy']) &&
+             (!('companyName' in data) || data.companyName is string) &&
+             (!('companyAddress' in data) || data.companyAddress is string) &&
+             (!('companyPhones' in data) || data.companyPhones is string) &&
+             (!('companyEmail' in data) || data.companyEmail is string) &&
+             (!('companyTIN' in data) || data.companyTIN is string) &&
+             (!('signatories' in data) || data.signatories is map) &&
+             (!('updatedAt' in data) || data.updatedAt is timestamp) &&
+             (!('updatedBy' in data) || data.updatedBy is string);
+    }
+
+    function isValidPOPayment(data) {
+      return hasRequiredFields(['poId', 'date', 'amount', 'grossAmount', 'cvNumber', 'status', 'createdAt', 'createdBy']) &&
+             data.poId is string && data.poId.size() <= 50 &&
+             data.date is timestamp &&
+             data.amount is number &&
+             data.grossAmount is number &&
+             data.cvNumber is string && data.cvNumber.size() <= 100 &&
+             (!('chequeNumber' in data) || (data.chequeNumber is string && data.chequeNumber.size() <= 100)) &&
+             data.status in ['processing', 'prepared', 'collected'] &&
+             data.deductions is list && data.deductions.size() <= 20 &&
+             data.createdAt is timestamp &&
+             data.createdBy is string && data.createdBy.size() <= 50;
+    }
+
+    // ===============================================================
+    // Collection Rules
+    // ===============================================================
+
+    match /items/{itemId} {
+      allow read: if isApproved();
+      allow create: if isAdmin() && hasRequiredFields(['id', 'name', 'uomId', 'isTool', 'isActive', 'createdAt']) && isValidItem(request.resource.data);
+      allow update: if isAdmin() || (isApproved() && (isWarehouseman() || isEngineer()) && isValidItem(request.resource.data) && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['averageCost', 'totalQuantity', 'updatedAt', 'updatedBy']));
+      allow delete: if isAdmin();
+    }
+
+    match /categories/{categoryId} {
+      allow read: if isApproved();
+      allow create, update: if isAdmin() && isValidCategory(request.resource.data);
+      allow delete: if isAdmin();
+    }
+
+    match /locations/{locationId} {
+      allow read: if isApproved();
+      allow create, update: if isAdmin() && isValidLocation(request.resource.data);
+      allow delete: if isAdmin();
+    }
+
+    match /assets/{assetId} {
+      allow read: if isApproved();
+      allow create, update: if isApproved() && (isAdmin() || isWarehouseman() || isEngineer()) && isAssignedLocation(request.resource.data.locationId) && isValidAsset(request.resource.data);
+      allow delete: if isAdmin();
+    }
+
+    match /inventory/{inventoryId} {
+      allow read: if isApproved();
+      // Inventory is updated via transactions in the app, but rules must allow the write
+      allow create: if isApproved() && (isAdmin() || isWarehouseman() || isEngineer()) && isAssignedLocation(request.resource.data.locationId) && hasRequiredFields(['itemId', 'locationId', 'quantity']) && isValidInventory(request.resource.data);
+      allow update: if isApproved() && (isAdmin() || isWarehouseman() || isEngineer()) && isAssignedLocation(request.resource.data.locationId) && isValidInventory(request.resource.data);
+      allow delete: if isAdmin();
+    }
+
+    match /transactions/{transactionId} {
+      allow read: if isApproved();
+      allow create: if (isAdmin() || isWarehouseman() || isEngineer()) && isValidTransaction(request.resource.data);
+      allow update, delete: if isAdmin();
+    }
+
+    match /uoms/{uomId} {
+      allow read: if isApproved();
+      allow create, update: if isAdmin() && isValidUOM(request.resource.data);
+      allow delete: if isAdmin();
+    }
+
+    match /tags/{tagId} {
+      allow read: if isApproved();
+      allow create, update: if isAdmin();
+      allow delete: if isAdmin();
+    }
+
+    match /users/{userId} {
+      allow read: if isAuthenticated() && (isAdmin() || isOwner(userId) || (isEngineer() && (resource == null || (resource.data.role == 'worker' && resource.data.get('isActive', true) == true))));
+      allow create: if isAuthenticated() && isOwner(userId) && isValidUser(request.resource.data) && 
+        request.resource.data.uid == request.auth.uid &&
+        (
+          (request.resource.data.get('isApproved', false) == false) ||
+          (request.resource.data.role == 'admin' && isAdmin())
+        ) &&
+        (request.resource.data.role in ['engineer', 'worker', 'warehouseman'] || (request.resource.data.role == 'admin' && isAdmin()));
+      allow update: if isAdmin() || 
+                    (isOwner(userId) && 
+                     isValidUser(request.resource.data) &&
+                     // Owners cannot change their own role, approval status, activity status, or assigned locations
+                     request.resource.data.role == resource.data.role &&
+                     request.resource.data.get('isApproved', false) == resource.data.get('isApproved', false) &&
+                     request.resource.data.get('isActive', false) == resource.data.get('isActive', false) &&
+                     request.resource.data.get('assignedLocationIds', []) == resource.data.get('assignedLocationIds', [])
+                    ) ||
+                    (isEngineer() && 
+                     userId != request.auth.uid && // Engineers cannot edit themselves through this rule
+                     resource.data.role == 'worker' && // Engineers can only edit workers
+                     isValidUser(request.resource.data) &&
+                     request.resource.data.diff(resource.data).affectedKeys().hasOnly(['assignedLocationIds', 'updatedAt', 'updatedBy']) &&
+                     // Ensure locations outside the engineer's scope are unchanged
+                     request.resource.data.get('assignedLocationIds', []).removeAll(get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('assignedLocationIds', [])) == 
+                     resource.data.get('assignedLocationIds', []).removeAll(get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('assignedLocationIds', []))
+                    );
+    }
+
+    match /requests/{requestId} {
+      allow read: if isApproved() && (isWorker() || isAdmin() || isWarehouseman() || isEngineer() || isOwner(resource.data.requestorId) || isAssignedLocation(resource.data.jobsiteId));
+      allow create: if isApproved() && (
+                      (isWorker() && request.resource.data.status == 'pending' && request.resource.data.requestorId == request.auth.uid) ||
+                      ((isEngineer() || isAdmin() || isManager()) && (request.resource.data.status == 'pending' || (request.resource.data.status == 'approved')) && request.resource.data.requestorId == request.auth.uid) ||
+                      ((isWarehouseman() || isEngineer() || isAdmin()) && 'backorderOf' in request.resource.data)
+                    ) && hasRequiredFields(['itemId', 'requestedQty', 'uomId', 'jobsiteId', 'status', 'requestorId', 'timestamp']) && isValidRequest(request.resource.data);
+      allow update: if isApproved() && (
+                     (isEngineer() && (request.resource.data.get('status', resource.data.status) in ['approved', 'rejected', 'for delivery', 'delivered', 'received', 'cancelled'])) ||
+                     (isWarehouseman() && (request.resource.data.get('status', resource.data.status) in ['approved', 'rejected', 'for delivery', 'delivered', 'received', 'cancelled'])) ||
+                     (isWorker() && (request.resource.data.get('status', resource.data.status) in ['delivered', 'received', 'cancelled'])) ||
+                     (isOwner(resource.data.requestorId) && resource.data.status == 'pending' && request.resource.data.get('status', resource.data.status) == 'cancelled')
+                   );
+      allow delete: if isAdmin();
+    }
+
+    match /boq/{boqId} {
+      allow read, write: if isApproved();
+    }
+
+    match /unplanned_stock/{stockId} {
+      allow read: if isApproved() && (isWorker() || isAdmin() || isAssignedLocation(resource.data.jobsiteId));
+      allow create: if isApproved() && (isAdmin() || isWorker()) && isAssignedLocation(request.resource.data.jobsiteId) && isValidUnplannedStock(request.resource.data);
+      allow update: if isAdmin() && isValidUnplannedStock(request.resource.data);
+      allow delete: if isAdmin();
+    }
+
+    match /counters/{counterId} {
+      allow read: if isApproved();
+      allow write: if isAdmin() || isWarehouseman() || isEngineer();
+    }
+
+    match /system/{configId} {
+      allow read: if isAuthenticated() || configId == 'config';
+      allow create: if isAuthenticated() && !exists(/databases/$(database)/documents/system/config) && isValidSystemConfig(request.resource.data);
+      allow update: if isAdmin() && isValidSystemConfig(request.resource.data);
+      allow delete: if false;
+    }
+
+    match /purchase_orders/{poId} {
+      allow read: if isApproved();
+      allow create, update: if isAdmin() && isValidPurchaseOrder(request.resource.data);
+      allow delete: if isAdmin();
+      
+      match /items/{itemId} {
+        allow read: if isApproved();
+        allow create, update: if isAdmin() && isValidPOItem(request.resource.data);
+        allow delete: if isAdmin();
+      }
+
+      match /payments/{paymentId} {
+        allow read: if isManager();
+        allow create, update: if isAdmin() && isValidPOPayment(request.resource.data);
+        allow delete: if isAdmin();
+      }
+    }
+
+    match /po_templates/{templateId} {
+      allow read: if isApproved();
+      allow create, update, delete: if isAdmin() && isValidPOTemplate(request.resource.data);
+    }
+  }
+}

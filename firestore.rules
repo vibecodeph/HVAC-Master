@@ -524,8 +524,8 @@ service cloud.firestore {
                      isValidUser(request.resource.data) &&
                      request.resource.data.diff(resource.data).affectedKeys().hasOnly(['assignedLocationIds', 'updatedAt', 'updatedBy']) &&
                      // Ensure locations outside the engineer's scope are unchanged
-                     request.resource.data.get('assignedLocationIds', []).removeAll(get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('assignedLocationIds', [])) == 
-                     resource.data.get('assignedLocationIds', []).removeAll(get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('assignedLocationIds', []))
+                     request.resource.data.get('assignedLocationIds', []).removeAll(request.auth.token.get('assignedLocationIds', [])) ==
+                     resource.data.get('assignedLocationIds', []).removeAll(request.auth.token.get('assignedLocationIds', []))
                     );
     }
 

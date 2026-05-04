@@ -37,6 +37,7 @@ export const RequestForm = ({
   onComplete 
 }: RequestFormProps) => {
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [selectedVariant, setSelectedVariant] = useState<Record<string, string>>(initialVariant || {});
   const [selectedUomId, setSelectedUomId] = useState(() => {
     return uoms.find(u => u.id === item.uomId || u.symbol === item.uomId)?.id || item.uomId;
@@ -91,7 +92,7 @@ export const RequestForm = ({
       onComplete();
     } catch (error) {
       console.error(error);
-      alert(error instanceof Error ? error.message : 'Failed to submit request');
+      setErrorMsg(error instanceof Error ? error.message : 'Failed to submit request');
     } finally {
       setIsSubmitting(false);
     }
@@ -213,8 +214,14 @@ export const RequestForm = ({
         </div>
       </div>
 
-      <button 
-        type="submit" 
+      {errorMsg && (
+        <div className="flex items-center justify-between p-3 bg-red-50 border border-red-200 rounded-2xl text-sm text-red-700">
+          <span>{errorMsg}</span>
+          <button type="button" onClick={() => setErrorMsg(null)} className="ml-2 text-red-400 hover:text-red-600"><X size={16} /></button>
+        </div>
+      )}
+      <button
+        type="submit"
         disabled={isSubmitting || !isVariantComplete}
         className="w-full py-4 bg-blue-600 text-white rounded-2xl font-bold flex items-center justify-center space-x-2 disabled:opacity-50"
       >
@@ -243,6 +250,7 @@ export const WorkerRequestForm = ({ items, locations, uoms, inventory, profile, 
   const [note, setNote] = useState('');
   const [customSpec, setCustomSpec] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [jobsiteId, setJobsiteId] = useState(defaultJobsiteId || '');
   const [selectedVariant, setSelectedVariant] = useState<Record<string, string>>({});
   const [selectedUomId, setSelectedUomId] = useState('');
@@ -350,7 +358,7 @@ export const WorkerRequestForm = ({ items, locations, uoms, inventory, profile, 
         onComplete();
       } catch (error) {
         console.error(error);
-        alert(error instanceof Error ? error.message : 'Failed to submit pullout');
+        setErrorMsg(error instanceof Error ? error.message : 'Failed to submit pullout');
       } finally {
         setIsSubmitting(false);
       }
@@ -392,7 +400,7 @@ export const WorkerRequestForm = ({ items, locations, uoms, inventory, profile, 
       onComplete();
     } catch (error) {
       console.error(error);
-      alert(error instanceof Error ? error.message : 'Failed to submit request');
+      setErrorMsg(error instanceof Error ? error.message : 'Failed to submit request');
     } finally {
       setIsSubmitting(false);
     }
@@ -627,8 +635,14 @@ export const WorkerRequestForm = ({ items, locations, uoms, inventory, profile, 
         </div>
       </div>
 
-      <button 
-        type="submit" 
+      {errorMsg && (
+        <div className="flex items-center justify-between p-3 bg-red-50 border border-red-200 rounded-2xl text-sm text-red-700">
+          <span>{errorMsg}</span>
+          <button type="button" onClick={() => setErrorMsg(null)} className="ml-2 text-red-400 hover:text-red-600"><X size={16} /></button>
+        </div>
+      )}
+      <button
+        type="submit"
         disabled={isSubmitting || (mode === 'material' ? (!selectedItemId || !quantity) : (Object.values(pulloutQuantities).every(q => !q || q === 0))) || !jobsiteId}
         className={cn(
           "w-full py-4 text-white rounded-2xl font-bold flex items-center justify-center space-x-2 disabled:opacity-50 shadow-lg transition-all active:scale-95",
@@ -2618,6 +2632,7 @@ interface PurchaseOrderFormProps {
 export const PurchaseOrderForm = ({ items, locations, uoms, profile, initialData, onComplete }: PurchaseOrderFormProps) => {
   const { purchaseOrders, loading, categories } = useData();
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [isAddingNewItem, setIsAddingNewItem] = useState(false);
   const [pendingNewItemId, setPendingNewItemId] = useState<string | null>(null);
   const [supplierId, setSupplierId] = useState(initialData?.supplierId || '');
@@ -2711,8 +2726,9 @@ export const PurchaseOrderForm = ({ items, locations, uoms, profile, initialData
 
   const handleSubmit = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
-    if (!supplierId) return alert('Please select a supplier');
-    if (poItems.length === 0) return alert('Please add at least one item');
+    setErrorMsg(null);
+    if (!supplierId) { setErrorMsg('Please select a supplier'); return; }
+    if (poItems.length === 0) { setErrorMsg('Please add at least one item'); return; }
 
     // Check for required variants
     for (const poItem of poItems) {
@@ -2720,7 +2736,8 @@ export const PurchaseOrderForm = ({ items, locations, uoms, profile, initialData
       if (item?.requireVariant && item.variantAttributes) {
         for (const attr of item.variantAttributes) {
           if (!poItem.variant?.[attr.name]) {
-            return alert(`Please select ${attr.name} for ${item.name}`);
+            setErrorMsg(`Please select ${attr.name} for ${item.name}`);
+            return;
           }
         }
       }
@@ -2788,6 +2805,7 @@ export const PurchaseOrderForm = ({ items, locations, uoms, profile, initialData
       onComplete();
     } catch (error) {
       console.error(error);
+      setErrorMsg(error instanceof Error ? error.message : 'Failed to save purchase order');
     } finally {
       setIsSubmitting(false);
     }
@@ -3351,16 +3369,24 @@ export const PurchaseOrderForm = ({ items, locations, uoms, profile, initialData
       </div>
 
       <div className="fixed bottom-16 left-0 right-0 p-4 bg-white/80 backdrop-blur-xl border-t border-gray-100 lg:bottom-0 lg:left-72 z-40">
-        <div className="max-w-5xl mx-auto flex space-x-3">
-          <button 
-            type="button" 
-            onClick={() => handleSubmit()}
-            disabled={isSubmitting}
-            className="flex-1 py-4 bg-blue-600 text-white rounded-2xl font-bold flex items-center justify-center space-x-2 shadow-lg shadow-blue-200 disabled:opacity-50"
-          >
-            {isSubmitting ? <Loader2 className="animate-spin" size={20} /> : <Check size={20} />}
-            <span>{isSubmitting ? 'Saving...' : 'Save Purchase Order'}</span>
-          </button>
+        <div className="max-w-5xl mx-auto space-y-2">
+          {errorMsg && (
+            <div className="flex items-center justify-between p-3 bg-red-50 border border-red-200 rounded-2xl text-sm text-red-700">
+              <span>{errorMsg}</span>
+              <button type="button" onClick={() => setErrorMsg(null)} className="ml-2 text-red-400 hover:text-red-600"><X size={16} /></button>
+            </div>
+          )}
+          <div className="flex space-x-3">
+            <button
+              type="button"
+              onClick={() => handleSubmit()}
+              disabled={isSubmitting}
+              className="flex-1 py-4 bg-blue-600 text-white rounded-2xl font-bold flex items-center justify-center space-x-2 shadow-lg shadow-blue-200 disabled:opacity-50"
+            >
+              {isSubmitting ? <Loader2 className="animate-spin" size={20} /> : <Check size={20} />}
+              <span>{isSubmitting ? 'Saving...' : 'Save Purchase Order'}</span>
+            </button>
+          </div>
         </div>
       </div>
     </div>

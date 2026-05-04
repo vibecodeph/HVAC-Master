@@ -1,40 +1,41 @@
-import React, { createContext, useContext, useState, useEffect } from 'react';
+import React, { createContext, useContext, useState, useEffect, lazy, Suspense } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { onAuthStateChanged, User, signInWithPopup, signInWithRedirect, GoogleAuthProvider, signOut, getRedirectResult } from 'firebase/auth';
 import { onSnapshot, collection, query, where, getDocs, doc, setDoc, serverTimestamp, getDoc } from 'firebase/firestore';
 import { ArrowLeftRight } from 'lucide-react';
 import { auth, db, handleFirestoreError, OperationType } from './firebase';
-import { 
-  Item, Category, UOM, Location, Inventory, Transaction, Request, UserProfile, Asset, BOQItem, UnplannedStock, Tag, SystemConfig, PurchaseOrder 
+import {
+  Item, Category, UOM, Location, Inventory, Transaction, Request, UserProfile, Asset, BOQItem, UnplannedStock, Tag, SystemConfig, PurchaseOrder
 } from './types';
-import { 
+import {
   subscribeToItems, subscribeToAllItems, subscribeToCategories, subscribeToAllCategories, subscribeToUOMs, subscribeToAllUOMs,
-  subscribeToLocations, subscribeToInventory, subscribeToTransactions, 
-  subscribeToRequests, subscribeToUsers, subscribeToAssets, 
+  subscribeToLocations, subscribeToInventory, subscribeToTransactions,
+  subscribeToRequests, subscribeToUsers, subscribeToAssets,
   subscribeToBOQs, subscribeToUnplannedStock, subscribeToTags, subscribeToAllTags,
   subscribeToPurchaseOrders
 } from './services/inventoryService';
 import { Layout } from './components/Layout';
-import { Dashboard } from './components/views/Dashboard';
-import { InventoryList } from './components/views/InventoryList';
-import { Transactions } from './components/views/Transactions';
-import { RequestsView } from './components/views/Requests';
-import { ProfileView } from './components/views/Profile';
-import { SettingsView } from './components/views/Settings';
-import { Login } from './components/views/Login';
-import { PendingApproval } from './components/views/PendingApproval';
-import { MaintenanceMode } from './components/views/MaintenanceMode';
-import { MetadataAdminView } from './components/views/Admin/Metadata';
-import { RBACDashboard } from './components/views/Admin/RBAC';
-import { ItemManagementView } from './components/views/Admin/Items';
-import { UsersManagementView } from './components/views/Admin/Users';
-import { JobsiteBOQView } from './components/views/Admin/JobsiteBOQ';
-import { PurchaseOrderList } from './components/views/PurchaseOrderList';
-import { PurchaseOrderForm } from './components/Forms';
-import { LocationsView } from './components/views/Locations';
-import { POTemplateSettings } from './components/views/Admin/POTemplateSettings';
-import { POPrintView } from './components/views/POPrintView';
 import { SidebarProvider } from './hooks/useApp';
+
+const Dashboard = lazy(() => import('./components/views/Dashboard').then(m => ({ default: m.Dashboard })));
+const InventoryList = lazy(() => import('./components/views/InventoryList').then(m => ({ default: m.InventoryList })));
+const Transactions = lazy(() => import('./components/views/Transactions').then(m => ({ default: m.Transactions })));
+const RequestsView = lazy(() => import('./components/views/Requests').then(m => ({ default: m.RequestsView })));
+const ProfileView = lazy(() => import('./components/views/Profile').then(m => ({ default: m.ProfileView })));
+const SettingsView = lazy(() => import('./components/views/Settings').then(m => ({ default: m.SettingsView })));
+const Login = lazy(() => import('./components/views/Login').then(m => ({ default: m.Login })));
+const PendingApproval = lazy(() => import('./components/views/PendingApproval').then(m => ({ default: m.PendingApproval })));
+const MaintenanceMode = lazy(() => import('./components/views/MaintenanceMode').then(m => ({ default: m.MaintenanceMode })));
+const MetadataAdminView = lazy(() => import('./components/views/Admin/Metadata').then(m => ({ default: m.MetadataAdminView })));
+const RBACDashboard = lazy(() => import('./components/views/Admin/RBAC').then(m => ({ default: m.RBACDashboard })));
+const ItemManagementView = lazy(() => import('./components/views/Admin/Items').then(m => ({ default: m.ItemManagementView })));
+const UsersManagementView = lazy(() => import('./components/views/Admin/Users').then(m => ({ default: m.UsersManagementView })));
+const JobsiteBOQView = lazy(() => import('./components/views/Admin/JobsiteBOQ').then(m => ({ default: m.JobsiteBOQView })));
+const PurchaseOrderList = lazy(() => import('./components/views/PurchaseOrderList').then(m => ({ default: m.PurchaseOrderList })));
+const PurchaseOrderForm = lazy(() => import('./components/Forms').then(m => ({ default: m.PurchaseOrderForm })));
+const LocationsView = lazy(() => import('./components/views/Locations').then(m => ({ default: m.LocationsView })));
+const POTemplateSettings = lazy(() => import('./components/views/Admin/POTemplateSettings').then(m => ({ default: m.POTemplateSettings })));
+const POPrintView = lazy(() => import('./components/views/POPrintView').then(m => ({ default: m.POPrintView })));
 
 const PurchaseOrderView = () => {
   const { purchaseOrders, locations, items, uoms } = useData();
@@ -423,6 +424,11 @@ const App = () => {
         <DataProvider>
           <SidebarProvider>
             <Router>
+              <Suspense fallback={
+                <div className="min-h-screen flex items-center justify-center bg-gray-50">
+                  <div className="w-12 h-12 border-4 border-blue-600 border-t-transparent rounded-full animate-spin" />
+                </div>
+              }>
               <Routes>
                   <Route path="/login" element={<Login />} />
                   <Route path="/pending-approval" element={<PendingApproval />} />
@@ -548,6 +554,7 @@ const App = () => {
 
                   <Route path="*" element={<Navigate to="/" replace />} />
                 </Routes>
+              </Suspense>
               </Router>
             </SidebarProvider>
           </DataProvider>

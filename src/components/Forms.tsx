@@ -2217,7 +2217,10 @@ export const PickingModal = ({ requests, items, locations, inventory, uoms, onDe
     requests.forEach(r => {
       initial[r.id] = { 
         deliveredQty: r.approvedQty || r.requestedQty, 
-        sourceLocationId: locations.find(l => l.type === 'warehouse' && l.isActive)?.id || '',
+        sourceLocationId: (
+          locations.find(l => l.isActive && l.name.toLowerCase() === 'main warehouse') ||
+          locations.find(l => l.type === 'warehouse' && l.isActive)
+        )?.id || '',
         serialNumbers: [],
         backorder: true // Default to true as per common warehouse practice
       };

@@ -201,8 +201,15 @@ const BOQItemGroup = ({ itemId, boqItems, items, uoms, inventory, jobsiteId }: {
                             className="w-full pl-3 pr-8 py-2.5 bg-gray-50 ring-1 ring-inset ring-gray-100 rounded-xl text-xs font-bold text-blue-600 outline-none focus:ring-2 focus:ring-blue-500 appearance-none"
                           >
                             {(() => {
-                              const validUomIds = new Set([item?.uomId, ...(item?.uomConversions?.map(c => c.uomId) || [])]);
-                              return uoms.filter(u => (validUomIds.has(u.id) && u.isActive) || u.id === boq.uomId)
+                              const baseUom = uoms.find(u => u.id === item?.uomId || u.symbol === item?.uomId);
+                              const validUoms = new Set();
+                              if (baseUom) validUoms.add(baseUom.id);
+                              item?.uomConversions?.forEach(c => {
+                                const convUom = uoms.find(u => u.id === c.uomId || u.symbol === c.uomId);
+                                if (convUom) validUoms.add(convUom.id);
+                              });
+
+                              return uoms.filter(u => (validUoms.has(u.id) && u.isActive) || u.id === boq.uomId)
                                 .sort((a, b) => a.name.localeCompare(b.name))
                                 .map(u => (
                                   <option key={u.id} value={u.id}>{u.symbol} - {u.name}</option>

@@ -168,8 +168,15 @@ export const RequestForm = ({
               className="w-full p-4 bg-gray-100 rounded-2xl text-sm font-bold text-blue-600 outline-none focus:ring-2 focus:ring-blue-500 appearance-none pr-10"
             >
               {(() => {
-                const validUomIds = new Set([item.uomId, ...(item.uomConversions?.map(c => c.uomId) || [])]);
-                return uoms.filter(u => validUomIds.has(u.id) || u.id === selectedUomId)
+                const baseUom = uoms.find(u => u.id === item.uomId || u.symbol === item.uomId);
+                const validUoms = new Set();
+                if (baseUom) validUoms.add(baseUom.id);
+                item.uomConversions?.forEach(c => {
+                  const convUom = uoms.find(u => u.id === c.uomId || u.symbol === c.uomId);
+                  if (convUom) validUoms.add(convUom.id);
+                });
+
+                return uoms.filter(u => validUoms.has(u.id) || u.id === selectedUomId)
                   .sort((a, b) => a.name.localeCompare(b.name))
                   .map(u => (
                     <option key={u.id} value={u.id}>{u.name} ({u.symbol})</option>
@@ -354,9 +361,14 @@ export const WorkerRequestForm = ({ items, locations, uoms, inventory, profile, 
     setIsSubmitting(true);
     try {
       const targetUom = uoms.find(u => u.id === selectedUomId);
-      const conversionFactor = (selectedUomId === selectedItem?.uomId || targetUom?.symbol === selectedItem?.uomId)
+      const baseUomId = uoms.find(u => u.id === selectedItem?.uomId || u.symbol === selectedItem?.uomId)?.id || selectedItem?.uomId;
+
+      const conversionFactor = (selectedUomId === baseUomId || targetUom?.symbol === selectedItem?.uomId)
         ? 1 
-        : (selectedItem?.uomConversions?.find(c => c.uomId === selectedUomId)?.factor || 1);
+        : (selectedItem?.uomConversions?.find(c => {
+            const convUomId = uoms.find(u => u.id === c.uomId || u.symbol === c.uomId)?.id || c.uomId;
+            return convUomId === selectedUomId;
+          })?.factor || 1);
 
       const isEngineer = profile?.role === 'engineer' || profile?.role === 'admin' || profile?.role === 'manager';
       await addRequest({
@@ -581,8 +593,15 @@ export const WorkerRequestForm = ({ items, locations, uoms, inventory, profile, 
                       className="w-full p-4 bg-gray-100 rounded-2xl text-sm font-bold text-blue-600 outline-none focus:ring-2 focus:ring-blue-500 appearance-none pr-10"
                     >
                       {(() => {
-                        const validUomIds = new Set([selectedItem?.uomId, ...(selectedItem?.uomConversions?.map(c => c.uomId) || [])]);
-                        return uoms.filter(u => (validUomIds.has(u.id) && u.isActive) || u.id === selectedUomId)
+                        const baseUom = uoms.find(u => u.id === selectedItem?.uomId || u.symbol === selectedItem?.uomId);
+                        const validUoms = new Set();
+                        if (baseUom) validUoms.add(baseUom.id);
+                        selectedItem?.uomConversions?.forEach(c => {
+                          const convUom = uoms.find(u => u.id === c.uomId || u.symbol === c.uomId);
+                          if (convUom) validUoms.add(convUom.id);
+                        });
+                        
+                        return uoms.filter(u => (validUoms.has(u.id) && u.isActive) || u.id === selectedUomId)
                           .sort((a, b) => a.name.localeCompare(b.name))
                           .map(u => (
                             <option key={u.id} value={u.id}>{u.name} ({u.symbol})</option>
@@ -1648,7 +1667,14 @@ export const TransactionForm = ({ items, locations, inventory, uoms, purchaseOrd
 
       const poItem = (poId && type === 'delivery' && selectedPO) ? selectedPO.items.find(i => i.itemId === selectedItemId) : null;
       const targetUomId = selectedUomId || poItem?.uomId || uoms.find(u => u.id === selectedItem?.uomId || u.symbol === selectedItem?.uomId)?.id || selectedItem?.uomId || '';
-      const conversionFactor = (targetUomId === selectedItem?.uomId) ? 1 : (selectedItem?.uomConversions?.find(c => c.uomId === targetUomId)?.factor || 1);
+      
+      const baseUomId = uoms.find(u => u.id === selectedItem?.uomId || u.symbol === selectedItem?.uomId)?.id || selectedItem?.uomId;
+      const conversionFactor = (targetUomId === baseUomId) 
+        ? 1 
+        : (selectedItem?.uomConversions?.find(c => {
+            const convUomId = uoms.find(u => u.id === c.uomId || u.symbol === c.uomId)?.id || c.uomId;
+            return convUomId === targetUomId;
+          })?.factor || 1);
 
       const transactionData = {
         itemId: selectedItemId,
@@ -1987,8 +2013,15 @@ export const TransactionForm = ({ items, locations, inventory, uoms, purchaseOrd
                       className="w-full p-4 bg-gray-100 rounded-2xl text-sm font-bold text-blue-600 outline-none focus:ring-2 focus:ring-blue-500 appearance-none pr-10"
                     >
                       {(() => {
-                        const validUomIds = new Set([selectedItem?.uomId, ...(selectedItem?.uomConversions?.map(c => c.uomId) || [])]);
-                        return uoms.filter(u => (validUomIds.has(u.id) && u.isActive) || u.id === selectedUomId)
+                        const baseUom = uoms.find(u => u.id === selectedItem?.uomId || u.symbol === selectedItem?.uomId);
+                        const validUoms = new Set();
+                        if (baseUom) validUoms.add(baseUom.id);
+                        selectedItem?.uomConversions?.forEach(c => {
+                          const convUom = uoms.find(u => u.id === c.uomId || u.symbol === c.uomId);
+                          if (convUom) validUoms.add(convUom.id);
+                        });
+                        
+                        return uoms.filter(u => (validUoms.has(u.id) && u.isActive) || u.id === selectedUomId)
                           .sort((a, b) => a.name.localeCompare(b.name))
                           .map(u => (
                             <option key={u.id} value={u.id}>{u.name} ({u.symbol})</option>

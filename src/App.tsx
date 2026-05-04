@@ -331,7 +331,7 @@ const DataProvider = ({ children }: { children: React.ReactNode }) => {
       safeSubscribe('inventory', subscribeToInventory, assigned),
       safeSubscribe('transactions', subscribeToTransactions, assigned),
       safeSubscribe('requests', subscribeToRequests, assigned),
-      (profile?.role === 'admin' || profile?.role === 'manager') ? safeSubscribe('users', subscribeToUsers, profile.role) : () => {},
+      (profile?.role === 'admin' || profile?.role === 'manager' || profile?.role === 'engineer') ? safeSubscribe('users', subscribeToUsers, profile.role) : () => {},
       safeSubscribe('assets', subscribeToAssets, assigned),
       safeSubscribe('boq', subscribeToBOQs, assigned),
       safeSubscribe('unplanned', subscribeToUnplannedStock, assigned),

@@ -174,6 +174,15 @@ export const recordTransaction = async (transaction: Omit<Transaction, 'id' | 'u
     const boqToRef = boqToId ? doc(db, 'boq', boqToId) : null;
     const boqFromRef = boqFromId ? doc(db, 'boq', boqFromId) : null;
 
+    // Resolve UOM ID
+    const uomsSnap = await getDocs(query(collection(db, 'uoms'), where('isActive', '==', true)));
+    const uomMap = new Map<string, string>();
+    uomsSnap.forEach(u => {
+      const data = u.data() as UOM;
+      uomMap.set(data.symbol.toLowerCase(), u.id);
+      uomMap.set(u.id, u.id);
+    });
+
     await runTransaction(db, async (dbTransaction) => {
       const boqToDoc = boqToRef ? await dbTransaction.get(boqToRef) : null;
       const boqFromDoc = boqFromRef ? await dbTransaction.get(boqFromRef) : null;
@@ -286,9 +295,16 @@ export const recordTransaction = async (transaction: Omit<Transaction, 'id' | 'u
             // Calculate quantity in PO item's UOM
             let quantityInPoUom = baseQuantity; // Default to base quantity
             
+            // Determine if PO item UOM matches Item base UOM
+            const poItemUomId = uomMap.get((item.uomId || '').toLowerCase()) || item.uomId;
+            const itemBaseUomId = uomMap.get((itemData.uomId || '').toLowerCase()) || itemData.uomId;
+            
             // If PO item is NOT in base UOM, convert back
-            if (item.uomId !== itemData.uomId) {
-              const conversion = itemData.uomConversions?.find(c => c.uomId === item.uomId);
+            if (poItemUomId !== itemBaseUomId) {
+              const conversion = itemData.uomConversions?.find(c => {
+                const cUomId = uomMap.get((c.uomId || '').toLowerCase()) || c.uomId;
+                return cUomId === poItemUomId;
+              });
               if (conversion && conversion.factor > 0) {
                 quantityInPoUom = baseQuantity / conversion.factor;
               }
@@ -374,6 +390,15 @@ export const deleteTransaction = async (transaction: Transaction) => {
   const { itemId, variant, customSpec, serialNumber, propertyNumber, fromLocationId, toLocationId, baseQuantity } = transaction;
 
   try {
+    // Resolve UOM ID
+    const uomsSnap = await getDocs(query(collection(db, 'uoms'), where('isActive', '==', true)));
+    const uomMap = new Map<string, string>();
+    uomsSnap.forEach(u => {
+      const data = u.data() as UOM;
+      uomMap.set(data.symbol.toLowerCase(), u.id);
+      uomMap.set(u.id, u.id);
+    });
+
     await runTransaction(db, async (dbTransaction) => {
       // 1. GATHER DATA (READS)
       let fromInvDoc = null;
@@ -426,8 +451,16 @@ export const deleteTransaction = async (transaction: Transaction) => {
           if (isMatch) {
             // Calculate quantity in PO item's UOM
             let quantityInPoUom = baseQuantity;
-            if (item.uomId !== itemData.uomId) {
-              const conversion = itemData.uomConversions?.find(c => c.uomId === item.uomId);
+            
+            // Determine if PO item UOM matches Item base UOM
+            const poItemUomId = uomMap.get((item.uomId || '').toLowerCase()) || item.uomId;
+            const itemBaseUomId = uomMap.get((itemData.uomId || '').toLowerCase()) || itemData.uomId;
+
+            if (poItemUomId !== itemBaseUomId) {
+              const conversion = itemData.uomConversions?.find(c => {
+                const cUomId = uomMap.get((c.uomId || '').toLowerCase()) || c.uomId;
+                return cUomId === poItemUomId;
+              });
               if (conversion && conversion.factor > 0) {
                 quantityInPoUom = baseQuantity / conversion.factor;
               }
@@ -506,6 +539,15 @@ export const updateTransaction = async (id: string, oldTransaction: Transaction,
   const { timestamp } = newTransactionData;
 
   try {
+    // Resolve UOM ID
+    const uomsSnap = await getDocs(query(collection(db, 'uoms'), where('isActive', '==', true)));
+    const uomMap = new Map<string, string>();
+    uomsSnap.forEach(u => {
+      const data = u.data() as UOM;
+      uomMap.set(data.symbol.toLowerCase(), u.id);
+      uomMap.set(u.id, u.id);
+    });
+
     await runTransaction(db, async (dbTransaction) => {
       // 1. GATHER DATA (READS)
       // Old refs
@@ -589,8 +631,16 @@ export const updateTransaction = async (id: string, oldTransaction: Transaction,
           const isMatch = item.itemId === oldTransaction.itemId && sortVariant(item.variant) === targetVariantStr;
           if (isMatch) {
             let qtyInPoUom = oldTransaction.baseQuantity;
-            if (item.uomId !== itemData.uomId) {
-              const conversion = itemData.uomConversions?.find(c => c.uomId === item.uomId);
+            
+            // Determine if PO item UOM matches Item base UOM
+            const poItemUomId = uomMap.get((item.uomId || '').toLowerCase()) || item.uomId;
+            const itemBaseUomId = uomMap.get((itemData.uomId || '').toLowerCase()) || itemData.uomId;
+
+            if (poItemUomId !== itemBaseUomId) {
+              const conversion = itemData.uomConversions?.find(c => {
+                const cUomId = uomMap.get((c.uomId || '').toLowerCase()) || c.uomId;
+                return cUomId === poItemUomId;
+              });
               if (conversion && conversion.factor > 0) qtyInPoUom = oldTransaction.baseQuantity / conversion.factor;
             }
             return { ...item, receivedQuantity: Math.max(0, (item.receivedQuantity || 0) - qtyInPoUom) };
@@ -637,8 +687,16 @@ export const updateTransaction = async (id: string, oldTransaction: Transaction,
           const isMatch = item.itemId === newTransactionData.itemId && sortVariant(item.variant) === targetVariantStr;
           if (isMatch) {
             let qtyInPoUom = newTransactionData.baseQuantity;
-            if (item.uomId !== newItemData.uomId) {
-              const conversion = newItemData.uomConversions?.find(c => c.uomId === item.uomId);
+            
+            // Determine if PO item UOM matches Item base UOM
+            const poItemUomId = uomMap.get((item.uomId || '').toLowerCase()) || item.uomId;
+            const newItemBaseUomId = uomMap.get((newItemData.uomId || '').toLowerCase()) || newItemData.uomId;
+
+            if (poItemUomId !== newItemBaseUomId) {
+              const conversion = newItemData.uomConversions?.find(c => {
+                const cUomId = uomMap.get((c.uomId || '').toLowerCase()) || c.uomId;
+                return cUomId === poItemUomId;
+              });
               if (conversion && conversion.factor > 0) qtyInPoUom = newTransactionData.baseQuantity / conversion.factor;
             }
             return { ...item, receivedQuantity: (item.receivedQuantity || 0) + qtyInPoUom };
@@ -1259,6 +1317,15 @@ export const recordBulkReceivePO = async (
   }
 ) => {
   try {
+    // 1. Fetch UOMs first to resolve symbols if needed
+    const uomsSnap = await getDocs(query(collection(db, 'uoms'), where('isActive', '==', true)));
+    const uomMap = new Map<string, string>(); // symbol/id -> id
+    uomsSnap.forEach(u => {
+      const data = u.data() as UOM;
+      uomMap.set(data.symbol.toLowerCase(), u.id);
+      uomMap.set(u.id, u.id);
+    });
+
     await runTransaction(db, async (dbTransaction) => {
       // 1. READS (All reads must be first)
       const poRef = doc(db, 'purchase_orders', poId);
@@ -1329,7 +1396,14 @@ export const recordBulkReceivePO = async (
         const itemData = itemDataMap[receive.itemId];
         if (!itemData) continue;
 
-        const conversionFactor = itemData.uomId === receive.uomId ? 1 : (itemData.uomConversions?.find(c => c.uomId === receive.uomId)?.factor || 1);
+        // Resolve UOM ID
+        const targetUomId = uomMap.get(receive.uomId.toLowerCase()) || receive.uomId;
+        const itemBaseUomId = uomMap.get((itemData.uomId || '').toLowerCase()) || itemData.uomId;
+        
+        const conversionFactor = itemBaseUomId === targetUomId ? 1 : (itemData.uomConversions?.find(c => {
+          const cUomId = uomMap.get((c.uomId || '').toLowerCase()) || c.uomId;
+          return cUomId === targetUomId;
+        })?.factor || 1);
         const baseQuantity = receive.quantity * conversionFactor;
 
         // Inventory update
@@ -1447,6 +1521,15 @@ export const recordBulkPick = async (
       }
     }
 
+    // Fetch UOMs first to resolve symbols if needed
+    const uomsSnap = await getDocs(query(collection(db, 'uoms'), where('isActive', '==', true)));
+    const uomMap = new Map<string, string>(); // symbol/id -> id
+    uomsSnap.forEach(u => {
+      const data = u.data() as UOM;
+      uomMap.set(data.symbol.toLowerCase(), u.id);
+      uomMap.set(u.id, u.id);
+    });
+
     await runTransaction(db, async (dbTransaction) => {
       let batchId = reusedBatchId;
       let counterUpdate: any = null;
@@ -1538,7 +1621,14 @@ export const recordBulkPick = async (
           }
         }
 
-        const conversionFactor = itemData.uomId === uomId ? 1 : (itemData.uomConversions?.find(c => c.uomId === uomId)?.factor || 1);
+        // Resolve UOM ID
+        const targetUomId = uomMap.get(uomId.toLowerCase()) || uomId;
+        const itemBaseUomId = uomMap.get((itemData.uomId || '').toLowerCase()) || itemData.uomId;
+
+        const conversionFactor = itemBaseUomId === targetUomId ? 1 : (itemData.uomConversions?.find(c => {
+          const cUomId = uomMap.get((c.uomId || '').toLowerCase()) || c.uomId;
+          return cUomId === targetUomId;
+        })?.factor || 1);
         const baseQuantity = deliveredQty * conversionFactor;
 
         requestData.push({
@@ -1712,6 +1802,15 @@ export const recordBulkPick = async (
 
 export const updateDeliveryQuantity = async (requestId: string, newQuantity: number, warehousemanId: string, warehousemanName: string, createBackorder: boolean) => {
   try {
+    // Fetch UOMs first to resolve symbols if needed
+    const uomsSnap = await getDocs(query(collection(db, 'uoms'), where('isActive', '==', true)));
+    const uomMap = new Map<string, string>(); // symbol/id -> id
+    uomsSnap.forEach(u => {
+      const data = u.data() as UOM;
+      uomMap.set(data.symbol.toLowerCase(), u.id);
+      uomMap.set(u.id, u.id);
+    });
+
     await runTransaction(db, async (dbTransaction) => {
       const requestRef = doc(db, 'requests', requestId);
       const requestDoc = await dbTransaction.get(requestRef);
@@ -1730,7 +1829,14 @@ export const updateDeliveryQuantity = async (requestId: string, newQuantity: num
       if (!itemDoc.exists()) throw new Error('Item not found');
       const itemData = itemDoc.data() as Item;
 
-      const conversionFactor = itemData.uomId === request.uomId ? 1 : (itemData.uomConversions?.find(c => c.uomId === request.uomId)?.factor || 1);
+      // Resolve UOM ID
+      const targetUomId = uomMap.get((request.uomId || '').toLowerCase()) || request.uomId;
+      const itemBaseUomId = uomMap.get((itemData.uomId || '').toLowerCase()) || itemData.uomId;
+
+      const conversionFactor = itemBaseUomId === targetUomId ? 1 : (itemData.uomConversions?.find(c => {
+        const cUomId = uomMap.get((c.uomId || '').toLowerCase()) || c.uomId;
+        return cUomId === targetUomId;
+      })?.factor || 1);
       const baseDifference = difference * conversionFactor;
 
       // Update source location inventory if quantity decreased (stock returned to warehouse)
@@ -1838,6 +1944,15 @@ export const updateDeliveryQuantity = async (requestId: string, newQuantity: num
 
 export const recordBulkReceive = async (requestIds: string[], receiverId: string, receiverName?: string) => {
   try {
+    // Fetch UOMs first to resolve symbols if needed
+    const uomsSnap = await getDocs(query(collection(db, 'uoms'), where('isActive', '==', true)));
+    const uomMap = new Map<string, string>(); // symbol/id -> id
+    uomsSnap.forEach(u => {
+      const data = u.data() as UOM;
+      uomMap.set(data.symbol.toLowerCase(), u.id);
+      uomMap.set(u.id, u.id);
+    });
+
     const requestDocs = await Promise.all(requestIds.map(id => getDoc(doc(db, 'requests', id))));
     const validRequests = requestDocs.filter(d => d.exists() && d.data()?.status === 'for delivery');
     
@@ -1966,7 +2081,14 @@ export const recordBulkReceive = async (requestIds: string[], receiverId: string
           }
         }
 
-        const conversionFactor = itemData.uomId === uomId ? 1 : (itemData.uomConversions?.find(c => c.uomId === uomId)?.factor || 1);
+        // Resolve UOM ID
+        const targetUomId = uomMap.get((uomId || '').toLowerCase()) || uomId;
+        const itemBaseUomId = uomMap.get((itemData.uomId || '').toLowerCase()) || itemData.uomId;
+
+        const conversionFactor = itemBaseUomId === targetUomId ? 1 : (itemData.uomConversions?.find(c => {
+          const cUomId = uomMap.get((c.uomId || '').toLowerCase()) || c.uomId;
+          return cUomId === targetUomId;
+        })?.factor || 1);
         const baseQuantity = (deliveredQty || 0) * conversionFactor;
 
         requestData.push({

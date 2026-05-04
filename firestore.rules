@@ -558,7 +558,9 @@ service cloud.firestore {
 
     match /counters/{counterId} {
       allow read: if isApproved();
-      allow write: if isAdmin() || isWarehouseman() || isEngineer();
+      // isManager() includes admin; also allow warehouseman/engineer for HVAC inventory counters
+      // and manager/admin for Payroll Master employee number counter
+      allow write: if isManager() || isWarehouseman() || isEngineer();
     }
 
     match /system/{configId} {
@@ -589,6 +591,28 @@ service cloud.firestore {
     match /po_templates/{templateId} {
       allow read: if isApproved();
       allow create, update, delete: if isAdmin() && isValidPOTemplate(request.resource.data);
+    }
+
+    // ─── Payroll Master Collections ──────────────────────────────────────────
+    // These collections are owned exclusively by the Payroll Master app.
+    // Rules use the same helper functions defined above (isManager, isAdmin).
+
+    match /employees/{employeeId} {
+      allow read, write: if isManager();
+      allow delete: if isAdmin();
+    }
+
+    match /time_records/{recordId} {
+      // Admin/manager see all; employees see only their own records (matched by uid field)
+      allow read: if isManager() || (isAuthenticated() && resource.data.uid == request.auth.uid);
+      allow create: if isManager() || (isAuthenticated() && request.resource.data.uid == request.auth.uid);
+      allow update: if isManager() || (isAuthenticated() && resource.data.uid == request.auth.uid && request.resource.data.uid == request.auth.uid);
+      allow delete: if isManager();
+    }
+
+    match /payroll_cutoffs/{cutoffId} {
+      allow read, write: if isManager();
+      allow delete: if isAdmin();
     }
   }
 }

@@ -16,6 +16,8 @@ export interface UserProfile {
   skills?: string[];
   assignedLocationIds?: string[];
   createdAt?: Timestamp;
+  lastLoginAt?: Timestamp | null;
+  lastLogoutAt?: Timestamp | null;
 }
 
 export interface UnplannedStock {

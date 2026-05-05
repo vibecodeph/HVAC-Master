@@ -4,6 +4,7 @@ import { ArrowLeft, Pencil, X, Plus } from 'lucide-react';
 import { useAuth, useData } from '../../App';
 import { updateUserProfile } from '../../services/inventoryService';
 import { Location } from '../../types';
+import { formatTimestamp } from '../../lib/utils';
 import { Header } from '../common/Header';
 import { Card } from '../common/Card';
 
@@ -171,6 +172,22 @@ export const ProfileView = () => {
                   />
                 </div>
               )}
+            </Card>
+          </div>
+
+          <div className="space-y-2">
+            <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest px-2">Account Activity</label>
+            <Card className="p-4">
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-1">
+                  <span className="text-[10px] font-bold text-gray-400 uppercase">Last Login</span>
+                  <p className="text-sm font-bold text-gray-700">{formatTimestamp(profile?.lastLoginAt)}</p>
+                </div>
+                <div className="space-y-1">
+                  <span className="text-[10px] font-bold text-gray-400 uppercase">Last Logout</span>
+                  <p className="text-sm font-bold text-gray-700">{formatTimestamp(profile?.lastLogoutAt)}</p>
+                </div>
+              </div>
             </Card>
           </div>
 

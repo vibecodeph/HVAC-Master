@@ -1,7 +1,7 @@
 import React, { createContext, useContext, useState, useEffect, lazy, Suspense } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { onAuthStateChanged, User, signInWithPopup, signInWithRedirect, GoogleAuthProvider, signOut, getRedirectResult } from 'firebase/auth';
-import { onSnapshot, collection, query, where, getDocs, doc, setDoc, serverTimestamp, getDoc } from 'firebase/firestore';
+import { onSnapshot, collection, query, where, getDocs, doc, setDoc, updateDoc, serverTimestamp, getDoc } from 'firebase/firestore';
 import { ArrowLeftRight } from 'lucide-react';
 import { auth, db, handleFirestoreError, OperationType } from './firebase';
 import {
@@ -163,6 +163,7 @@ const AuthProvider = ({ children }: { children: React.ReactNode }) => {
       if (method === 'popup') {
         const result = await signInWithPopup(auth, provider);
         setUser(result.user);
+        updateDoc(doc(db, 'users', result.user.uid), { lastLoginAt: serverTimestamp() }).catch(() => {});
       } else {
         await signInWithRedirect(auth, provider);
       }
@@ -187,11 +188,23 @@ const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   };
 
   const logout = async () => {
+    const currentUser = auth.currentUser;
+    if (currentUser) {
+      try {
+        await updateDoc(doc(db, 'users', currentUser.uid), { lastLogoutAt: serverTimestamp() });
+      } catch {
+        // Don't block logout if the write fails
+      }
+    }
     await signOut(auth);
   };
 
   useEffect(() => {
-    getRedirectResult(auth).catch((error) => {
+    getRedirectResult(auth).then((result) => {
+      if (result?.user) {
+        updateDoc(doc(db, 'users', result.user.uid), { lastLoginAt: serverTimestamp() }).catch(() => {});
+      }
+    }).catch((error) => {
       console.error('Redirect result error:', error);
       setAuthError(error.message);
     });
@@ -238,6 +251,7 @@ const AuthProvider = ({ children }: { children: React.ReactNode }) => {
           isActive: isBootstrapAdmin ? true : autoApprove,
           isApproved: isBootstrapAdmin ? true : autoApprove,
           createdAt: serverTimestamp() as any,
+          lastLoginAt: serverTimestamp() as any,
         };
         await setDoc(doc(db, 'users', user.uid), newProfile);
         setProfile(newProfile);

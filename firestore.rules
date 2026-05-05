@@ -278,7 +278,7 @@ service cloud.firestore {
 
     function isValidUser(data) {
       return hasRequiredFields(['uid', 'email', 'role']) &&
-             hasOnlyAllowedFields(['uid', 'email', 'role', 'assignedLocationIds', 'isApproved', 'isActive', 'displayName', 'firstName', 'lastName', 'position', 'photoURL', 'skills', 'createdAt', 'updatedAt', 'updatedBy']) &&
+             hasOnlyAllowedFields(['uid', 'email', 'role', 'assignedLocationIds', 'isApproved', 'isActive', 'displayName', 'firstName', 'lastName', 'position', 'photoURL', 'skills', 'createdAt', 'updatedAt', 'updatedBy', 'lastLoginAt', 'lastLogoutAt']) &&
              isValidEmail(data.email) &&
              data.role in ['admin', 'manager', 'worker', 'engineer', 'warehouseman'] &&
              (!('assignedLocationIds' in data) || data.assignedLocationIds == null || data.assignedLocationIds is list) &&
@@ -501,7 +501,7 @@ service cloud.firestore {
     }
 
     match /users/{userId} {
-      allow read: if isAuthenticated() && (isAdmin() || isOwner(userId) || (isEngineer() && (resource == null || (resource.data.role == 'worker' && resource.data.get('isActive', true) == true))));
+      allow read: if isAuthenticated() && (isManager() || isOwner(userId) || (isEngineer() && (resource == null || (resource.data.role == 'worker' && resource.data.get('isActive', true) == true))));
       allow create: if isAuthenticated() && isOwner(userId) && isValidUser(request.resource.data) && 
         request.resource.data.uid == request.auth.uid &&
         (
@@ -509,14 +509,18 @@ service cloud.firestore {
           (request.resource.data.role == 'admin' && isAdmin())
         ) &&
         (request.resource.data.role in ['engineer', 'worker', 'warehouseman'] || (request.resource.data.role == 'admin' && isAdmin()));
-      allow update: if isAdmin() || 
-                    (isOwner(userId) && 
+      allow update: if isAdmin() ||
+                    (isOwner(userId) &&
                      isValidUser(request.resource.data) &&
                      // Owners cannot change their own role, approval status, activity status, or assigned locations
                      request.resource.data.role == resource.data.role &&
                      request.resource.data.get('isApproved', false) == resource.data.get('isApproved', false) &&
                      request.resource.data.get('isActive', false) == resource.data.get('isActive', false) &&
                      request.resource.data.get('assignedLocationIds', []) == resource.data.get('assignedLocationIds', [])
+                    ) ||
+                    // Allow owners to record their own login/logout timestamps
+                    (isOwner(userId) &&
+                     request.resource.data.diff(resource.data).affectedKeys().hasOnly(['lastLoginAt', 'lastLogoutAt'])
                     ) ||
                     (isEngineer() && 
                      userId != request.auth.uid && // Engineers cannot edit themselves through this rule

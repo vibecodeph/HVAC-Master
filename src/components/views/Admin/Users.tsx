@@ -3,7 +3,7 @@ import { Navigate } from 'react-router-dom';
 import { ChevronRight, Check, Loader2 } from 'lucide-react';
 import { useAuth, useData } from '../../../App';
 import { updateUserProfile } from '../../../services/inventoryService';
-import { cn } from '../../../lib/utils';
+import { cn, formatTimestamp } from '../../../lib/utils';
 import { Header } from '../../common/Header';
 import { Card } from '../../common/Card';
 import { Modal } from '../../common/Modal';
@@ -39,9 +39,11 @@ export const UsersManagementView = () => {
     return true;
   });
 
-  const sortedUsers = [...displayUsers].sort((a, b) => 
-    (a.displayName || a.email || '').localeCompare(b.displayName || b.email || '')
-  );
+  const sortedUsers = [...displayUsers].sort((a, b) => {
+    const aTime = a.lastLoginAt ? a.lastLoginAt.toMillis() : 0;
+    const bTime = b.lastLoginAt ? b.lastLoginAt.toMillis() : 0;
+    return bTime - aTime;
+  });
 
   const filteredLocations = locations.filter(l => {
     const baseFilter = showInactiveLocations || l.isActive;
@@ -116,6 +118,9 @@ export const UsersManagementView = () => {
                             <span className="ml-2 text-blue-600 font-black">✓ ON TEAM</span>
                           )}
                         </p>
+                        <p className="text-[10px] font-medium text-gray-300 uppercase tracking-widest">
+                          Last Login: {formatTimestamp(user.lastLoginAt)}
+                        </p>
                       </div>
                     </div>
                     <ChevronRight size={16} className="text-gray-300" />
@@ -183,6 +188,17 @@ export const UsersManagementView = () => {
                 <label className="text-xs font-bold text-gray-400 uppercase tracking-wider pl-1">Email Address</label>
                 <div className="w-full p-4 bg-gray-50 border border-gray-100 rounded-2xl text-sm font-medium text-gray-500">
                   {editingUser.email}
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div className="p-3 bg-gray-50 rounded-2xl">
+                  <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1">Last Login</p>
+                  <p className="text-xs font-bold text-gray-700">{formatTimestamp(editingUser.lastLoginAt)}</p>
+                </div>
+                <div className="p-3 bg-gray-50 rounded-2xl">
+                  <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1">Last Logout</p>
+                  <p className="text-xs font-bold text-gray-700">{formatTimestamp(editingUser.lastLogoutAt)}</p>
                 </div>
               </div>
 

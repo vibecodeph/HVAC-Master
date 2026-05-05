@@ -151,6 +151,7 @@ const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   const [loading, setLoading] = useState(true);
   const [isSigningIn, setIsSigningIn] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
+  const prevClaimsRef = useRef<string | null>(null);
 
   const signIn = async (method: 'popup' | 'redirect' = 'popup') => {
     if (isSigningIn) return;
@@ -209,10 +210,16 @@ const AuthProvider = ({ children }: { children: React.ReactNode }) => {
 
   useEffect(() => {
     if (!user) return;
+    prevClaimsRef.current = null;
 
     const unsubProfile = onSnapshot(doc(db, 'users', user.uid), async (userDoc) => {
       if (userDoc.exists()) {
         const data = userDoc.data() as UserProfile;
+        const fingerprint = `${data.role}|${data.isApproved}|${JSON.stringify(data.assignedLocationIds ?? [])}`;
+        if (prevClaimsRef.current !== null && prevClaimsRef.current !== fingerprint) {
+          await user.getIdToken(true);
+        }
+        prevClaimsRef.current = fingerprint;
         setProfile(data);
       } else {
         // Create default profile for new users

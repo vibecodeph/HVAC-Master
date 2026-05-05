@@ -210,6 +210,7 @@ export interface BOQItem {
 export interface SystemConfig {
   maintenanceMode: boolean;
   maintenanceMessage?: string;
+  autoApproveNewUsers?: boolean;
   updatedAt: Timestamp;
   updatedBy: string;
 }
@@ -270,6 +271,8 @@ export interface PurchaseOrder {
   discount?: number; // Added PO-level discount
   discountType?: 'amount' | 'percentage'; // Added PO-level discount type
   discountAmount?: number; // Calculated numeric discount
+  vatEnabled?: boolean; // true = VAT-inclusive prices (default); false = DR price, no VAT
+  vatAmount?: number; // Extracted VAT = totalAmount / 1.12 * 0.12
   totalAmount: number;
   notes?: string;
   generalNotes?: string;

@@ -193,6 +193,16 @@ export const POPrintView = () => {
                     </div>
                   </div>
                 )}
+                {po.vatEnabled !== false && (
+                  <div className="flex border-b border-black">
+                    <div className="w-1/2 p-1.5 flex items-center justify-center border-r border-black font-bold uppercase tracking-widest text-[9px] bg-gray-50">
+                      VAT (12%)
+                    </div>
+                    <div className="w-1/2 p-1.5 flex items-center justify-end font-medium text-[10px] pr-4">
+                      {(po.vatAmount ?? po.totalAmount / 1.12 * 0.12).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    </div>
+                  </div>
+                )}
                 <div className="flex flex-1">
                   <div className="bg-[#f2ed41] w-1/2 p-2 flex items-center justify-center border-r border-black font-bold uppercase tracking-widest text-[11px]">
                     ORDER TOTAL
@@ -203,6 +213,13 @@ export const POPrintView = () => {
                 </div>
               </div>
             </div>
+            {po.vatEnabled === false && (
+              <div className="flex justify-end mt-1.5">
+                <span className="text-[8px] font-black uppercase tracking-widest border border-gray-400 text-gray-500 px-2 py-0.5 rounded">
+                  DR PRICE
+                </span>
+              </div>
+            )}
           </div>
 
           {/* Signatures */}

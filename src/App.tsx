@@ -218,15 +218,18 @@ const AuthProvider = ({ children }: { children: React.ReactNode }) => {
         // Create default profile for new users
         const bootstrapAdmins = import.meta.env.VITE_BOOTSTRAP_ADMIN_EMAILS?.split(',') || [];
         const isBootstrapAdmin = user.email && bootstrapAdmins.includes(user.email);
-        
+
+        const sysConfigSnap = await getDoc(doc(db, 'system', 'config'));
+        const autoApprove = sysConfigSnap.exists() ? (sysConfigSnap.data() as SystemConfig).autoApproveNewUsers === true : false;
+
         const newProfile: UserProfile = {
           uid: user.uid,
           email: user.email || '',
           displayName: user.displayName || 'New User',
           photoURL: user.photoURL || '',
           role: isBootstrapAdmin ? 'admin' : 'worker',
-          isActive: isBootstrapAdmin ? true : false,
-          isApproved: isBootstrapAdmin ? true : false,
+          isActive: isBootstrapAdmin ? true : autoApprove,
+          isApproved: isBootstrapAdmin ? true : autoApprove,
           createdAt: serverTimestamp() as any,
         };
         await setDoc(doc(db, 'users', user.uid), newProfile);

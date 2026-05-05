@@ -2686,6 +2686,7 @@ export const PurchaseOrderForm = ({ items, locations, uoms, profile, initialData
   const [requestedBy, setRequestedBy] = useState(initialData?.requestedBy || '');
   const [discount, setDiscount] = useState(initialData?.discount || 0);
   const [discountType, setDiscountType] = useState<'amount' | 'percentage'>(initialData?.discountType || 'amount');
+  const [vatEnabled, setVatEnabled] = useState(initialData?.vatEnabled !== false);
   const [deletingPaymentId, setDeletingPaymentId] = useState<string | null>(null);
   const [poItems, setPoItems] = useState<PurchaseOrderItem[]>(initialData?.items || []);
   
@@ -2717,6 +2718,11 @@ export const PurchaseOrderForm = ({ items, locations, uoms, profile, initialData
   const totalAmount = useMemo(() => {
     return Math.max(0, subtotal - globalDiscountAmount);
   }, [subtotal, globalDiscountAmount]);
+
+  const vatAmount = useMemo(() => {
+    if (!vatEnabled) return 0;
+    return totalAmount / 1.12 * 0.12;
+  }, [totalAmount, vatEnabled]);
 
   const totalPaid = useMemo(() => payments.reduce((acc, p) => acc + p.amount, 0), [payments]);
 
@@ -2764,6 +2770,8 @@ export const PurchaseOrderForm = ({ items, locations, uoms, profile, initialData
         discount,
         discountType,
         discountAmount: globalDiscountAmount,
+        vatEnabled,
+        vatAmount: vatEnabled ? vatAmount : 0,
         items: poItems,
         totalAmount,
         date: Timestamp.fromDate(new Date(date))
@@ -3207,7 +3215,7 @@ export const PurchaseOrderForm = ({ items, locations, uoms, profile, initialData
             </div>
             <div className="flex items-center space-x-2">
               <div className="flex bg-gray-50 border border-gray-100 rounded-xl overflow-hidden h-10 w-48 focus-within:ring-2 focus-within:ring-blue-500 transition-all">
-                <input 
+                <input
                   type="number"
                   value={discount}
                   onChange={e => setDiscount(Number(e.target.value))}
@@ -3225,7 +3233,30 @@ export const PurchaseOrderForm = ({ items, locations, uoms, profile, initialData
               </div>
             </div>
           </div>
-          
+
+          <div className="flex items-center justify-between px-1">
+            <div className="space-y-0.5">
+              <label className="text-xs font-bold text-gray-400 uppercase tracking-wider">VAT (12%)</label>
+              <p className="text-[10px] text-gray-300 font-medium">
+                {vatEnabled ? 'Prices are VAT-inclusive' : 'DR Price — no VAT'}
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setVatEnabled(v => !v)}
+              className={`relative w-11 h-6 rounded-full transition-colors duration-200 focus:outline-none ${vatEnabled ? 'bg-blue-600' : 'bg-gray-200'}`}
+            >
+              <span className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform duration-200 ${vatEnabled ? 'translate-x-5' : 'translate-x-0'}`} />
+            </button>
+          </div>
+
+          {vatEnabled && (
+            <div className="flex justify-between items-center text-blue-600 px-1">
+              <span className="text-xs font-bold uppercase tracking-wider">VAT Amount</span>
+              <span className="text-sm font-bold tracking-tight">₱ {vatAmount.toLocaleString('en-US', { minimumFractionDigits: 2 })}</span>
+            </div>
+          )}
+
           <button type="submit" onClick={() => handleSubmit()} disabled={isSubmitting} className="w-full relative group">
             <div className="absolute -inset-0.5 bg-gradient-to-r from-blue-600 to-indigo-600 rounded-2xl blur opacity-30 group-hover:opacity-100 transition duration-1000 group-hover:duration-200"></div>
             <div className="relative w-full p-4 bg-blue-600 text-white rounded-2xl font-bold flex items-center justify-between overflow-hidden shadow-lg">

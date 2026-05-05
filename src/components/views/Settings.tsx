@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ChevronRight, Package, Filter, MapPin, Box, Users, Shield, Trash2, AlertCircle, Loader2, Check, LogOut, Hammer } from 'lucide-react';
+import { ChevronRight, Package, Filter, MapPin, Box, Users, Shield, Trash2, AlertCircle, Loader2, Check, LogOut, Hammer, UserCheck } from 'lucide-react';
 import { useAuth, useData } from '../../App';
 import { clearInventoryData, updateSystemConfig } from '../../services/inventoryService';
 import { cn } from '../../lib/utils';
@@ -46,6 +46,19 @@ export const SettingsView = () => {
     } catch (error) {
       console.error('Failed to update config:', error);
       setStatusMessage({ type: 'error', text: 'Failed to update maintenance mode.' });
+    } finally {
+      setIsUpdatingConfig(false);
+    }
+  };
+
+  const handleToggleAutoApprove = async () => {
+    try {
+      setIsUpdatingConfig(true);
+      await updateSystemConfig({ autoApproveNewUsers: !systemConfig?.autoApproveNewUsers });
+      setStatusMessage({ type: 'success', text: `Auto-approve new users ${!systemConfig?.autoApproveNewUsers ? 'enabled' : 'disabled'}.` });
+    } catch (error) {
+      console.error('Failed to update config:', error);
+      setStatusMessage({ type: 'error', text: 'Failed to update auto-approve setting.' });
     } finally {
       setIsUpdatingConfig(false);
     }
@@ -128,7 +141,7 @@ export const SettingsView = () => {
                     <p className="text-[10px] text-gray-500 font-medium">Restrict access for non-admins</p>
                   </div>
                 </div>
-                <button 
+                <button
                   disabled={isUpdatingConfig}
                   onClick={handleToggleMaintenance}
                   className={cn(
@@ -140,6 +153,35 @@ export const SettingsView = () => {
                   <div className={cn(
                     "absolute top-1 w-4 h-4 bg-white rounded-full transition-all",
                     systemConfig?.maintenanceMode ? "left-7" : "left-1"
+                  )} />
+                </button>
+              </div>
+
+              <div className="flex items-center justify-between">
+                <div className="flex items-center space-x-3">
+                  <div className={cn(
+                    "w-10 h-10 rounded-xl flex items-center justify-center transition-colors",
+                    systemConfig?.autoApproveNewUsers ? "bg-green-100 text-green-600" : "bg-gray-100 text-gray-400"
+                  )}>
+                    <UserCheck size={20} />
+                  </div>
+                  <div>
+                    <p className="text-sm font-bold text-gray-900">Auto-Approve New Users</p>
+                    <p className="text-[10px] text-gray-500 font-medium">Skip approval for new sign-ups</p>
+                  </div>
+                </div>
+                <button
+                  disabled={isUpdatingConfig}
+                  onClick={handleToggleAutoApprove}
+                  className={cn(
+                    "w-12 h-6 rounded-full transition-colors relative",
+                    systemConfig?.autoApproveNewUsers ? "bg-green-500" : "bg-gray-200",
+                    isUpdatingConfig && "opacity-50 cursor-not-allowed"
+                  )}
+                >
+                  <div className={cn(
+                    "absolute top-1 w-4 h-4 bg-white rounded-full transition-all",
+                    systemConfig?.autoApproveNewUsers ? "left-7" : "left-1"
                   )} />
                 </button>
               </div>

@@ -1,15 +1,15 @@
-import { 
-  collection, 
-  addDoc, 
-  updateDoc, 
-  doc, 
-  getDoc, 
-  getDocs, 
-  query, 
-  where, 
+import {
+  collection,
+  addDoc,
+  updateDoc,
+  doc,
+  getDoc,
+  getDocs,
+  query,
+  where,
   and,
-  onSnapshot, 
-  Timestamp, 
+  onSnapshot,
+  Timestamp,
   runTransaction,
   serverTimestamp,
   deleteDoc,
@@ -18,7 +18,8 @@ import {
   limit,
   or,
   orderBy,
-  documentId
+  documentId,
+  arrayRemove
 } from 'firebase/firestore';
 import { db, auth, handleFirestoreError, OperationType } from '../firebase';
 import { Item, Category, Location, Inventory, Transaction, UOM, Tag, UserProfile, Asset, Request, BOQItem, UnplannedStock, SystemConfig, PurchaseOrder, POPayment } from '../types';
@@ -877,23 +878,14 @@ export const updateLocation = async (id: string, location: Partial<Location>) =>
 
 export const deleteLocation = async (id: string) => {
   try {
-    // 1. Delete the location document
     await deleteDoc(doc(db, 'locations', id));
 
-    // 2. Remove this location from all user profiles
-    const usersSnap = await getDocs(collection(db, 'users'));
-    const updates = usersSnap.docs
-      .filter(doc => {
-        const data = doc.data() as UserProfile;
-        return data.assignedLocationIds?.includes(id);
-      })
-      .map(doc => {
-        const data = doc.data() as UserProfile;
-        const newIds = data.assignedLocationIds?.filter(locId => locId !== id) || [];
-        return updateDoc(doc.ref, { assignedLocationIds: newIds });
-      });
-    
-    await Promise.all(updates);
+    const affectedUsers = await getDocs(
+      query(collection(db, 'users'), where('assignedLocationIds', 'array-contains', id))
+    );
+    await Promise.all(
+      affectedUsers.docs.map(d => updateDoc(d.ref, { assignedLocationIds: arrayRemove(id) }))
+    );
   } catch (error) {
     handleFirestoreError(error, OperationType.DELETE, 'locations');
   }

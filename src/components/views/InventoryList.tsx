@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { Search, MapPin, Wrench, Box, Truck, Target, AlertTriangle, Plus, X, ChevronDown, History, ArrowLeftRight, Package, Loader2 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { useAuth, useData } from '../../App';
@@ -261,6 +261,7 @@ export const InventoryList = () => {
   const { profile } = useAuth();
   const { items, inventory, locations, uoms, categories, requests, boqs } = useData();
   const [searchTerm, setSearchTerm] = useState('');
+  const searchInputRef = useRef<HTMLInputElement>(null);
   const debouncedSearchTerm = useDebounce(searchTerm, 300);
   const [filter, setFilter] = useState('Materials');
   const [selectedJobsiteId, setSelectedJobsiteId] = useState<string>(() => {
@@ -509,9 +510,10 @@ export const InventoryList = () => {
         <div className="flex items-center space-x-2">
           <div className="relative flex-1">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={18} />
-            <input 
-              type="text" 
-              placeholder="Search tools, materials, tags..." 
+            <input
+              ref={searchInputRef}
+              type="text"
+              placeholder="Search tools, materials, tags..."
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
               className="w-full pl-10 pr-10 py-3 bg-gray-100 border-none rounded-2xl text-sm font-medium focus:ring-2 focus:ring-blue-500 outline-none"
@@ -751,7 +753,11 @@ export const InventoryList = () => {
             uoms={uoms}
             profile={profile}
             defaultJobsiteId={selectedJobsiteId}
-            onComplete={() => setRequestingItem(null)}
+            onComplete={() => {
+              setRequestingItem(null);
+              setSearchTerm('');
+              setTimeout(() => searchInputRef.current?.focus(), 0);
+            }}
           />
         )}
       </Modal>

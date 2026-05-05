@@ -52,7 +52,7 @@ export const POPrintView = () => {
       </div>
 
       {/* A4 Document Container */}
-      <div className="max-w-[21cm] mx-auto bg-white shadow-2xl p-[1cm] min-h-[29.7cm] print:shadow-none print:p-0 relative font-serif text-[#333]">
+      <div className="max-w-[21cm] mx-auto bg-white shadow-2xl p-[1cm] min-h-[29.7cm] print:shadow-none print:p-0 relative font-sans text-[#333]">
         {/* Main Document Border */}
         <div className="border border-gray-400 p-4 h-full min-h-[28cm] flex flex-col">
           
@@ -144,7 +144,7 @@ export const POPrintView = () => {
                     <td className="border-x border-black p-1.5 align-middle whitespace-pre-wrap font-bold uppercase">
                       <div>{item.description}</div>
                       {item.note && (
-                        <div className="text-[9px] lowercase font-normal italic text-gray-600 mt-0.5 normal-case">
+                        <div className="text-[9px] lowercase font-normal italic text-gray-600 mt-0.5 normal-case whitespace-pre-wrap">
                           {item.note}
                         </div>
                       )}
@@ -153,8 +153,8 @@ export const POPrintView = () => {
                     <td className="border-x border-black p-1.5 text-right align-middle font-bold">{item.totalPrice.toLocaleString('en-US', { minimumFractionDigits: 2 })}</td>
                   </tr>
                 ))}
-                {/* Empty rows to fill space matching the sample */}
-                {Array.from({ length: Math.max(0, 15 - items.length) }).map((_, idx) => (
+                {/* Empty rows to pad up to a minimum of 5 rows */}
+                {Array.from({ length: Math.max(0, 5 - items.length) }).map((_, idx) => (
                   <tr key={`empty-${idx}`} className="h-8">
                     <td className="border-x border-black"></td>
                     <td className="border-x border-black"></td>
@@ -163,7 +163,7 @@ export const POPrintView = () => {
                     <td className="border-x border-black"></td>
                   </tr>
                 ))}
-                {/* Fixed marker matching sample */}
+                {/* End-of-items marker */}
                 <tr className="h-8">
                   <td className="border-x border-black"></td>
                   <td className="border-x border-black"></td>
@@ -171,16 +171,6 @@ export const POPrintView = () => {
                   <td className="border-x border-black"></td>
                   <td className="border-x border-black"></td>
                 </tr>
-                {/* Bottom padding rows */}
-                {Array.from({ length: 5 }).map((_, idx) => (
-                  <tr key={`pad-${idx}`} className="h-8 border-b border-black">
-                    <td className="border-x border-black"></td>
-                    <td className="border-x border-black"></td>
-                    <td className="border-x border-black"></td>
-                    <td className="border-x border-black"></td>
-                    <td className="border-x border-black"></td>
-                  </tr>
-                ))}
               </tbody>
             </table>
 
@@ -251,23 +241,9 @@ export const POPrintView = () => {
       </div>
 
       <style>{`
-        @media print {
-          body * {
-            visibility: hidden;
-          }
-          .print-area, .print-area * {
-            visibility: visible;
-          }
-          .print-area {
-            position: absolute;
-            left: 0;
-            top: 0;
-            width: 100%;
-          }
-          @page {
-            size: A4;
-            margin: 0;
-          }
+        @page {
+          size: A4;
+          margin: 0;
         }
       `}</style>
     </div>

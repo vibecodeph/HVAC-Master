@@ -1,5 +1,12 @@
 {
   "projects": {
     "default": "gen-lang-client-0430534848"
+  },
+  "targets": {
+    "gen-lang-client-0430534848": {
+      "hosting": {
+        "hvacmaster": ["hvacmaster"]
+      }
+    }
   }
 }

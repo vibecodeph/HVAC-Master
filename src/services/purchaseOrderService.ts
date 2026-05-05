@@ -56,9 +56,9 @@ export const createPurchaseOrder = async (po: Omit<PurchaseOrder, 'id' | 'create
     });
 
     // Add items
-    const itemsPromises = items.map(item => {
+    const itemsPromises = items.map((item, index) => {
       const itemRef = doc(collection(db, 'purchase_orders', id, 'items'));
-      return setDoc(itemRef, { ...item, id: itemRef.id });
+      return setDoc(itemRef, { ...item, id: itemRef.id, sortOrder: index });
     });
     
     await Promise.all(itemsPromises);
@@ -85,9 +85,9 @@ export const updatePurchaseOrder = async (id: string, po: Partial<PurchaseOrder>
       await Promise.all(deletePromises);
 
       // Then add new items
-      const itemsPromises = items.map(item => {
+      const itemsPromises = items.map((item, index) => {
         const itemRef = doc(collection(db, 'purchase_orders', id, 'items'));
-        return setDoc(itemRef, { ...item, id: itemRef.id });
+        return setDoc(itemRef, { ...item, id: itemRef.id, sortOrder: index });
       });
       await Promise.all(itemsPromises);
     }
@@ -113,8 +113,10 @@ export const getPurchaseOrder = async (id: string): Promise<{ po: PurchaseOrder;
     if (!poSnap.exists()) return null;
     
     const itemsSnap = await getDocs(collection(db, 'purchase_orders', id, 'items'));
-    const items = itemsSnap.docs.map(doc => doc.data() as PurchaseOrderItem);
-    
+    const items = itemsSnap.docs
+      .map(doc => doc.data() as PurchaseOrderItem)
+      .sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0));
+
     return {
       po: poSnap.data() as PurchaseOrder,
       items

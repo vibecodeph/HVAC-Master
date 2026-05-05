@@ -229,6 +229,7 @@ export interface PurchaseOrderItem {
   note?: string;
   description?: string; // Snapshot for printing
   uom?: string; // Snapshot for printing
+  sortOrder?: number;
 }
 
 export interface POTemplate {

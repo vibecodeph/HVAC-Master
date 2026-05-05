@@ -15,6 +15,7 @@
     }
   ],
   "hosting": {
+    "target": "hvacmaster",
     "public": "dist",
     "ignore": [
       "firebase.json",

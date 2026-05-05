@@ -3032,12 +3032,18 @@ export const PurchaseOrderForm = ({ items, locations, uoms, profile, initialData
                           <p className="text-sm font-bold text-gray-900 truncate">{item?.name || 'Unknown Item'}</p>
                           <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">{uomSymbol}</p>
                         </div>
-                        <input 
-                          type="text"
+                        <textarea
                           value={poItem.note || ''}
+                          ref={el => {
+                            if (el) {
+                              el.style.height = 'auto';
+                              el.style.height = `${el.scrollHeight}px`;
+                            }
+                          }}
                           onChange={e => updatePOItem(idx, { note: e.target.value })}
                           placeholder="Add item note (Size, Color, Brand, etc.)"
-                          className="w-full p-2 bg-white border border-gray-200 rounded-xl text-[10px] font-bold outline-none focus:ring-2 focus:ring-blue-500 h-9"
+                          rows={1}
+                          className="w-full p-2 bg-white border border-gray-200 rounded-xl text-[10px] font-bold outline-none focus:ring-2 focus:ring-blue-500 resize-none overflow-hidden min-h-[36px]"
                         />
 
                         {/* Variant Selection if exists */}

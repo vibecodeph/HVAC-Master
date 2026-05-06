@@ -102,7 +102,27 @@ export const LocationsView = () => {
 
   return (
     <div className="pb-20">
-      <Header title="Locations" />
+      <Header
+        title="Locations"
+        rightAction={
+          <div className="flex items-center space-x-2">
+            <button
+              onClick={() => { setImportResult(null); setIsImportModalOpen(true); }}
+              className="flex items-center space-x-1.5 px-3 py-1.5 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-full text-xs font-bold transition-colors"
+            >
+              <Upload size={14} />
+              <span>Import</span>
+            </button>
+            <button
+              onClick={() => setIsExportModalOpen(true)}
+              className="flex items-center space-x-1.5 px-3 py-1.5 bg-gray-900 hover:bg-gray-700 text-white rounded-full text-xs font-bold transition-colors"
+            >
+              <Download size={14} />
+              <span>Export</span>
+            </button>
+          </div>
+        }
+      />
       <div className="p-4 space-y-8">
         <div className="flex items-start justify-between space-x-4">
           <div className="flex-1 min-w-0">
@@ -142,25 +162,6 @@ export const LocationsView = () => {
             </div>
           )}
         </div>
-
-        {profile?.role === 'admin' && (
-          <div className="flex items-center justify-end space-x-2">
-            <button
-              onClick={() => { setImportResult(null); setIsImportModalOpen(true); }}
-              className="flex items-center space-x-1.5 text-[10px] font-black uppercase tracking-[0.2em] px-3 py-2.5 rounded-xl border bg-gray-50 text-gray-500 border-gray-100 hover:bg-gray-100 transition-colors"
-            >
-              <Upload size={12} />
-              <span>Import</span>
-            </button>
-            <button
-              onClick={() => setIsExportModalOpen(true)}
-              className="flex items-center space-x-1.5 text-[10px] font-black uppercase tracking-[0.2em] px-3 py-2.5 rounded-xl border bg-gray-50 text-gray-500 border-gray-100 hover:bg-gray-100 transition-colors"
-            >
-              <Download size={12} />
-              <span>Export</span>
-            </button>
-          </div>
-        )}
 
       {sortedGroups.map((group) => (
           <div key={group} className="space-y-4">

@@ -376,7 +376,7 @@ export const RequestsView = () => {
                       Pick All for {jobsite?.name}
                     </button>
                   )}
-                  {filter === 'pending' && (profile?.role === 'admin' || profile?.role === 'manager' || profile?.role === 'engineer') && jobsiteRequests.length > 0 && (
+                  {filter === 'pending' && (profile?.role === 'admin' || profile?.role === 'manager' || profile?.role === 'warehouseman' || profile?.role === 'engineer') && jobsiteRequests.length > 0 && (
                     <button
                       disabled={isProcessing}
                       onClick={() => handleApproveBulk(jobsiteRequests.map(r => r.id))}
@@ -507,7 +507,7 @@ export const RequestsView = () => {
                               </button>
                             )
                           )}
-                          {filter === 'pending' && (profile?.role === 'admin' || profile?.role === 'manager' || profile?.role === 'engineer') && (
+                          {filter === 'pending' && (profile?.role === 'admin' || profile?.role === 'manager' || profile?.role === 'warehouseman' || profile?.role === 'engineer') && (
                             <>
                               <button 
                                 onClick={() => setRejectingRequest(r)}

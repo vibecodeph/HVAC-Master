@@ -34,7 +34,6 @@ const UsersManagementView = lazy(() => import('./components/views/Admin/Users').
 const JobsiteBOQView = lazy(() => import('./components/views/Admin/JobsiteBOQ').then(m => ({ default: m.JobsiteBOQView })));
 const PurchaseOrderList = lazy(() => import('./components/views/PurchaseOrderList').then(m => ({ default: m.PurchaseOrderList })));
 const PurchaseOrderForm = lazy(() => import('./components/Forms').then(m => ({ default: m.PurchaseOrderForm })));
-const LocationsView = lazy(() => import('./components/views/Locations').then(m => ({ default: m.LocationsView })));
 const POTemplateSettings = lazy(() => import('./components/views/Admin/POTemplateSettings').then(m => ({ default: m.POTemplateSettings })));
 const POPrintView = lazy(() => import('./components/views/POPrintView').then(m => ({ default: m.POPrintView })));
 
@@ -520,13 +519,6 @@ const App = () => {
                     </ProtectedRoute>
                   } />
 
-                  <Route path="/locations" element={
-                    <ProtectedRoute requireAdmin>
-                      <Layout>
-                        <LocationsView />
-                      </Layout>
-                    </ProtectedRoute>
-                  } />
 
                   <Route path="/profile" element={
                     <ProtectedRoute>

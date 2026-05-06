@@ -1,6 +1,6 @@
 import Papa from 'papaparse';
 import { Item, Category, UOM, BOQItem, Tag, PurchaseOrder, PurchaseOrderItem, Location } from '../types';
-import { addItem, updateItem, addPurchaseOrder, updatePurchaseOrder } from './inventoryService';
+import { addItem, updateItem, addPurchaseOrder, updatePurchaseOrder, addLocation, updateLocation } from './inventoryService';
 import { Timestamp } from 'firebase/firestore';
 import { format, parse, isValid } from 'date-fns';
 
@@ -541,6 +541,119 @@ export const importItemsFromCSV = async (
       error: (error) => {
         reject(error);
       }
+    });
+  });
+};
+
+export interface CSVLocationRow {
+  ID?: string;
+  Name: string;
+  'Long Name'?: string;
+  Type: string;
+  Address?: string;
+  'Contact Person'?: string;
+  'Contact Number'?: string;
+  Terms?: string;
+  'Is Active': string;
+}
+
+const VALID_LOCATION_TYPES = ['warehouse', 'jobsite', 'supplier'] as const;
+
+export const exportLocationsToCSV = (
+  locations: Location[],
+  types?: string[],
+  includeInactive = false
+) => {
+  const filtered = locations.filter(l => {
+    if (l.type === 'system') return false;
+    if (!includeInactive && !l.isActive) return false;
+    if (types && types.length > 0) return types.includes(l.type);
+    return true;
+  });
+
+  const data: CSVLocationRow[] = filtered.map(loc => ({
+    ID: loc.id,
+    Name: loc.name,
+    'Long Name': loc.longName || '',
+    Type: loc.type,
+    Address: loc.address || '',
+    'Contact Person': loc.contactPerson || '',
+    'Contact Number': loc.contactNumber || '',
+    Terms: loc.terms || '',
+    'Is Active': loc.isActive ? 'TRUE' : 'FALSE'
+  }));
+
+  const csv = Papa.unparse(data);
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+  const link = document.createElement('a');
+  const url = URL.createObjectURL(blob);
+  link.setAttribute('href', url);
+  link.setAttribute('download', `locations_export_${new Date().toISOString().split('T')[0]}.csv`);
+  link.style.visibility = 'hidden';
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+};
+
+export const importLocationsFromCSV = async (
+  file: File,
+  existingLocations: Location[],
+  onProgress?: (current: number, total: number) => void
+): Promise<{ success: number; errors: string[] }> => {
+  return new Promise((resolve, reject) => {
+    Papa.parse(file, {
+      header: true,
+      skipEmptyLines: true,
+      complete: async (results) => {
+        const rows = results.data as CSVLocationRow[];
+        let successCount = 0;
+        const errors: string[] = [];
+
+        const existingIdSet = new Set(existingLocations.map(l => l.id));
+
+        for (let i = 0; i < rows.length; i++) {
+          const row = rows[i];
+          try {
+            const name = row.Name?.trim();
+            if (!name) {
+              errors.push(`Row ${i + 2}: Name is required.`);
+              continue;
+            }
+
+            const type = row.Type?.trim().toLowerCase() as typeof VALID_LOCATION_TYPES[number];
+            if (!VALID_LOCATION_TYPES.includes(type)) {
+              errors.push(`Row ${i + 2} ("${name}"): Invalid type "${row.Type}". Must be warehouse, jobsite, or supplier.`);
+              continue;
+            }
+
+            const locationData = {
+              name,
+              longName: row['Long Name']?.trim() || name,
+              type,
+              address: row.Address?.trim() || '',
+              contactPerson: row['Contact Person']?.trim() || '',
+              contactNumber: row['Contact Number']?.trim() || '',
+              terms: row.Terms?.trim() || '',
+              isActive: row['Is Active']?.trim().toUpperCase() !== 'FALSE'
+            };
+
+            const existingId = row.ID?.trim();
+            if (existingId && existingIdSet.has(existingId)) {
+              await updateLocation(existingId, locationData);
+            } else {
+              await addLocation(locationData);
+            }
+
+            successCount++;
+            if (onProgress) onProgress(i + 1, rows.length);
+          } catch (err: any) {
+            errors.push(`Row ${i + 2} ("${row.Name || 'unknown'}"): ${err.message}`);
+          }
+        }
+
+        resolve({ success: successCount, errors });
+      },
+      error: (error) => reject(error)
     });
   });
 };

@@ -1,9 +1,10 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { MapPin, ChevronRight, Plus, Check, Box, Wrench, ArrowLeftRight } from 'lucide-react';
+import { MapPin, ChevronRight, Plus, Check, Box, Wrench, ArrowLeftRight, Download, Upload } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { useAuth, useData } from '../../App';
 import { addLocation, deleteLocation } from '../../services/inventoryService';
+import { exportLocationsToCSV, importLocationsFromCSV } from '../../services/csvService';
 import { cn } from '../../lib/utils';
 import { Header } from '../common/Header';
 import { Card } from '../common/Card';
@@ -27,6 +28,49 @@ export const LocationsView = () => {
   const [siteTab, setSiteTab] = useState<'Details' | 'Inventory' | 'History'>('Details');
   const [showInactive, setShowInactive] = useState(false);
   const [filterType, setFilterType] = useState<string>('all');
+
+  const [isExportModalOpen, setIsExportModalOpen] = useState(false);
+  const [exportTypes, setExportTypes] = useState<Set<string>>(new Set(['warehouse', 'jobsite', 'supplier']));
+  const [exportIncludeInactive, setExportIncludeInactive] = useState(false);
+
+  const [isImportModalOpen, setIsImportModalOpen] = useState(false);
+  const [isImporting, setIsImporting] = useState(false);
+  const [importProgress, setImportProgress] = useState<{ current: number; total: number } | null>(null);
+  const [importResult, setImportResult] = useState<{ success: number; errors: string[] } | null>(null);
+  const importFileRef = useRef<HTMLInputElement>(null);
+
+  const toggleExportType = (type: string) => {
+    setExportTypes(prev => {
+      const next = new Set(prev);
+      if (next.has(type)) next.delete(type);
+      else next.add(type);
+      return next;
+    });
+  };
+
+  const handleExport = () => {
+    exportLocationsToCSV(locations, Array.from(exportTypes), exportIncludeInactive);
+    setIsExportModalOpen(false);
+  };
+
+  const handleImportFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setIsImporting(true);
+    setImportResult(null);
+    setImportProgress(null);
+    try {
+      const result = await importLocationsFromCSV(file, locations, (current, total) => {
+        setImportProgress({ current, total });
+      });
+      setImportResult(result);
+    } catch (err: any) {
+      setImportResult({ success: 0, errors: [err.message || 'Import failed'] });
+    } finally {
+      setIsImporting(false);
+      if (importFileRef.current) importFileRef.current.value = '';
+    }
+  };
 
   // Group and sort locations
   const filteredLocations = locations.filter(l => {
@@ -84,12 +128,12 @@ export const LocationsView = () => {
 
           {profile?.role === 'admin' && (
             <div className="pt-5 shrink-0">
-              <button 
+              <button
                 onClick={() => setShowInactive(!showInactive)}
                 className={cn(
                   "text-[10px] font-black uppercase tracking-[0.2em] px-3 py-2.5 rounded-xl transition-all border",
-                  showInactive 
-                    ? "bg-orange-100 text-orange-600 border-orange-200 shadow-sm" 
+                  showInactive
+                    ? "bg-orange-100 text-orange-600 border-orange-200 shadow-sm"
                     : "bg-gray-50 text-gray-400 border-gray-100"
                 )}
               >
@@ -98,6 +142,25 @@ export const LocationsView = () => {
             </div>
           )}
         </div>
+
+        {profile?.role === 'admin' && (
+          <div className="flex items-center justify-end space-x-2">
+            <button
+              onClick={() => { setImportResult(null); setIsImportModalOpen(true); }}
+              className="flex items-center space-x-1.5 text-[10px] font-black uppercase tracking-[0.2em] px-3 py-2.5 rounded-xl border bg-gray-50 text-gray-500 border-gray-100 hover:bg-gray-100 transition-colors"
+            >
+              <Upload size={12} />
+              <span>Import</span>
+            </button>
+            <button
+              onClick={() => setIsExportModalOpen(true)}
+              className="flex items-center space-x-1.5 text-[10px] font-black uppercase tracking-[0.2em] px-3 py-2.5 rounded-xl border bg-gray-50 text-gray-500 border-gray-100 hover:bg-gray-100 transition-colors"
+            >
+              <Download size={12} />
+              <span>Export</span>
+            </button>
+          </div>
+        )}
 
       {sortedGroups.map((group) => (
           <div key={group} className="space-y-4">
@@ -307,7 +370,113 @@ export const LocationsView = () => {
         </div>
       </Modal>
 
-      <button 
+      {/* Export Modal */}
+      <Modal isOpen={isExportModalOpen} onClose={() => setIsExportModalOpen(false)} title="Export Locations">
+        <div className="space-y-5">
+          <div>
+            <p className="text-[10px] font-black text-gray-400 uppercase tracking-[0.2em] mb-3">Location Types</p>
+            <div className="space-y-2">
+              {(['warehouse', 'jobsite', 'supplier'] as const).map(type => (
+                <label key={type} className="flex items-center space-x-3 p-3 bg-gray-50 rounded-xl cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={exportTypes.has(type)}
+                    onChange={() => toggleExportType(type)}
+                    className="w-4 h-4 rounded accent-blue-600"
+                  />
+                  <span className="text-sm font-bold text-gray-700 capitalize">{type}</span>
+                </label>
+              ))}
+            </div>
+          </div>
+          <label className="flex items-center space-x-3 p-3 bg-gray-50 rounded-xl cursor-pointer">
+            <input
+              type="checkbox"
+              checked={exportIncludeInactive}
+              onChange={() => setExportIncludeInactive(v => !v)}
+              className="w-4 h-4 rounded accent-orange-500"
+            />
+            <span className="text-sm font-bold text-gray-700">Include inactive locations</span>
+          </label>
+          <button
+            onClick={handleExport}
+            disabled={exportTypes.size === 0}
+            className="w-full py-4 bg-gray-900 text-white rounded-2xl font-bold flex items-center justify-center space-x-2 disabled:opacity-40"
+          >
+            <Download size={18} />
+            <span>Download CSV</span>
+          </button>
+        </div>
+      </Modal>
+
+      {/* Import Modal */}
+      <Modal isOpen={isImportModalOpen} onClose={() => { setIsImportModalOpen(false); setImportResult(null); }} title="Import Locations">
+        <div className="space-y-5">
+          <div className="p-4 bg-blue-50 rounded-2xl space-y-1">
+            <p className="text-xs font-bold text-blue-700">CSV columns: ID (optional), Name, Long Name, Type, Address, Contact Person, Contact Number, Terms, Is Active</p>
+            <p className="text-[10px] text-blue-500 font-medium">If ID matches an existing location it will be updated; otherwise a new location is created. Type must be: warehouse, jobsite, or supplier.</p>
+          </div>
+
+          {!isImporting && !importResult && (
+            <>
+              <label className="flex flex-col items-center justify-center w-full h-28 border-2 border-dashed border-gray-200 rounded-2xl cursor-pointer hover:border-gray-300 transition-colors bg-gray-50">
+                <Upload size={24} className="text-gray-400 mb-2" />
+                <span className="text-xs font-bold text-gray-500">Choose CSV file</span>
+                <input
+                  ref={importFileRef}
+                  type="file"
+                  accept=".csv"
+                  className="hidden"
+                  onChange={handleImportFile}
+                />
+              </label>
+            </>
+          )}
+
+          {isImporting && (
+            <div className="flex flex-col items-center py-6 space-y-3">
+              <div className="w-8 h-8 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />
+              {importProgress && (
+                <p className="text-xs font-bold text-gray-500">
+                  {importProgress.current} / {importProgress.total} rows
+                </p>
+              )}
+            </div>
+          )}
+
+          {importResult && (
+            <div className="space-y-3">
+              <div className={cn(
+                "p-4 rounded-2xl",
+                importResult.errors.length === 0 ? "bg-green-50" : "bg-yellow-50"
+              )}>
+                <p className={cn(
+                  "text-sm font-bold",
+                  importResult.errors.length === 0 ? "text-green-700" : "text-yellow-700"
+                )}>
+                  {importResult.success} location{importResult.success !== 1 ? 's' : ''} imported successfully
+                  {importResult.errors.length > 0 && `, ${importResult.errors.length} error${importResult.errors.length !== 1 ? 's' : ''}`}
+                </p>
+              </div>
+              {importResult.errors.length > 0 && (
+                <div className="max-h-40 overflow-y-auto space-y-1">
+                  {importResult.errors.map((err, i) => (
+                    <p key={i} className="text-xs text-red-600 font-medium bg-red-50 px-3 py-2 rounded-xl">{err}</p>
+                  ))}
+                </div>
+              )}
+              <button
+                onClick={() => { setIsImportModalOpen(false); setImportResult(null); }}
+                className="w-full py-3 bg-gray-900 text-white rounded-2xl font-bold text-sm"
+              >
+                Done
+              </button>
+            </div>
+          )}
+        </div>
+      </Modal>
+
+      <button
         onClick={() => setIsAddModalOpen(true)}
         className="fixed bottom-20 right-4 w-14 h-14 bg-gray-900 text-white rounded-full shadow-lg flex items-center justify-center active:scale-90 transition-transform z-50"
       >

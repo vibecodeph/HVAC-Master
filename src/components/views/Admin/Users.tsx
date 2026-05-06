@@ -10,8 +10,10 @@ import { Modal } from '../../common/Modal';
 import { Toggle } from '../../common/Toggle';
 import { UserProfile, UserRole, Location } from '../../../types';
 
+const BUILT_IN_ROLES: string[] = ['worker', 'engineer', 'warehouseman', 'manager', 'admin'];
+
 export const UsersManagementView = () => {
-  const { users, locations } = useData();
+  const { users, locations, rbacConfig } = useData();
   const { profile } = useAuth();
   const [editingUser, setEditingUser] = useState<UserProfile | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -19,6 +21,13 @@ export const UsersManagementView = () => {
 
   const isEngineer = profile?.role === 'engineer';
   const isAdmin = profile?.role === 'admin';
+
+  const availableRoles = Object.keys(rbacConfig).length > 0
+    ? [
+        ...BUILT_IN_ROLES.filter(r => rbacConfig[r]),
+        ...Object.keys(rbacConfig).filter(r => !BUILT_IN_ROLES.includes(r)).sort(),
+      ]
+    : BUILT_IN_ROLES;
 
   if (!isAdmin && !isEngineer) {
     return <Navigate to="/settings" />;
@@ -60,7 +69,10 @@ export const UsersManagementView = () => {
     return acc;
   }, {} as Record<string, Location[]>);
 
-  const roleOrder: UserRole[] = ['admin', 'manager', 'engineer', 'warehouseman', 'worker'];
+  const roleOrder: string[] = [
+    'admin', 'manager', 'engineer', 'warehouseman', 'worker',
+    ...availableRoles.filter(r => !BUILT_IN_ROLES.includes(r)),
+  ];
 
   const groupedUsers = roleOrder.reduce((acc, role) => {
     const usersInRole = sortedUsers.filter(u => u.role === role);
@@ -255,17 +267,17 @@ export const UsersManagementView = () => {
 
               <div className="space-y-1">
                 <label className="text-xs font-bold text-gray-400 uppercase tracking-wider pl-1">Role</label>
-                <select 
-                  name="role" 
+                <select
+                  name="role"
                   defaultValue={editingUser.role}
                   disabled={isEngineer}
                   className="w-full p-4 bg-gray-100 rounded-2xl text-sm font-medium outline-none focus:ring-2 focus:ring-blue-500 appearance-none disabled:opacity-50"
                 >
-                  <option value="worker">Worker</option>
-                  <option value="engineer">Engineer</option>
-                  <option value="warehouseman">Warehouseman</option>
-                  <option value="manager">Manager</option>
-                  <option value="admin">Admin</option>
+                  {availableRoles.map(role => (
+                    <option key={role} value={role}>
+                      {role.charAt(0).toUpperCase() + role.slice(1).replace(/_/g, ' ')}
+                    </option>
+                  ))}
                 </select>
               </div>
 

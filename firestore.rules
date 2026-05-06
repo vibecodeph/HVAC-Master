@@ -280,7 +280,7 @@ service cloud.firestore {
       return hasRequiredFields(['uid', 'email', 'role']) &&
              hasOnlyAllowedFields(['uid', 'email', 'role', 'assignedLocationIds', 'isApproved', 'isActive', 'displayName', 'firstName', 'lastName', 'position', 'photoURL', 'skills', 'createdAt', 'updatedAt', 'updatedBy', 'lastLoginAt', 'lastLogoutAt']) &&
              isValidEmail(data.email) &&
-             data.role in ['admin', 'manager', 'worker', 'engineer', 'warehouseman'] &&
+             data.role is string && data.role.size() > 0 && data.role.size() <= 30 &&
              (!('assignedLocationIds' in data) || data.assignedLocationIds == null || data.assignedLocationIds is list) &&
              (!('isApproved' in data) || data.isApproved == null || data.isApproved is bool) &&
              (!('isActive' in data) || data.isActive == null || data.isActive is bool) &&
@@ -595,6 +595,16 @@ service cloud.firestore {
     match /po_templates/{templateId} {
       allow read: if isApproved();
       allow create, update, delete: if isAdmin() && isValidPOTemplate(request.resource.data);
+    }
+
+    match /rbac_config/{roleId} {
+      allow read: if isAdmin();
+      allow write: if false; // Cloud Functions only
+    }
+
+    match /rbac_audit/{auditId} {
+      allow read: if isAdmin();
+      allow write: if false; // Cloud Functions only
     }
 
     // ─── Payroll Master Collections ──────────────────────────────────────────

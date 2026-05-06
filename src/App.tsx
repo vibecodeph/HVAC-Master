@@ -1,11 +1,11 @@
-import React, { createContext, useContext, useState, useEffect, lazy, Suspense } from 'react';
+import React, { createContext, useContext, useState, useEffect, useRef, useCallback, lazy, Suspense } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { onAuthStateChanged, User, signInWithPopup, signInWithRedirect, GoogleAuthProvider, signOut, getRedirectResult } from 'firebase/auth';
 import { onSnapshot, collection, query, where, getDocs, doc, setDoc, updateDoc, serverTimestamp, getDoc } from 'firebase/firestore';
 import { ArrowLeftRight } from 'lucide-react';
 import { auth, db, handleFirestoreError, OperationType } from './firebase';
 import {
-  Item, Category, UOM, Location, Inventory, Transaction, Request, UserProfile, Asset, BOQItem, UnplannedStock, Tag, SystemConfig, PurchaseOrder
+  Item, Category, UOM, Location, Inventory, Transaction, Request, UserProfile, Asset, BOQItem, UnplannedStock, Tag, SystemConfig, PurchaseOrder, RBACRoleConfig
 } from './types';
 import {
   subscribeToItems, subscribeToAllItems, subscribeToCategories, subscribeToAllCategories, subscribeToUOMs, subscribeToAllUOMs,
@@ -14,6 +14,7 @@ import {
   subscribeToBOQs, subscribeToUnplannedStock, subscribeToTags, subscribeToAllTags,
   subscribeToPurchaseOrders
 } from './services/inventoryService';
+import { subscribeToRBACConfig } from './services/rbacService';
 import { Layout } from './components/Layout';
 import { SidebarProvider } from './hooks/useApp';
 
@@ -131,6 +132,7 @@ interface DataContextType {
   purchaseOrders: PurchaseOrder[];
   tags: Tag[];
   systemConfig: SystemConfig | null | undefined;
+  rbacConfig: Record<string, RBACRoleConfig>;
   loading: boolean;
 }
 
@@ -140,6 +142,7 @@ const DataContext = createContext<DataContextType>({
   purchaseOrders: [],
   tags: [],
   systemConfig: undefined,
+  rbacConfig: {},
   loading: true
 });
 export const useData = () => useContext(DataContext);
@@ -278,7 +281,8 @@ const DataProvider = ({ children }: { children: React.ReactNode }) => {
     transactions: [], requests: [], users: [], assets: [], boqs: [], unplanned: [],
     purchaseOrders: [],
     tags: [],
-    systemConfig: undefined
+    systemConfig: undefined,
+    rbacConfig: {}
   });
   const [loading, setLoading] = useState(true);
   const { user, profile } = useAuth();
@@ -297,6 +301,9 @@ const DataProvider = ({ children }: { children: React.ReactNode }) => {
       }
       if (profile.role === 'engineer') {
         collectionsToLoad.push('users');
+      }
+      if (profile.role === 'admin') {
+        collectionsToLoad.push('rbac_config');
       }
     }
 
@@ -334,7 +341,7 @@ const DataProvider = ({ children }: { children: React.ReactNode }) => {
     const safeSubscribe = (name: string, subscribeFn: (cb: (data: any) => void, ...args: any[]) => () => void, ...args: any[]) => {
       try {
         return subscribeFn(data => {
-          const key = name === 'boq' ? 'boqs' : (name === 'purchase_orders' ? 'purchaseOrders' : name);
+          const key = name === 'boq' ? 'boqs' : name === 'purchase_orders' ? 'purchaseOrders' : name === 'rbac_config' ? 'rbacConfig' : name;
           setData(prev => ({ ...prev, [key]: data }));
           checkLoading(name);
         }, ...args);
@@ -360,7 +367,8 @@ const DataProvider = ({ children }: { children: React.ReactNode }) => {
       safeSubscribe('boq', subscribeToBOQs, assigned),
       safeSubscribe('unplanned', subscribeToUnplannedStock, assigned),
       safeSubscribe('tags', isAdmin ? subscribeToAllTags : subscribeToTags),
-      (profile?.role === 'admin' || profile?.role === 'manager') ? safeSubscribe('purchase_orders', subscribeToPurchaseOrders) : () => {}
+      (profile?.role === 'admin' || profile?.role === 'manager') ? safeSubscribe('purchase_orders', subscribeToPurchaseOrders) : () => {},
+      profile?.role === 'admin' ? safeSubscribe('rbac_config', subscribeToRBACConfig) : () => {}
     ];
 
     return () => {

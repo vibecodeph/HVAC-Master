@@ -286,6 +286,24 @@ export interface PurchaseOrder {
   updatedBy?: string;
 }
 
+export interface RBACRoleConfig {
+  permissions: string[];
+  description: string;
+  lastUpdatedBy?: string;
+  lastUpdatedAt?: Timestamp;
+}
+
+export interface RBACauditEntry {
+  id: string;
+  changeType: 'added_role' | 'updated_permissions' | 'deleted_role';
+  roleId: string;
+  changedBy: string;
+  changedByName?: string;
+  changedAt: Timestamp;
+  oldPermissions: string[];
+  newPermissions: string[];
+}
+
 export interface POPayment {
   id: string;
   poId: string;

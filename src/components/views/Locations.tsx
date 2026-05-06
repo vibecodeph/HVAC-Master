@@ -1,6 +1,6 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { MapPin, ChevronRight, Plus, Check, Box, Wrench, ArrowLeftRight, Download, Upload } from 'lucide-react';
+import { MapPin, ChevronRight, Plus, Check, Box, Wrench, ArrowLeftRight, Download, Upload, Loader2, X } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { useAuth, useData } from '../../App';
 import { addLocation, deleteLocation } from '../../services/inventoryService';
@@ -17,64 +17,37 @@ export const LocationsView = () => {
   const { locations, inventory, items, transactions, assets, uoms } = useData();
   const navigate = useNavigate();
 
-  useEffect(() => {
-    if (profile && profile.role !== 'admin') {
-      navigate('/');
-    }
-  }, [profile, navigate]);
-
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [selectedSite, setSelectedSite] = useState<Location | null>(null);
   const [siteTab, setSiteTab] = useState<'Details' | 'Inventory' | 'History'>('Details');
   const [showInactive, setShowInactive] = useState(false);
   const [filterType, setFilterType] = useState<string>('all');
-
-  const [isExportModalOpen, setIsExportModalOpen] = useState(false);
-  const [exportTypes, setExportTypes] = useState<Set<string>>(new Set(['warehouse', 'jobsite', 'supplier']));
-  const [exportIncludeInactive, setExportIncludeInactive] = useState(false);
-
-  const [isImportModalOpen, setIsImportModalOpen] = useState(false);
   const [isImporting, setIsImporting] = useState(false);
-  const [importProgress, setImportProgress] = useState<{ current: number; total: number } | null>(null);
-  const [importResult, setImportResult] = useState<{ success: number; errors: string[] } | null>(null);
-  const importFileRef = useRef<HTMLInputElement>(null);
-
-  const toggleExportType = (type: string) => {
-    setExportTypes(prev => {
-      const next = new Set(prev);
-      if (next.has(type)) next.delete(type);
-      else next.add(type);
-      return next;
-    });
-  };
+  const [importStatus, setImportStatus] = useState<{ success: number; errors: string[] } | null>(null);
 
   const handleExport = () => {
-    exportLocationsToCSV(locations, Array.from(exportTypes), exportIncludeInactive);
-    setIsExportModalOpen(false);
+    exportLocationsToCSV(locations);
   };
 
-  const handleImportFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
     setIsImporting(true);
-    setImportResult(null);
-    setImportProgress(null);
+    setImportStatus(null);
     try {
-      const result = await importLocationsFromCSV(file, locations, (current, total) => {
-        setImportProgress({ current, total });
-      });
-      setImportResult(result);
-    } catch (err: any) {
-      setImportResult({ success: 0, errors: [err.message || 'Import failed'] });
+      const result = await importLocationsFromCSV(file, locations);
+      setImportStatus(result);
+    } catch (error: any) {
+      setImportStatus({ success: 0, errors: [error.message || 'Import failed'] });
     } finally {
       setIsImporting(false);
-      if (importFileRef.current) importFileRef.current.value = '';
+      e.target.value = '';
     }
   };
 
   // Group and sort locations
   const filteredLocations = locations.filter(l => {
-    const matchesActivity = (profile?.role === 'admin' && showInactive) ? true : l.isActive;
+    const matchesActivity = showInactive ? true : l.isActive;
     const matchesType = filterType === 'all' || l.type === filterType;
     return matchesActivity && matchesType;
   });
@@ -85,9 +58,7 @@ export const LocationsView = () => {
     return acc;
   }, {} as Record<string, Location[]>);
 
-  // Sort groups (e.g., warehouse first) and items within groups
   const sortedGroups = Object.keys(groupedLocations).sort((a, b) => {
-    // Custom order: warehouse, jobsite, supplier, truck, others
     const order = { warehouse: 1, jobsite: 2, supplier: 3, truck: 4 };
     const valA = order[a as keyof typeof order] || 99;
     const valB = order[b as keyof typeof order] || 99;
@@ -98,32 +69,49 @@ export const LocationsView = () => {
     groupedLocations[group].sort((a, b) => a.name.localeCompare(b.name));
   });
 
-  if (!profile || profile.role !== 'admin') return null;
-
   return (
     <div className="pb-20">
-      <Header
-        title="Locations"
-        rightAction={
-          <div className="flex items-center space-x-2">
-            <button
-              onClick={() => { setImportResult(null); setIsImportModalOpen(true); }}
-              className="flex items-center space-x-1.5 px-3 py-1.5 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-full text-xs font-bold transition-colors"
-            >
-              <Upload size={14} />
-              <span>Import</span>
-            </button>
-            <button
-              onClick={() => setIsExportModalOpen(true)}
-              className="flex items-center space-x-1.5 px-3 py-1.5 bg-gray-900 hover:bg-gray-700 text-white rounded-full text-xs font-bold transition-colors"
-            >
-              <Download size={14} />
-              <span>Export</span>
-            </button>
+      <Header title="Locations" />
+      <div className="p-4 space-y-4">
+
+        {/* Import / Export — same pattern as Items page */}
+        <div className="grid grid-cols-2 gap-2">
+          <button
+            onClick={handleExport}
+            className="flex items-center justify-center space-x-2 py-3 bg-white border border-gray-100 rounded-2xl text-[10px] font-black uppercase tracking-widest text-gray-600 hover:bg-gray-50 transition-colors"
+          >
+            <Download size={14} />
+            <span>Export CSV</span>
+          </button>
+          <label className="flex items-center justify-center space-x-2 py-3 bg-white border border-gray-100 rounded-2xl text-[10px] font-black uppercase tracking-widest text-gray-600 hover:bg-gray-50 transition-colors cursor-pointer">
+            {isImporting ? <Loader2 size={14} className="animate-spin" /> : <Upload size={14} />}
+            <span>{isImporting ? 'Importing...' : 'Import CSV'}</span>
+            <input type="file" accept=".csv" onChange={handleImport} className="hidden" disabled={isImporting} />
+          </label>
+        </div>
+
+        {importStatus && (
+          <div className={cn(
+            "p-4 rounded-2xl border text-xs font-bold",
+            importStatus.errors.length > 0 ? "bg-orange-50 border-orange-100 text-orange-700" : "bg-green-50 border-green-100 text-green-700"
+          )}>
+            <div className="flex justify-between items-start mb-2">
+              <span className="uppercase tracking-widest text-[10px]">Import Result</span>
+              <button onClick={() => setImportStatus(null)}><X size={14} /></button>
+            </div>
+            <p>Successfully processed {importStatus.success} locations.</p>
+            {importStatus.errors.length > 0 && (
+              <div className="mt-2 space-y-1 max-h-32 overflow-y-auto">
+                <p className="text-orange-900">Errors ({importStatus.errors.length}):</p>
+                {importStatus.errors.map((err, i) => (
+                  <p key={i} className="font-medium opacity-80">• {err}</p>
+                ))}
+              </div>
+            )}
           </div>
-        }
-      />
-      <div className="p-4 space-y-8">
+        )}
+
+        {/* Filter row */}
         <div className="flex items-start justify-between space-x-4">
           <div className="flex-1 min-w-0">
             <label className="text-[10px] font-black text-gray-400 uppercase tracking-[0.2em] mb-1 block pl-1">
@@ -145,25 +133,23 @@ export const LocationsView = () => {
               </div>
             </div>
           </div>
-
-          {profile?.role === 'admin' && (
-            <div className="pt-5 shrink-0">
-              <button
-                onClick={() => setShowInactive(!showInactive)}
-                className={cn(
-                  "text-[10px] font-black uppercase tracking-[0.2em] px-3 py-2.5 rounded-xl transition-all border",
-                  showInactive
-                    ? "bg-orange-100 text-orange-600 border-orange-200 shadow-sm"
-                    : "bg-gray-50 text-gray-400 border-gray-100"
-                )}
-              >
-                {showInactive ? "Showing Inactive" : "Show Inactive"}
-              </button>
-            </div>
-          )}
+          <div className="pt-5 shrink-0">
+            <button
+              onClick={() => setShowInactive(!showInactive)}
+              className={cn(
+                "text-[10px] font-black uppercase tracking-[0.2em] px-3 py-2.5 rounded-xl transition-all border",
+                showInactive
+                  ? "bg-orange-100 text-orange-600 border-orange-200 shadow-sm"
+                  : "bg-gray-50 text-gray-400 border-gray-100"
+              )}
+            >
+              {showInactive ? "Showing Inactive" : "Show Inactive"}
+            </button>
+          </div>
         </div>
 
-      {sortedGroups.map((group) => (
+        {/* Location groups */}
+        {sortedGroups.map((group) => (
           <div key={group} className="space-y-4">
             <h3 className="text-[10px] font-black text-gray-400 uppercase tracking-[0.2em] pl-1">
               {group}s
@@ -178,7 +164,7 @@ export const LocationsView = () => {
                   const hasLinkedAssets = assets.some(a => a.locationId === site.id);
                   const isSystem = site.type === 'system';
                   const canDelete = !isSystem && !hasLinkedInventory && !hasLinkedTransactions && !hasLinkedAssets;
-                  
+
                   return (
                     <motion.div
                       key={site.id}
@@ -195,7 +181,7 @@ export const LocationsView = () => {
                         onEdit={() => navigate(`/settings/manage/locations`)}
                         confirmMessage={`Delete ${site.name}?`}
                       >
-                        <Card 
+                        <Card
                           className={cn(
                             "p-4 flex items-center justify-between active:bg-gray-50 transition-colors cursor-pointer relative bg-white",
                             !site.isActive && "bg-gray-50 border-dashed"
@@ -206,8 +192,8 @@ export const LocationsView = () => {
                             <div className={cn(
                               "w-12 h-12 rounded-2xl flex items-center justify-center",
                               !site.isActive ? "bg-gray-100 text-gray-400" : (
-                                site.type === 'warehouse' ? "bg-blue-50 text-blue-600" : 
-                                site.type === 'supplier' ? "bg-purple-50 text-purple-600" : 
+                                site.type === 'warehouse' ? "bg-blue-50 text-blue-600" :
+                                site.type === 'supplier' ? "bg-purple-50 text-purple-600" :
                                 "bg-green-50 text-green-600"
                               )
                             )}>
@@ -226,8 +212,8 @@ export const LocationsView = () => {
                           <div className="flex flex-col items-end space-y-1">
                             <span className={cn(
                               "text-[10px] px-2 py-0.5 rounded-full font-bold uppercase",
-                              site.type === 'jobsite' ? "bg-green-100 text-green-700" : 
-                              site.type === 'supplier' ? "bg-purple-100 text-purple-700" : 
+                              site.type === 'jobsite' ? "bg-green-100 text-green-700" :
+                              site.type === 'supplier' ? "bg-purple-100 text-purple-700" :
                               site.type === 'warehouse' ? "bg-blue-100 text-blue-700" :
                               "bg-gray-100 text-gray-700"
                             )}>
@@ -244,17 +230,18 @@ export const LocationsView = () => {
             </div>
           </div>
         ))}
-        
+
         {locations.length === 0 && (
           <p className="text-center py-12 text-gray-400 font-bold italic uppercase tracking-widest">No locations defined</p>
         )}
       </div>
 
+      {/* Site detail modal */}
       <Modal isOpen={!!selectedSite} onClose={() => setSelectedSite(null)} title={selectedSite?.name || 'Site Details'}>
         <div className="space-y-6">
           <div className="flex p-1 bg-gray-100 rounded-2xl">
             {['Details', 'Inventory', 'History'].map((tab) => (
-              <button 
+              <button
                 key={tab}
                 onClick={() => setSiteTab(tab as 'Details' | 'Inventory' | 'History')}
                 className={cn(
@@ -304,15 +291,13 @@ export const LocationsView = () => {
               <div className="space-y-2">
                 {inventory.filter(inv => inv.locationId === selectedSite?.id && inv.quantity > 0).map((inv, idx) => {
                   const item = items.find(i => i.id === inv.itemId);
-                  const variantStr = inv.variant ? Object.entries(inv.variant).map(([k, v]) => `${v}`).join(', ') : '';
+                  const variantStr = inv.variant ? Object.entries(inv.variant).map(([_, v]) => `${v}`).join(', ') : '';
                   return (
                     <div key={idx} className="flex items-center justify-between p-3 bg-gray-50 rounded-xl">
                       <div className="flex items-center space-x-3">
                         {item?.isTool ? <Wrench size={14} className="text-orange-600" /> : <Box size={14} className="text-blue-600" />}
                         <div className="flex flex-col">
-                          <span className="text-sm font-bold text-gray-700">
-                            {item?.name || 'Unknown Item'}
-                          </span>
+                          <span className="text-sm font-bold text-gray-700">{item?.name || 'Unknown Item'}</span>
                           <div className="flex items-center space-x-2">
                             {variantStr && <span className="text-[10px] font-bold text-blue-500 uppercase tracking-tight">{variantStr}</span>}
                             {inv.serialNumber && <span className="text-[10px] font-black text-orange-600 uppercase tracking-tight">SN: {inv.serialNumber}</span>}
@@ -320,7 +305,9 @@ export const LocationsView = () => {
                           </div>
                         </div>
                       </div>
-                      <span className="text-sm font-black text-gray-900">{inv.quantity} <span className="text-[10px] font-bold text-gray-400 uppercase">{uoms.find(u => u.id === item?.uomId || u.symbol === item?.uomId)?.symbol || item?.uomId}</span></span>
+                      <span className="text-sm font-black text-gray-900">
+                        {inv.quantity} <span className="text-[10px] font-bold text-gray-400 uppercase">{uoms.find(u => u.id === item?.uomId || u.symbol === item?.uomId)?.symbol || item?.uomId}</span>
+                      </span>
                     </div>
                   );
                 })}
@@ -366,112 +353,6 @@ export const LocationsView = () => {
                   );
                 })}
               </div>
-            </div>
-          )}
-        </div>
-      </Modal>
-
-      {/* Export Modal */}
-      <Modal isOpen={isExportModalOpen} onClose={() => setIsExportModalOpen(false)} title="Export Locations">
-        <div className="space-y-5">
-          <div>
-            <p className="text-[10px] font-black text-gray-400 uppercase tracking-[0.2em] mb-3">Location Types</p>
-            <div className="space-y-2">
-              {(['warehouse', 'jobsite', 'supplier'] as const).map(type => (
-                <label key={type} className="flex items-center space-x-3 p-3 bg-gray-50 rounded-xl cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={exportTypes.has(type)}
-                    onChange={() => toggleExportType(type)}
-                    className="w-4 h-4 rounded accent-blue-600"
-                  />
-                  <span className="text-sm font-bold text-gray-700 capitalize">{type}</span>
-                </label>
-              ))}
-            </div>
-          </div>
-          <label className="flex items-center space-x-3 p-3 bg-gray-50 rounded-xl cursor-pointer">
-            <input
-              type="checkbox"
-              checked={exportIncludeInactive}
-              onChange={() => setExportIncludeInactive(v => !v)}
-              className="w-4 h-4 rounded accent-orange-500"
-            />
-            <span className="text-sm font-bold text-gray-700">Include inactive locations</span>
-          </label>
-          <button
-            onClick={handleExport}
-            disabled={exportTypes.size === 0}
-            className="w-full py-4 bg-gray-900 text-white rounded-2xl font-bold flex items-center justify-center space-x-2 disabled:opacity-40"
-          >
-            <Download size={18} />
-            <span>Download CSV</span>
-          </button>
-        </div>
-      </Modal>
-
-      {/* Import Modal */}
-      <Modal isOpen={isImportModalOpen} onClose={() => { setIsImportModalOpen(false); setImportResult(null); }} title="Import Locations">
-        <div className="space-y-5">
-          <div className="p-4 bg-blue-50 rounded-2xl space-y-1">
-            <p className="text-xs font-bold text-blue-700">CSV columns: ID (optional), Name, Long Name, Type, Address, Contact Person, Contact Number, Terms, Is Active</p>
-            <p className="text-[10px] text-blue-500 font-medium">If ID matches an existing location it will be updated; otherwise a new location is created. Type must be: warehouse, jobsite, or supplier.</p>
-          </div>
-
-          {!isImporting && !importResult && (
-            <>
-              <label className="flex flex-col items-center justify-center w-full h-28 border-2 border-dashed border-gray-200 rounded-2xl cursor-pointer hover:border-gray-300 transition-colors bg-gray-50">
-                <Upload size={24} className="text-gray-400 mb-2" />
-                <span className="text-xs font-bold text-gray-500">Choose CSV file</span>
-                <input
-                  ref={importFileRef}
-                  type="file"
-                  accept=".csv"
-                  className="hidden"
-                  onChange={handleImportFile}
-                />
-              </label>
-            </>
-          )}
-
-          {isImporting && (
-            <div className="flex flex-col items-center py-6 space-y-3">
-              <div className="w-8 h-8 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />
-              {importProgress && (
-                <p className="text-xs font-bold text-gray-500">
-                  {importProgress.current} / {importProgress.total} rows
-                </p>
-              )}
-            </div>
-          )}
-
-          {importResult && (
-            <div className="space-y-3">
-              <div className={cn(
-                "p-4 rounded-2xl",
-                importResult.errors.length === 0 ? "bg-green-50" : "bg-yellow-50"
-              )}>
-                <p className={cn(
-                  "text-sm font-bold",
-                  importResult.errors.length === 0 ? "text-green-700" : "text-yellow-700"
-                )}>
-                  {importResult.success} location{importResult.success !== 1 ? 's' : ''} imported successfully
-                  {importResult.errors.length > 0 && `, ${importResult.errors.length} error${importResult.errors.length !== 1 ? 's' : ''}`}
-                </p>
-              </div>
-              {importResult.errors.length > 0 && (
-                <div className="max-h-40 overflow-y-auto space-y-1">
-                  {importResult.errors.map((err, i) => (
-                    <p key={i} className="text-xs text-red-600 font-medium bg-red-50 px-3 py-2 rounded-xl">{err}</p>
-                  ))}
-                </div>
-              )}
-              <button
-                onClick={() => { setIsImportModalOpen(false); setImportResult(null); }}
-                className="w-full py-3 bg-gray-900 text-white rounded-2xl font-bold text-sm"
-              >
-                Done
-              </button>
             </div>
           )}
         </div>

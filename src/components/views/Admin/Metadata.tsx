@@ -1,14 +1,15 @@
 import React, { useState } from 'react';
 import { useParams, Navigate, useNavigate } from 'react-router-dom';
-import { ChevronRight, Plus, Check, X, Loader2 } from 'lucide-react';
+import { ChevronRight, Plus, Check, X, Loader2, Download, Upload } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { useAuth, useData } from '../../../App';
-import { 
+import {
   updateCategory, addCategory, deleteCategory,
   updateLocation, addLocation, deleteLocation,
   updateUOM, addUOM, deleteUOM,
   updateTag, addTag, deleteTag
 } from '../../../services/inventoryService';
+import { exportLocationsToCSV, importLocationsFromCSV } from '../../../services/csvService';
 import { cn } from '../../../lib/utils';
 import { Header } from '../../common/Header';
 import { Card } from '../../common/Card';
@@ -28,6 +29,28 @@ export const MetadataAdminView = () => {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [expandedCategories, setExpandedCategories] = useState<Set<string>>(new Set());
   const [filterType, setFilterType] = useState<string>('all');
+  const [isImporting, setIsImporting] = useState(false);
+  const [importStatus, setImportStatus] = useState<{ success: number; errors: string[] } | null>(null);
+
+  const handleExport = () => {
+    exportLocationsToCSV(locations);
+  };
+
+  const handleImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setIsImporting(true);
+    setImportStatus(null);
+    try {
+      const result = await importLocationsFromCSV(file, locations);
+      setImportStatus(result);
+    } catch (error: any) {
+      setImportStatus({ success: 0, errors: [error.message || 'Import failed'] });
+    } finally {
+      setIsImporting(false);
+      e.target.value = '';
+    }
+  };
 
   const getTitle = () => {
     switch (type) {
@@ -153,6 +176,43 @@ export const MetadataAdminView = () => {
       <Header title={getTitle()} showBack />
       <div className="p-4 space-y-4">
         {type === 'locations' && (
+          <>
+          <div className="grid grid-cols-2 gap-2">
+            <button
+              onClick={handleExport}
+              className="flex items-center justify-center space-x-2 py-3 bg-white border border-gray-100 rounded-2xl text-[10px] font-black uppercase tracking-widest text-gray-600 hover:bg-gray-50 transition-colors"
+            >
+              <Download size={14} />
+              <span>Export CSV</span>
+            </button>
+            <label className="flex items-center justify-center space-x-2 py-3 bg-white border border-gray-100 rounded-2xl text-[10px] font-black uppercase tracking-widest text-gray-600 hover:bg-gray-50 transition-colors cursor-pointer">
+              {isImporting ? <Loader2 size={14} className="animate-spin" /> : <Upload size={14} />}
+              <span>{isImporting ? 'Importing...' : 'Import CSV'}</span>
+              <input type="file" accept=".csv" onChange={handleImport} className="hidden" disabled={isImporting} />
+            </label>
+          </div>
+
+          {importStatus && (
+            <div className={cn(
+              "p-4 rounded-2xl border text-xs font-bold",
+              importStatus.errors.length > 0 ? "bg-orange-50 border-orange-100 text-orange-700" : "bg-green-50 border-green-100 text-green-700"
+            )}>
+              <div className="flex justify-between items-start mb-2">
+                <span className="uppercase tracking-widest text-[10px]">Import Result</span>
+                <button onClick={() => setImportStatus(null)}><X size={14} /></button>
+              </div>
+              <p>Successfully processed {importStatus.success} locations.</p>
+              {importStatus.errors.length > 0 && (
+                <div className="mt-2 space-y-1 max-h-32 overflow-y-auto">
+                  <p className="text-orange-900">Errors ({importStatus.errors.length}):</p>
+                  {importStatus.errors.map((err, i) => (
+                    <p key={i} className="font-medium opacity-80">• {err}</p>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
           <div className="flex items-start justify-between space-x-4">
             <div className="flex-1 min-w-0">
               <label className="text-[10px] font-black text-gray-400 uppercase tracking-[0.2em] mb-1 block pl-1">
@@ -176,12 +236,12 @@ export const MetadataAdminView = () => {
             </div>
 
             <div className="pt-5 shrink-0">
-              <button 
+              <button
                 onClick={() => setShowInactive(!showInactive)}
                 className={cn(
                   "text-[10px] font-black uppercase tracking-[0.2em] px-3 py-2.5 rounded-xl transition-all border",
-                  showInactive 
-                    ? "bg-orange-100 text-orange-600 border-orange-200 shadow-sm" 
+                  showInactive
+                    ? "bg-orange-100 text-orange-600 border-orange-200 shadow-sm"
                     : "bg-gray-50 text-gray-400 border-gray-100"
                 )}
               >
@@ -189,6 +249,7 @@ export const MetadataAdminView = () => {
               </button>
             </div>
           </div>
+          </>
         )}
 
         {type !== 'locations' && (

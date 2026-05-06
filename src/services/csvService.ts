@@ -97,7 +97,7 @@ export const exportPurchaseOrdersToCSV = (
   });
 
   const csv = Papa.unparse(data);
-  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+  const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' });
   const link = document.createElement('a');
   const url = URL.createObjectURL(blob);
   link.setAttribute('href', url);
@@ -119,6 +119,7 @@ export const importPurchaseOrdersFromCSV = async (
     Papa.parse(file, {
       header: true,
       skipEmptyLines: true,
+      encoding: 'UTF-8',
       complete: async (results) => {
         const rows = results.data as CSVPOItemRow[];
         let successCount = 0;
@@ -290,7 +291,7 @@ export const exportItemsToCSV = (
   });
 
   const csv = Papa.unparse(data);
-  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+  const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' });
   const link = document.createElement('a');
   const url = URL.createObjectURL(blob);
   link.setAttribute('href', url);
@@ -325,7 +326,7 @@ export const exportJobsiteBOQToCSV = (
   });
 
   const csv = Papa.unparse(data);
-  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+  const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' });
   const link = document.createElement('a');
   const url = URL.createObjectURL(blob);
   link.setAttribute('href', url);
@@ -348,6 +349,7 @@ export const importItemsFromCSV = async (
     Papa.parse(file, {
       header: true,
       skipEmptyLines: true,
+      encoding: 'UTF-8',
       complete: async (results) => {
         const rows = results.data as CSVItemRow[];
         let successCount = 0;
@@ -584,7 +586,7 @@ export const exportLocationsToCSV = (
   }));
 
   const csv = Papa.unparse(data);
-  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+  const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' });
   const link = document.createElement('a');
   const url = URL.createObjectURL(blob);
   link.setAttribute('href', url);
@@ -604,6 +606,7 @@ export const importLocationsFromCSV = async (
     Papa.parse(file, {
       header: true,
       skipEmptyLines: true,
+      encoding: 'UTF-8',
       complete: async (results) => {
         const rows = results.data as CSVLocationRow[];
         let successCount = 0;
@@ -670,6 +673,7 @@ export const importJobsiteBOQFromCSV = async (
     Papa.parse(file, {
       header: true,
       skipEmptyLines: true,
+      encoding: 'UTF-8',
       complete: async (results) => {
         const rows = results.data as any[];
         let successCount = 0;

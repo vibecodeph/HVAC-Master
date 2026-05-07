@@ -1491,18 +1491,9 @@ export const recordBulkPick = async (
     // If no custom DR is provided, check if we can reuse an existing active batchId
     let reusedBatchId = options?.customBatchId;
     
-    if (!reusedBatchId) {
-      const activeDeliveriesQuery = query(
-        collection(db, 'requests'), 
-        where('status', '==', 'for delivery'), 
-        limit(1)
-      );
-      const activeDeliveriesSnap = await getDocs(activeDeliveriesQuery);
-      if (!activeDeliveriesSnap.empty) {
-        reusedBatchId = activeDeliveriesSnap.docs[0].data().batchId;
-        console.log("[BulkPick] Reusing existing batchId:", reusedBatchId);
-      }
-    }
+    // Note: we do not auto-reuse batchIds from other jobsites' deliveries.
+    // A custom batch ID must be set explicitly via the PickingModal UI.
+    // Without a customBatchId, a fresh DR number is always generated below.
 
     // Fetch UOMs first to resolve symbols if needed
     const uomsSnap = await getDocs(query(collection(db, 'uoms'), where('isActive', '==', true)));
@@ -1958,8 +1949,6 @@ export const recordBulkReceive = async (requestIds: string[], receiverId: string
     }));
 
     await runTransaction(db, async (dbTransaction) => {
-      console.log("[BulkReceive] Starting transaction for:", validRequests.length, "valid requests");
-      
       // Determine shared batchId for grouping in transaction history
       let sharedBatchId: string | null = null;
       if (validRequests.length > 0) {
@@ -2086,8 +2075,6 @@ export const recordBulkReceive = async (requestIds: string[], receiverId: string
         });
       }
 
-      console.log("[BulkReceive] Reads complete. Processing writes for:", requestData.length, "items");
-
       // 2. WRITES
       for (const data of requestData) {
         const { requestId, requestRef, request, conversionFactor, baseQuantity } = data;
@@ -2209,7 +2196,6 @@ export const recordBulkReceive = async (requestIds: string[], receiverId: string
           });
         }
       }
-      console.log("[BulkReceive] Transaction complete");
     });
   } catch (error) {
     console.error("Bulk receive failed:", error);

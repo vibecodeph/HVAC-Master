@@ -118,10 +118,6 @@ export const ItemManagementView = () => {
     setCurrentPage(1);
   }, [debouncedSearchTerm, filter, selectedCategoryId, showInactive]);
 
-  if (profile?.role !== 'admin' && profile?.role !== 'manager') {
-    return <Navigate to="/settings" />;
-  }
-
   const filteredItems = useMemo(() => {
     return items
       .filter(item => {
@@ -161,6 +157,10 @@ export const ItemManagementView = () => {
         return a.name.localeCompare(b.name);
       });
   }, [items, showInactive, filter, debouncedSearchTerm, categories, selectedCategoryId]);
+
+  if (profile?.role !== 'admin' && profile?.role !== 'manager') {
+    return <Navigate to="/settings" />;
+  }
 
   const totalPages = Math.ceil(filteredItems.length / ITEMS_PER_PAGE);
   const paginatedItems = filteredItems.slice((currentPage - 1) * ITEMS_PER_PAGE, currentPage * ITEMS_PER_PAGE);

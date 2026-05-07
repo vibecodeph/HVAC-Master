@@ -211,12 +211,14 @@ export const Dashboard = () => {
               <h3 className="text-xl font-black tracking-tight truncate group-hover:text-blue-400 transition-colors">
                 {selectedLocation?.name || (selectedLocationId === 'all' ? 'All Locations' : 'No Jobsite Assigned')}
               </h3>
-              <div className="mt-1 flex items-center space-x-2">
-                <span className="flex items-center space-x-1 px-1.5 py-0.5 bg-green-500/10 border border-green-500/20 rounded text-[8px] font-black text-green-400 uppercase tracking-widest">
-                  <span className="w-1 h-1 rounded-full bg-green-500 animate-pulse" />
-                  <span>ACTIVE</span>
-                </span>
-              </div>
+              {selectedLocation && (
+                <div className="mt-1 flex items-center space-x-2">
+                  <span className="flex items-center space-x-1 px-1.5 py-0.5 bg-green-500/10 border border-green-500/20 rounded text-[8px] font-black text-green-400 uppercase tracking-widest">
+                    <span className="w-1 h-1 rounded-full bg-green-500 animate-pulse" />
+                    <span>ACTIVE</span>
+                  </span>
+                </div>
+              )}
             </div>
             
             <div className="relative z-10 w-10 h-10 rounded-xl bg-white/5 flex items-center justify-center text-gray-400 group-hover:bg-blue-600 group-hover:text-white transition-all shadow-inner">

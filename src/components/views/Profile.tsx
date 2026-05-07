@@ -22,6 +22,7 @@ export const ProfileView = () => {
   });
   const [newSkill, setNewSkill] = useState('');
   const [isSaving, setIsSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
 
   useEffect(() => {
     if (profile) {
@@ -38,6 +39,7 @@ export const ProfileView = () => {
   const handleSave = async () => {
     if (!profile) return;
     setIsSaving(true);
+    setSaveError(null);
     try {
       const displayName = `${formData.firstName} ${formData.lastName}`.trim() || profile.email.split('@')[0];
       await updateUserProfile(profile.uid, {
@@ -45,8 +47,9 @@ export const ProfileView = () => {
         displayName
       });
       setIsEditing(false);
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error updating profile:', error);
+      setSaveError(error.message || 'Failed to save profile');
     } finally {
       setIsSaving(false);
     }
@@ -109,6 +112,15 @@ export const ProfileView = () => {
             <p className="text-sm font-bold text-blue-600 uppercase tracking-widest">{formData.position || profile?.role?.replace('_', ' ')}</p>
           </div>
         </div>
+
+        {saveError && (
+          <div className="bg-red-50 border border-red-100 p-4 rounded-2xl flex items-center justify-between">
+            <p className="text-xs font-bold text-red-700">{saveError}</p>
+            <button onClick={() => setSaveError(null)} className="text-red-400 p-1 hover:text-red-600 transition-colors ml-3">
+              <X size={16} />
+            </button>
+          </div>
+        )}
 
         <div className="space-y-4">
           <div className="space-y-2">

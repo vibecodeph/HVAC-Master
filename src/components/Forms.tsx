@@ -876,6 +876,7 @@ interface ItemFormProps {
 
 export const ItemForm = ({ uoms, categories, locations, items, initialData, isDuplicate, onComplete }: ItemFormProps) => {
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
   const [isTool, setIsTool] = useState(initialData?.isTool || false);
   const [requireVariant, setRequireVariant] = useState(initialData?.requireVariant || false);
   const [requireCustomSpec, setRequireCustomSpec] = useState(initialData?.requireCustomSpec || false);
@@ -1012,10 +1013,10 @@ export const ItemForm = ({ uoms, categories, locations, items, initialData, isDu
         } else {
           newItemId = await addItem(data);
         }
-        console.log('Item saved successfully, calling onComplete');
         onComplete(newItemId);
-      } catch (error) {
+      } catch (error: any) {
         console.error('Error saving item:', error);
+        setSaveError(error.message || 'Failed to save item');
       } finally {
         setIsSubmitting(false);
       }
@@ -1506,8 +1507,15 @@ export const ItemForm = ({ uoms, categories, locations, items, initialData, isDu
         )}
       </div>
 
-      <button 
-        type="submit" 
+      {saveError && (
+        <div className="flex items-center justify-between p-3 bg-red-50 border border-red-200 rounded-2xl text-sm text-red-700">
+          <span>{saveError}</span>
+          <button type="button" onClick={() => setSaveError(null)} className="ml-2 text-red-400 hover:text-red-600"><X size={16} /></button>
+        </div>
+      )}
+
+      <button
+        type="submit"
         disabled={isSubmitting}
         className="w-full py-4 bg-blue-600 text-white rounded-2xl font-bold flex items-center justify-center space-x-2 disabled:opacity-50"
       >

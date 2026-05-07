@@ -65,8 +65,6 @@ export const RBACDashboard = () => {
   const { profile } = useAuth();
   const { rbacConfig } = useData();
 
-  if (profile?.role !== 'admin') return <Navigate to="/settings" />;
-
   const [pendingToggle, setPendingToggle] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isInitializing, setIsInitializing] = useState(false);
@@ -86,6 +84,8 @@ export const RBACDashboard = () => {
     if (!showAudit) return;
     return subscribeToRBACaudit(setAuditEntries);
   }, [showAudit]);
+
+  if (profile?.role !== 'admin') return <Navigate to="/settings" />;
 
   const isInitialized = Object.keys(rbacConfig).length > 0;
 

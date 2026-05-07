@@ -784,7 +784,6 @@ export const InventoryList = () => {
             items={items}
             initialData={editingItem}
             onComplete={() => {
-              console.log('ItemForm onComplete called in InventoryList');
               setEditingItem(null);
             }} 
           />

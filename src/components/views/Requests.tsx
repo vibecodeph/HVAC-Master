@@ -177,11 +177,13 @@ export const RequestsView = () => {
 
   const handleApprove = async (request: Request, approvedQty: number, note?: string) => {
     setIsProcessing(true);
+    setError(null);
     try {
       await approveRequest(request.id, approvedQty, profile?.uid || 'unknown', profile?.displayName, note);
       setEditingRequest(null);
-    } catch (error) {
+    } catch (error: any) {
       console.error(error);
+      setError(error.message || 'Failed to approve request');
     } finally {
       setIsProcessing(false);
     }
@@ -189,16 +191,18 @@ export const RequestsView = () => {
 
   const handleReject = async (request: Request) => {
     setIsProcessing(true);
+    setError(null);
     try {
-      await updateRequest(request.id, { 
+      await updateRequest(request.id, {
         status: 'rejected',
         approverId: profile?.uid || 'unknown',
         approverName: profile?.displayName || '',
         approvedAt: serverTimestamp() as any
       });
       setRejectingRequest(null);
-    } catch (error) {
+    } catch (error: any) {
       console.error(error);
+      setError(error.message || 'Failed to reject request');
     } finally {
       setIsProcessing(false);
     }
@@ -237,10 +241,12 @@ export const RequestsView = () => {
 
   const handleReceive = async (requestIds: string[]) => {
     setIsProcessing(true);
+    setError(null);
     try {
       await recordBulkReceive(requestIds, profile?.uid || 'unknown', profile?.displayName);
-    } catch (error) {
+    } catch (error: any) {
       console.error(error);
+      setError(error.message || 'Failed to receive items');
     } finally {
       setIsProcessing(false);
     }
@@ -248,10 +254,12 @@ export const RequestsView = () => {
 
   const handleApproveBulk = async (requestIds: string[]) => {
     setIsProcessing(true);
+    setError(null);
     try {
       await approveBulkRequests(requestIds, profile?.uid || 'unknown', profile?.displayName);
-    } catch (error) {
+    } catch (error: any) {
       console.error(error);
+      setError(error.message || 'Failed to approve requests');
     } finally {
       setIsProcessing(false);
     }

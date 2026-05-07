@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { Truck, Wrench, ArrowLeftRight, History, Package, ChevronRight, Loader2 } from 'lucide-react';
+import { Truck, Wrench, ArrowLeftRight, History, Package, ChevronRight, Loader2, X } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { useAuth, useData } from '../../App';
 import { deleteTransaction, subscribeToTransactions } from '../../services/inventoryService';
@@ -19,6 +19,7 @@ export const Transactions = () => {
   const [editingTransaction, setEditingTransaction] = useState<Transaction | null>(null);
   const [expandedBatches, setExpandedBatches] = useState<Record<string, boolean>>({});
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
   
   // Pagination state
   const [limitCount, setLimitCount] = useState(50);
@@ -49,8 +50,12 @@ export const Transactions = () => {
 
   const handleDelete = async (t: Transaction) => {
     setDeletingId(t.id);
+    setDeleteError(null);
     try {
       await deleteTransaction(t);
+    } catch (error: any) {
+      console.error(error);
+      setDeleteError(error.message || 'Failed to delete transaction');
     } finally {
       setDeletingId(null);
     }
@@ -250,6 +255,14 @@ export const Transactions = () => {
     <div className="pb-20">
       <Header title="Move Items" />
       <div className="p-4 space-y-6">
+        {deleteError && (
+          <div className="bg-red-50 border border-red-100 p-4 rounded-2xl flex items-center justify-between">
+            <p className="text-xs font-bold text-red-700">{deleteError}</p>
+            <button onClick={() => setDeleteError(null)} className="text-red-400 p-1 hover:text-red-600 transition-colors ml-3">
+              <X size={16} />
+            </button>
+          </div>
+        )}
         {/* Action Tabs */}
         <div className="flex items-center space-x-2 bg-gray-100/50 p-1.5 rounded-[2rem] overflow-x-auto no-scrollbar">
           {(profile?.role === 'admin' || profile?.role === 'warehouseman') && (

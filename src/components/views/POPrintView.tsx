@@ -179,7 +179,7 @@ export const POPrintView = () => {
               <div className="flex-1 p-3 flex flex-col justify-between">
                 <div>
                   <p className="font-bold uppercase underline">NOTES</p>
-                  <p className="italic mt-1 ml-2">{po.notes || 'No additional notes.'}</p>
+                  <p className="italic mt-1 ml-2 whitespace-pre-wrap">{po.notes || 'No additional notes.'}</p>
                 </div>
               </div>
               <div className="w-[45%] flex flex-col border-l border-black">

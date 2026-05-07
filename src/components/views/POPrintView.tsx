@@ -149,8 +149,8 @@ export const POPrintView = () => {
                         </div>
                       )}
                     </td>
-                    <td className="border-x border-black p-1.5 text-right align-middle">{item.unitPrice.toLocaleString('en-US', { minimumFractionDigits: 2 })}</td>
-                    <td className="border-x border-black p-1.5 text-right align-middle font-bold">{item.totalPrice.toLocaleString('en-US', { minimumFractionDigits: 2 })}</td>
+                    <td className="border-x border-black py-1.5 pl-1.5 pr-2 text-right align-middle">{item.unitPrice.toLocaleString('en-US', { minimumFractionDigits: 2 })}</td>
+                    <td className="border-x border-black py-1.5 pl-1.5 pr-2 text-right align-middle font-bold">{item.totalPrice.toLocaleString('en-US', { minimumFractionDigits: 2 })}</td>
                   </tr>
                 ))}
                 {/* Empty rows to pad up to a minimum of 5 rows */}
@@ -182,13 +182,13 @@ export const POPrintView = () => {
                   <p className="italic mt-1 ml-2 whitespace-pre-wrap">{po.notes || 'No additional notes.'}</p>
                 </div>
               </div>
-              <div className="w-[45%] flex flex-col border-l border-black">
+              <div className="w-[36%] flex flex-col border-l border-black">
                 {po.discount > 0 && (
                   <div className="flex border-b border-black">
                     <div className="w-1/2 p-1.5 flex items-center justify-center border-r border-black font-bold uppercase tracking-widest text-[9px] bg-gray-50">
                       DISCOUNT {po.discountType === 'percentage' ? `(${po.discount}%)` : ''}
                     </div>
-                    <div className="w-1/2 p-1.5 flex items-center justify-end font-medium text-[10px] pr-4">
+                    <div className="w-1/2 p-1.5 flex items-center justify-end font-medium text-[10px] pr-2">
                       {po.discountAmount?.toLocaleString('en-US', { minimumFractionDigits: 2 }) || '0.00'}
                     </div>
                   </div>
@@ -198,7 +198,7 @@ export const POPrintView = () => {
                     <div className="w-1/2 p-1.5 flex items-center justify-center border-r border-black font-bold uppercase tracking-widest text-[9px] bg-gray-50">
                       VAT (12%)
                     </div>
-                    <div className="w-1/2 p-1.5 flex items-center justify-end font-medium text-[10px] pr-4">
+                    <div className="w-1/2 p-1.5 flex items-center justify-end font-medium text-[10px] pr-2">
                       {(po.vatAmount ?? po.totalAmount / 1.12 * 0.12).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                     </div>
                   </div>
@@ -207,7 +207,7 @@ export const POPrintView = () => {
                   <div className="bg-[#f2ed41] w-1/2 p-2 flex items-center justify-center border-r border-black font-bold uppercase tracking-widest text-[11px]">
                     ORDER TOTAL
                   </div>
-                  <div className="bg-[#fde581] w-1/2 p-2 flex items-center justify-end font-bold text-sm tracking-tight pr-4">
+                  <div className="bg-[#fde581] w-1/2 p-2 flex items-center justify-end font-bold text-sm tracking-tight pr-2">
                     {po.totalAmount.toLocaleString('en-US', { minimumFractionDigits: 2 })}
                   </div>
                 </div>
@@ -230,8 +230,8 @@ export const POPrintView = () => {
                 <img
                   src="/signatures/edwin-signature.png"
                   alt="Signature"
-                  className="hidden print:block mb-1"
-                  style={{ height: '48px', width: 'auto' }}
+                  className="block -mb-1"
+                  style={{ height: '24px', maxWidth: '80px', marginLeft: '24px' }}
                 />
                 <span className="text-[11px] font-black uppercase text-blue-900">{template?.signatories.preparedBy}</span>
                 <div className="border-t border-black w-48 mt-1 italic opacity-50"></div>

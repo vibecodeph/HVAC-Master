@@ -2784,9 +2784,9 @@ export const PurchaseOrderForm = ({ items, locations, uoms, profile, initialData
           let desc = item?.name || 'Unknown Item';
           if (pi.variant) {
             const variantStr = Object.values(pi.variant).join(', ');
-            if (variantStr) desc += ` (${variantStr})`;
+            if (variantStr) desc += ` [${variantStr}]`;
           }
-          
+
           return {
             ...pi,
             description: desc,
@@ -2800,7 +2800,7 @@ export const PurchaseOrderForm = ({ items, locations, uoms, profile, initialData
           let desc = item?.name || 'Unknown Item';
           if (pi.variant) {
             const variantStr = Object.values(pi.variant).join(', ');
-            if (variantStr) desc += ` (${variantStr})`;
+            if (variantStr) desc += ` [${variantStr}]`;
           }
 
           return {

@@ -227,6 +227,12 @@ export const POPrintView = () => {
             <div className="space-y-10">
               <div className="flex flex-col">
                 <span className="text-[10px] font-bold mb-6 italic underline uppercase">Prepared by:</span>
+                <img
+                  src="/signatures/edwin-signature.png"
+                  alt="Signature"
+                  className="hidden print:block mb-1"
+                  style={{ height: '48px', width: 'auto' }}
+                />
                 <span className="text-[11px] font-black uppercase text-blue-900">{template?.signatories.preparedBy}</span>
                 <div className="border-t border-black w-48 mt-1 italic opacity-50"></div>
               </div>

@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useEffect } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { Menu, Package, ArrowDown, MapPin, Layers, Truck, Wrench, ArrowLeftRight, History, Plus, Target, Clock, Box } from 'lucide-react';
 import { useAuth, useData } from '../../App';
 import { useIsMobile, useSidebar } from '../../hooks/useApp';
@@ -13,6 +13,7 @@ export const Dashboard = () => {
   const { items, inventory, transactions, uoms, categories, locations, assets, purchaseOrders, requests } = useData();
   const { openSidebar } = useSidebar();
   const isMobile = useIsMobile();
+  const navigate = useNavigate();
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [workerAction, setWorkerAction] = useState<{ mode: 'material' | 'pullout' } | null>(null);
   
@@ -163,13 +164,24 @@ export const Dashboard = () => {
 
   const workerMetrics = useMemo(() => {
     if (!isWorkerDashboard) return null;
-    
-    // Only count requests for the selected jobsite
+
     const siteRequests = requests.filter(r => r.jobsiteId === selectedLocationId);
-    
-    const readyForReceipt = siteRequests.filter(r => r.status === 'for delivery').length;
-    const pendingApproval = siteRequests.filter(r => r.status === 'pending').length;
-    
+
+    const uniqueKey = (r: { itemId: string; variant?: Record<string, string> | null }) => {
+      const v = r.variant && Object.keys(r.variant).length > 0
+        ? Object.keys(r.variant).sort().map(k => `${k}:${r.variant![k]}`).join('|')
+        : '';
+      return `${r.itemId}__${v}`;
+    };
+
+    const readyForReceipt = new Set(
+      siteRequests.filter(r => r.status === 'for delivery').map(uniqueKey)
+    ).size;
+
+    const pendingApproval = new Set(
+      siteRequests.filter(r => r.status === 'pending' || r.status === 'approved').map(uniqueKey)
+    ).size;
+
     return { readyForReceipt, pendingApproval };
   }, [requests, selectedLocationId, isWorkerDashboard]);
 
@@ -231,7 +243,10 @@ export const Dashboard = () => {
           </Card>
 
           {/* Metric: Ready for Receipt */}
-          <Card className="p-4 bg-orange-50 border-orange-100 flex items-center space-x-4 group hover:bg-orange-100 transition-colors">
+          <Card
+            onClick={() => navigate('/requests?tab=for-delivery')}
+            className="p-4 bg-orange-50 border-orange-100 flex items-center space-x-4 group hover:bg-orange-100 active:scale-[0.97] transition-all cursor-pointer"
+          >
             <div className="w-10 h-10 rounded-xl bg-orange-500 flex items-center justify-center text-white shadow-lg shadow-orange-500/20 group-hover:scale-110 transition-transform flex-shrink-0">
               <Truck size={20} />
             </div>
@@ -242,7 +257,10 @@ export const Dashboard = () => {
           </Card>
 
           {/* Metric: Pending Approval */}
-          <Card className="p-4 bg-blue-50 border-blue-100 flex items-center space-x-4 group hover:bg-blue-100 transition-colors">
+          <Card
+            onClick={() => navigate('/requests?tab=pending')}
+            className="p-4 bg-blue-50 border-blue-100 flex items-center space-x-4 group hover:bg-blue-100 active:scale-[0.97] transition-all cursor-pointer"
+          >
             <div className="w-10 h-10 rounded-xl bg-blue-500 flex items-center justify-center text-white shadow-lg shadow-blue-500/20 group-hover:scale-110 transition-transform flex-shrink-0">
               <Clock size={20} />
             </div>

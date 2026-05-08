@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { ChevronRight, ChevronDown, MapPin, Truck, Wrench, Package, ArrowLeftRight, History, Check, X, AlertTriangle, Search, Pencil, Trash2 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { useAuth, useData } from '../../App';
@@ -14,19 +15,25 @@ import { Request } from '../../types';
 export const RequestsView = () => {
   const { profile } = useAuth();
   const { items, locations, uoms, users, inventory } = useData();
+  const [searchParams] = useSearchParams();
+  const tabParam = searchParams.get('tab');
   const [filter, setFilter] = useState<'pending' | 'approved' | 'for delivery' | 'delivered' | 'rejected' | 'cancelled'>('pending');
   const [hasSetDefaultFilter, setHasSetDefaultFilter] = useState(false);
 
   useEffect(() => {
     if (profile && !hasSetDefaultFilter) {
-      if (profile.role === 'warehouseman') {
+      if (tabParam === 'for-delivery') {
+        setFilter('for delivery');
+      } else if (tabParam === 'pending') {
+        setFilter('pending');
+      } else if (profile.role === 'warehouseman') {
         setFilter('approved');
       } else if (profile.role === 'worker' || profile.role === 'engineer') {
         setFilter('for delivery');
       }
       setHasSetDefaultFilter(true);
     }
-  }, [profile, hasSetDefaultFilter]);
+  }, [profile, hasSetDefaultFilter, tabParam]);
   const [editingRequest, setEditingRequest] = useState<Request | null>(null);
   const [rejectingRequest, setRejectingRequest] = useState<Request | null>(null);
   const [adjustingRequest, setAdjustingRequest] = useState<Request | null>(null);

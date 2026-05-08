@@ -1346,11 +1346,12 @@ export const recordBulkReceivePO = async (
       const updatedPoItems = [...poData.items];
       
       // Track item state changes for multiple lines of the same item
-      const rollingItemState: Record<string, { totalQuantity: number; averageCost: number }> = {};
+      const rollingItemState: Record<string, { totalQuantity: number; averageCost: number; variantCosts: Record<string, number> }> = {};
       for (const id in itemDataMap) {
         rollingItemState[id] = {
           totalQuantity: itemDataMap[id].totalQuantity || 0,
-          averageCost: itemDataMap[id].averageCost || 0
+          averageCost: itemDataMap[id].averageCost || 0,
+          variantCosts: { ...(itemDataMap[id].averageCostPerVariant || {}) },
         };
       }
 
@@ -1392,6 +1393,7 @@ export const recordBulkReceivePO = async (
         // Inventory update
         const invRef = getInventoryRef(receive.itemId, options.toLocationId, receive.variant, receive.serialNumber, receive.customSpec);
         const invInfo = invDataMap[invRef.path];
+        const preReceiptQty = invInfo.quantity;
         invInfo.quantity += baseQuantity;
 
         dbTransaction.set(invRef, {
@@ -1422,18 +1424,50 @@ export const recordBulkReceivePO = async (
           const newUnitPricePerBase = receive.unitPrice / conversionFactor;
           const totalQtyBefore = state.totalQuantity;
           const avgCostBefore = state.averageCost;
-          
+
           state.totalQuantity += baseQuantity;
           if (state.totalQuantity > 0) {
             state.averageCost = ((totalQtyBefore * avgCostBefore) + (baseQuantity * newUnitPricePerBase)) / state.totalQuantity;
           }
 
+          // Per-variant weighted average cost
+          const vKey = receive.variant && Object.keys(receive.variant).length > 0
+            ? Object.keys(receive.variant).sort().map(k => `${k}:${receive.variant![k]}`).join('|')
+            : '_base';
+          const existingVariantCost = state.variantCosts[vKey] ?? avgCostBefore;
+          const totalVariantQty = preReceiptQty + baseQuantity;
+          state.variantCosts[vKey] = totalVariantQty > 0
+            ? ((preReceiptQty * existingVariantCost) + (baseQuantity * newUnitPricePerBase)) / totalVariantQty
+            : newUnitPricePerBase;
+
           dbTransaction.update(doc(db, 'items', receive.itemId), {
             totalQuantity: state.totalQuantity,
             averageCost: state.averageCost,
+            averageCostPerVariant: state.variantCosts,
             updatedAt: serverTimestamp(),
             updatedBy: userId
           });
+        }
+
+        // Supplier pricing record
+        if (toIsInternal) {
+          const spRef = doc(collection(db, 'supplier_pricing'));
+          dbTransaction.set(spRef, cleanData({
+            id: spRef.id,
+            supplierId: poData.supplierId,
+            supplierName: poData.supplierName || '',
+            itemId: receive.itemId,
+            variant: receive.variant || null,
+            uomId: receive.uomId,
+            unitPrice: receive.unitPrice,
+            quantityReceived: receive.quantity,
+            baseQuantity,
+            totalCost: receive.totalPrice,
+            receivedDate: timestamp,
+            conversionFactor,
+            poId: poData.id,
+            poNumber: poData.poNumber,
+          }));
         }
 
         // Record Transaction

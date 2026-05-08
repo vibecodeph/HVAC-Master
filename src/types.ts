@@ -63,6 +63,7 @@ export interface Item {
   isTool: boolean;
   isActive: boolean;
   averageCost?: number; // Default average cost per base unit
+  averageCostPerVariant?: Record<string, number>; // Weighted avg cost per variant key
   totalQuantity?: number; // Total quantity across all locations
   reorderLevel?: number; // Default reorder level in base UOM
   preferredSupplierId?: string; // Optional preferred supplier
@@ -230,6 +231,7 @@ export interface PurchaseOrderItem {
   totalPrice: number;
   receivedQuantity: number;
   note?: string;
+  conversionFactor?: number;
   description?: string; // Snapshot for printing
   uom?: string; // Snapshot for printing
   sortOrder?: number;
@@ -284,6 +286,23 @@ export interface PurchaseOrder {
   createdByName?: string;
   updatedAt?: Timestamp;
   updatedBy?: string;
+}
+
+export interface SupplierPricingRecord {
+  id: string;
+  supplierId: string;
+  supplierName: string;
+  itemId: string;
+  variant?: Record<string, string> | null;
+  uomId: string;
+  unitPrice: number;
+  quantityReceived: number;
+  baseQuantity: number;
+  totalCost: number;
+  receivedDate: Timestamp;
+  conversionFactor: number;
+  poId: string;
+  poNumber: string;
 }
 
 export interface RBACRoleConfig {

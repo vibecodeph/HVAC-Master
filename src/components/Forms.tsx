@@ -2838,10 +2838,14 @@ export const PurchaseOrderForm = ({ items, locations, uoms, profile, initialData
   }, [items, pendingNewItemId]);
 
   const addItemToPO = (item: Item) => {
+    const largestConv = item.uomConversions?.length
+      ? item.uomConversions.reduce((best, curr) => curr.factor > best.factor ? curr : best)
+      : null;
     const newItem: PurchaseOrderItem = {
       itemId: item.id,
       quantity: 1,
-      uomId: item.uomId,
+      uomId: largestConv ? largestConv.uomId : item.uomId,
+      conversionFactor: largestConv ? largestConv.factor : 1,
       srp: item.averageCost || 0,
       discount: 0,
       discountType: 'amount',
@@ -3033,8 +3037,19 @@ export const PurchaseOrderForm = ({ items, locations, uoms, profile, initialData
           <div className="space-y-3">
             {poItems.map((poItem, idx) => {
               const item = items.find(i => i.id === poItem.itemId);
-              const uomSymbol = uoms.find(u => u.id === (item?.uomId || poItem.uomId) || u.symbol === (item?.uomId || poItem.uomId))?.symbol || item?.uomId || poItem.uomId;
-              
+              const baseUom = uoms.find(u => u.id === item?.uomId || u.symbol === item?.uomId);
+              const selectedUom = uoms.find(u => u.id === poItem.uomId || u.symbol === poItem.uomId);
+              const selectedUomSymbol = selectedUom?.symbol || poItem.uomId;
+              const availableUoms = [
+                { uomId: item?.uomId || '', symbol: baseUom?.symbol || item?.uomId || '', factor: 1 },
+                ...(item?.uomConversions || []).map(conv => {
+                  const convUom = uoms.find(u => u.id === conv.uomId || u.symbol === conv.uomId);
+                  return { uomId: conv.uomId, symbol: convUom?.symbol || conv.uomId, factor: conv.factor };
+                })
+              ];
+              const hasConversions = availableUoms.length > 1;
+              const conversionFactor = poItem.conversionFactor || 1;
+
               return (
                 <div key={idx} className="p-4 bg-gray-50 rounded-2xl border border-gray-100 space-y-4">
                   <div className="flex flex-col lg:flex-row gap-4 items-start">
@@ -3046,7 +3061,29 @@ export const PurchaseOrderForm = ({ items, locations, uoms, profile, initialData
                       <div className="flex-1 min-w-0">
                         <div className="mb-2">
                           <p className="text-sm font-bold text-gray-900 truncate">{item?.name || 'Unknown Item'}</p>
-                          <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">{uomSymbol}</p>
+                          {hasConversions ? (
+                            <div className="mt-1 space-y-0.5">
+                              <select
+                                value={poItem.uomId}
+                                onChange={e => {
+                                  const sel = availableUoms.find(u => u.uomId === e.target.value);
+                                  updatePOItem(idx, { uomId: e.target.value, conversionFactor: sel?.factor || 1 });
+                                }}
+                                className="w-full p-1.5 bg-white border border-gray-200 rounded-lg text-[10px] font-bold outline-none focus:ring-2 focus:ring-blue-500"
+                              >
+                                {availableUoms.map(u => (
+                                  <option key={u.uomId} value={u.uomId}>{u.symbol}</option>
+                                ))}
+                              </select>
+                              {conversionFactor > 1 && (
+                                <p className="text-[9px] text-blue-500 font-bold pl-1">
+                                  1 {selectedUomSymbol} = {conversionFactor} {baseUom?.symbol || item?.uomId}
+                                </p>
+                              )}
+                            </div>
+                          ) : (
+                            <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">{selectedUomSymbol}</p>
+                          )}
                         </div>
                         <textarea
                           value={poItem.note || ''}

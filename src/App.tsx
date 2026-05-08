@@ -35,6 +35,7 @@ const JobsiteBOQView = lazy(() => import('./components/views/Admin/JobsiteBOQ').
 const PurchaseOrderList = lazy(() => import('./components/views/PurchaseOrderList').then(m => ({ default: m.PurchaseOrderList })));
 const PurchaseOrderForm = lazy(() => import('./components/Forms').then(m => ({ default: m.PurchaseOrderForm })));
 const POTemplateSettings = lazy(() => import('./components/views/Admin/POTemplateSettings').then(m => ({ default: m.POTemplateSettings })));
+const SupplierPricingView = lazy(() => import('./components/views/Admin/SupplierPricing').then(m => ({ default: m.SupplierPricingView })));
 const POPrintView = lazy(() => import('./components/views/POPrintView').then(m => ({ default: m.POPrintView })));
 
 const PurchaseOrderView = () => {
@@ -572,6 +573,14 @@ const App = () => {
                     <ProtectedRoute requireAdmin={false}>
                       <Layout>
                         <UsersManagementView />
+                      </Layout>
+                    </ProtectedRoute>
+                  } />
+
+                  <Route path="/settings/manage/supplier-pricing" element={
+                    <ProtectedRoute requireAdmin>
+                      <Layout>
+                        <SupplierPricingView />
                       </Layout>
                     </ProtectedRoute>
                   } />

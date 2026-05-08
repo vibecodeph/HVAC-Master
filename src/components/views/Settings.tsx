@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ChevronRight, Package, Filter, MapPin, Box, Users, Shield, Trash2, AlertCircle, Loader2, Check, LogOut, Hammer, UserCheck } from 'lucide-react';
+import { ChevronRight, Package, Filter, MapPin, Box, Users, Shield, Trash2, AlertCircle, Loader2, Check, LogOut, Hammer, UserCheck, Tag } from 'lucide-react';
 import { useAuth, useData } from '../../App';
 import { clearInventoryData, updateSystemConfig } from '../../services/inventoryService';
 import { cn } from '../../lib/utils';
@@ -107,6 +107,7 @@ export const SettingsView = () => {
                 { label: 'Tags Management', icon: Filter, path: '/settings/manage/metadata/tags' },
                 { label: 'User Management', icon: Users, path: '/settings/manage/users' },
                 { label: 'Role-Based Access Control', icon: Shield, path: '/settings/manage/rbac' },
+                { label: 'Supplier Pricing', icon: Tag, path: '/settings/manage/supplier-pricing' },
               ].map((item) => (
                 <button 
                   key={item.label} 

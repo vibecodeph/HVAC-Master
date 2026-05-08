@@ -102,10 +102,6 @@ export const RequestsView = () => {
         if (hasAccess) {
           setSelectedJobsiteId(savedSite);
         }
-      } else if (profile.role !== 'admin') {
-        if (userAssignedJobsites.length > 0) {
-          setSelectedJobsiteId(userAssignedJobsites[0].id);
-        }
       }
       setHasSetDefaultJobsite(true);
     }
@@ -315,20 +311,18 @@ export const RequestsView = () => {
           {userJobsites.length > 1 && (
             <div className="relative">
               <MapPin className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={18} />
-              <select 
+              <select
                 value={selectedJobsiteId}
                 onChange={(e) => {
                   const val = e.target.value;
                   setSelectedJobsiteId(val);
-                  if (profile?.uid && val !== 'all') {
+                  if (profile?.uid) {
                     localStorage.setItem(`lastSite_${profile.uid}`, val);
                   }
                 }}
                 className="w-full pl-10 pr-10 py-3 bg-gray-100 border-none rounded-2xl text-base font-medium focus:ring-2 focus:ring-blue-500 outline-none appearance-none"
               >
-                {profile?.role === 'admin' && (
-                  <option value="all">All Jobsites</option>
-                )}
+                <option value="all">All Jobsites</option>
                 {userJobsites.sort((a, b) => a.name.localeCompare(b.name)).map(loc => (
                   <option key={loc.id} value={loc.id}>{loc.name}</option>
                 ))}

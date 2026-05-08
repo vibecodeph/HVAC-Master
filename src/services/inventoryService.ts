@@ -1222,6 +1222,14 @@ export const cancelRequest = async (id: string) => {
   }
 };
 
+export const deleteRequest = async (id: string) => {
+  try {
+    await deleteDoc(doc(db, 'requests', id));
+  } catch (error) {
+    handleFirestoreError(error, OperationType.DELETE, 'requests');
+  }
+};
+
 export const approveRequest = async (id: string, approvedQty: number, approverId: string, approverName?: string, engineerNote?: string) => {
   try {
     const requestRef = doc(db, 'requests', id);

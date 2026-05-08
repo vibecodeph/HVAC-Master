@@ -1,9 +1,9 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { ChevronRight, ChevronDown, MapPin, Truck, Wrench, Package, ArrowLeftRight, History, Check, X, AlertTriangle, Search } from 'lucide-react';
+import { ChevronRight, ChevronDown, MapPin, Truck, Wrench, Package, ArrowLeftRight, History, Check, X, AlertTriangle, Search, Pencil, Trash2 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { useAuth, useData } from '../../App';
 import { onSnapshot, collection, query, where, orderBy, limit, serverTimestamp } from 'firebase/firestore';
-import { subscribeToRequests, approveRequest, updateRequest, recordBulkPick, recordBulkReceive, approveBulkRequests, updateDeliveryQuantity, cancelRequest } from '../../services/inventoryService';
+import { subscribeToRequests, approveRequest, updateRequest, deleteRequest, recordBulkPick, recordBulkReceive, approveBulkRequests, updateDeliveryQuantity, cancelRequest } from '../../services/inventoryService';
 import { cn } from '../../lib/utils';
 import { Header } from '../common/Header';
 import { Card } from '../common/Card';
@@ -35,8 +35,17 @@ export const RequestsView = () => {
   const [isProcessing, setIsProcessing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [requestToCancel, setRequestToCancel] = useState<string | null>(null);
-
-  // ... mid sections omitted for brevity in multi_edit if possible, but edit_file requires precision
+  const [editRequestForm, setEditRequestForm] = useState<Request | null>(null);
+  const [editItemId, setEditItemId] = useState('');
+  const [editVariant, setEditVariant] = useState<Record<string, string>>({});
+  const [editCustomSpec, setEditCustomSpec] = useState('');
+  const [editQty, setEditQty] = useState(1);
+  const [editNote, setEditNote] = useState('');
+  const [editSourceLocationId, setEditSourceLocationId] = useState('');
+  const [editItemSearch, setEditItemSearch] = useState('');
+  const [editShowItemSearch, setEditShowItemSearch] = useState(false);
+  const [deletingRequest, setDeletingRequest] = useState<Request | null>(null);
+  const [successMsg, setSuccessMsg] = useState<string | null>(null);
 
   const handleUpdateDeliveryQty = async (requestId: string, newQty: number, createBackorder: boolean) => {
     setIsProcessing(true);
@@ -265,6 +274,79 @@ export const RequestsView = () => {
     setLimitCount(prev => prev + 50);
   };
 
+  const canEditRequest = (r: Request) => {
+    if (!profile) return false;
+    if (profile.role === 'admin') return true;
+    if (profile.role === 'engineer' || profile.role === 'manager') return r.status !== 'delivered';
+    if (profile.role === 'worker') return r.status === 'pending' && r.requestorId === profile.uid;
+    return false;
+  };
+
+  const canDeleteRequest = (r: Request) => {
+    if (!profile) return false;
+    if (profile.role === 'admin') return true;
+    if (profile.role === 'engineer' || profile.role === 'manager') return r.status !== 'delivered';
+    if (profile.role === 'worker') return r.status === 'pending' && r.requestorId === profile.uid;
+    return false;
+  };
+
+  const openEditModal = (r: Request) => {
+    setEditRequestForm(r);
+    setEditItemId(r.itemId);
+    setEditVariant(r.variant ? { ...r.variant } : {});
+    setEditCustomSpec(r.customSpec || '');
+    setEditQty(r.requestedQty);
+    setEditNote(r.workerNote || '');
+    setEditSourceLocationId(r.sourceLocationId || '');
+    setEditItemSearch('');
+    setEditShowItemSearch(false);
+  };
+
+  const closeEditModal = () => {
+    setEditRequestForm(null);
+    setEditItemSearch('');
+    setEditShowItemSearch(false);
+  };
+
+  const handleEditSave = async () => {
+    if (!editRequestForm || editQty <= 0) return;
+    setIsProcessing(true);
+    setError(null);
+    try {
+      const editItem = items.find(i => i.id === editItemId);
+      await updateRequest(editRequestForm.id, {
+        itemId: editItemId,
+        variant: Object.keys(editVariant).length > 0 ? editVariant : undefined,
+        customSpec: editCustomSpec || undefined,
+        requestedQty: editQty,
+        uomId: editItem?.uomId || editRequestForm.uomId,
+        workerNote: editNote || undefined,
+        sourceLocationId: editSourceLocationId || undefined,
+      });
+      closeEditModal();
+      setSuccessMsg('Request updated successfully.');
+    } catch (err: any) {
+      setError(err.message || 'Failed to update request');
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  const handleDeleteRequest = async () => {
+    if (!deletingRequest) return;
+    setIsProcessing(true);
+    setError(null);
+    try {
+      await deleteRequest(deletingRequest.id);
+      setDeletingRequest(null);
+      setSuccessMsg('Request deleted.');
+    } catch (err: any) {
+      setError(err.message || 'Failed to delete request');
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
   return (
     <div className="pb-20 relative">
       <AnimatePresence>
@@ -298,10 +380,28 @@ export const RequestsView = () => {
                 <AlertTriangle className="text-red-500 shrink-0" size={18} />
                 <p className="text-xs font-bold text-red-700">{error}</p>
               </div>
-              <button 
+              <button
                 onClick={() => setError(null)}
                 className="text-red-400 p-1 hover:text-red-600 transition-colors"
               >
+                <X size={16} />
+              </button>
+            </div>
+          </motion.div>
+        )}
+        {successMsg && (
+          <motion.div
+            initial={{ height: 0, opacity: 0, margin: 0 }}
+            animate={{ height: 'auto', opacity: 1, marginBottom: 16 }}
+            exit={{ height: 0, opacity: 0, margin: 0 }}
+            className="overflow-hidden"
+          >
+            <div className="bg-green-50 border border-green-100 p-4 rounded-2xl flex items-center justify-between">
+              <div className="flex items-center space-x-3">
+                <Check className="text-green-500 shrink-0" size={18} />
+                <p className="text-xs font-bold text-green-700">{successMsg}</p>
+              </div>
+              <button onClick={() => setSuccessMsg(null)} className="text-green-400 p-1 hover:text-green-600 transition-colors">
                 <X size={16} />
               </button>
             </div>
@@ -537,11 +637,29 @@ export const RequestsView = () => {
                             </button>
                           )}
                           {filter === 'for delivery' && profile?.role !== 'warehouseman' && (
-                            <button 
+                            <button
                               onClick={() => handleReceive([r.id])}
                               className="px-4 h-10 bg-blue-600 text-white rounded-xl text-xs font-black uppercase tracking-widest active:scale-95 transition-transform"
                             >
                               Receive
+                            </button>
+                          )}
+                          {canEditRequest(r) && (
+                            <button
+                              onClick={() => openEditModal(r)}
+                              title="Edit request"
+                              className="w-9 h-9 flex items-center justify-center text-gray-400 bg-gray-50 rounded-xl active:scale-95 transition-transform hover:text-blue-500 hover:bg-blue-50"
+                            >
+                              <Pencil size={14} />
+                            </button>
+                          )}
+                          {canDeleteRequest(r) && (
+                            <button
+                              onClick={() => setDeletingRequest(r)}
+                              title="Delete request"
+                              className="w-9 h-9 flex items-center justify-center text-gray-400 bg-gray-50 rounded-xl active:scale-95 transition-transform hover:text-red-500 hover:bg-red-50"
+                            >
+                              <Trash2 size={14} />
                             </button>
                           )}
                         </div>
@@ -626,13 +744,177 @@ export const RequestsView = () => {
 
       <Modal isOpen={!!adjustingRequest} onClose={() => setAdjustingRequest(null)} title="Adjust Delivery Quantity">
         {adjustingRequest && (
-          <DeliveryQuantityEditModal 
+          <DeliveryQuantityEditModal
             request={adjustingRequest}
             items={items}
             uoms={uoms}
             onUpdate={handleUpdateDeliveryQty}
             onClose={() => setAdjustingRequest(null)}
           />
+        )}
+      </Modal>
+
+      <Modal isOpen={!!editRequestForm} onClose={closeEditModal} title="Edit Request">
+        {editRequestForm && (() => {
+          const editItem = items.find(i => i.id === editItemId);
+          const warehouses = locations.filter(l => l.type === 'warehouse' && l.isActive);
+          const matchingItems = editItemSearch
+            ? items.filter(i => i.isActive && i.name.toLowerCase().includes(editItemSearch.toLowerCase())).slice(0, 8)
+            : [];
+          return (
+            <div className="space-y-4">
+              <div className="space-y-2">
+                <label className="text-xs font-bold text-gray-400 uppercase tracking-wider">Item</label>
+                <div className="p-3 bg-blue-50 rounded-xl border border-blue-100">
+                  <p className="text-sm font-bold text-gray-900">{editItem?.name || 'Unknown item'}</p>
+                </div>
+                <div className="relative">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={14} />
+                  <input
+                    value={editItemSearch}
+                    onChange={e => { setEditItemSearch(e.target.value); setEditShowItemSearch(true); }}
+                    onFocus={() => setEditShowItemSearch(true)}
+                    onBlur={() => setTimeout(() => setEditShowItemSearch(false), 150)}
+                    placeholder="Search to change item..."
+                    className="w-full pl-8 pr-4 py-2 bg-gray-100 rounded-xl text-sm outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                  {editShowItemSearch && matchingItems.length > 0 && (
+                    <div className="absolute top-full left-0 right-0 bg-white shadow-xl rounded-xl border border-gray-100 z-10 max-h-48 overflow-y-auto mt-1">
+                      {matchingItems.map(i => (
+                        <button
+                          key={i.id}
+                          onMouseDown={() => {
+                            setEditItemId(i.id);
+                            setEditVariant({});
+                            setEditCustomSpec('');
+                            setEditItemSearch('');
+                            setEditShowItemSearch(false);
+                          }}
+                          className="w-full p-3 text-left text-sm font-medium hover:bg-gray-50 transition-colors"
+                        >
+                          {i.name}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+              {editItem?.variantAttributes && editItem.variantAttributes.length > 0 && (
+                <div className="space-y-2">
+                  <label className="text-xs font-bold text-gray-400 uppercase tracking-wider">Variant</label>
+                  <div className="grid grid-cols-2 gap-2">
+                    {editItem.variantAttributes.map(attr => (
+                      <div key={attr.name} className="space-y-1">
+                        <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">{attr.name}</label>
+                        <select
+                          value={editVariant[attr.name] || ''}
+                          onChange={e => setEditVariant(prev => ({ ...prev, [attr.name]: e.target.value }))}
+                          className="w-full p-2 bg-gray-100 rounded-xl text-xs outline-none focus:ring-2 focus:ring-blue-500"
+                        >
+                          <option value="">Select...</option>
+                          {attr.values.map(v => <option key={v} value={v}>{v}</option>)}
+                        </select>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {editItem?.requireCustomSpec && (
+                <div className="space-y-1">
+                  <label className="text-xs font-bold text-gray-400 uppercase tracking-wider">{editItem.customSpecLabel || 'Specification'}</label>
+                  <input
+                    value={editCustomSpec}
+                    onChange={e => setEditCustomSpec(e.target.value)}
+                    className="w-full p-2 bg-gray-100 rounded-xl text-sm outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                </div>
+              )}
+              <div className="space-y-1">
+                <label className="text-xs font-bold text-gray-400 uppercase tracking-wider">
+                  Quantity ({uoms.find(u => u.id === editItem?.uomId || u.symbol === editItem?.uomId)?.symbol || editItem?.uomId})
+                </label>
+                <input
+                  type="number"
+                  min="0.001"
+                  step="any"
+                  value={editQty}
+                  onChange={e => setEditQty(Number(e.target.value))}
+                  className="w-full p-2 bg-gray-100 rounded-xl text-sm outline-none focus:ring-2 focus:ring-blue-500"
+                />
+              </div>
+              <div className="space-y-1">
+                <label className="text-xs font-bold text-gray-400 uppercase tracking-wider">Note (optional)</label>
+                <textarea
+                  value={editNote}
+                  onChange={e => setEditNote(e.target.value)}
+                  placeholder="Add a note..."
+                  rows={2}
+                  className="w-full p-2 bg-gray-100 rounded-xl text-sm outline-none focus:ring-2 focus:ring-blue-500 resize-none"
+                />
+              </div>
+              {warehouses.length > 0 && (
+                <div className="space-y-1">
+                  <label className="text-xs font-bold text-gray-400 uppercase tracking-wider">Preferred Source (optional)</label>
+                  <select
+                    value={editSourceLocationId}
+                    onChange={e => setEditSourceLocationId(e.target.value)}
+                    className="w-full p-2 bg-gray-100 rounded-xl text-sm outline-none focus:ring-2 focus:ring-blue-500"
+                  >
+                    <option value="">Any warehouse</option>
+                    {warehouses.map(w => <option key={w.id} value={w.id}>{w.name}</option>)}
+                  </select>
+                </div>
+              )}
+              <div className="flex space-x-3">
+                <button onClick={closeEditModal} className="flex-1 py-4 bg-gray-100 text-gray-900 rounded-2xl font-bold uppercase tracking-widest text-xs active:scale-95 transition-transform">
+                  Cancel
+                </button>
+                <button
+                  disabled={editQty <= 0 || !editItemId}
+                  onClick={handleEditSave}
+                  className="flex-1 py-4 bg-blue-600 text-white rounded-2xl font-bold uppercase tracking-widest text-xs active:scale-95 transition-transform disabled:opacity-50"
+                >
+                  Save Changes
+                </button>
+              </div>
+            </div>
+          );
+        })()}
+      </Modal>
+
+      <Modal isOpen={!!deletingRequest} onClose={() => setDeletingRequest(null)} title="Delete Request">
+        {deletingRequest && (
+          <div className="space-y-6">
+            {deletingRequest.batchId ? (
+              <div className="p-4 bg-red-50 rounded-2xl">
+                <p className="text-sm font-bold text-red-800">Cannot delete — linked delivery exists</p>
+                <p className="text-xs text-red-600 mt-1">
+                  This request is part of delivery DR#{deletingRequest.batchId.replace('DR#', '')}. Contact an admin to reverse this delivery first.
+                </p>
+              </div>
+            ) : (
+              <div className="p-4 bg-red-50 rounded-2xl">
+                <p className="text-sm text-red-800 font-medium">Are you sure you want to delete this request?</p>
+                <p className="text-xs text-red-600 mt-1">This action cannot be undone.</p>
+              </div>
+            )}
+            <div className="flex space-x-3">
+              <button
+                onClick={() => setDeletingRequest(null)}
+                className="flex-1 py-4 bg-gray-100 text-gray-900 rounded-2xl font-bold uppercase tracking-widest text-xs active:scale-95 transition-transform"
+              >
+                {deletingRequest.batchId ? 'Close' : 'Cancel'}
+              </button>
+              {!deletingRequest.batchId && (
+                <button
+                  onClick={handleDeleteRequest}
+                  className="flex-1 py-4 bg-red-600 text-white rounded-2xl font-bold uppercase tracking-widest text-xs active:scale-95 transition-transform"
+                >
+                  Yes, Delete
+                </button>
+              )}
+            </div>
+          </div>
         )}
       </Modal>
     </div>

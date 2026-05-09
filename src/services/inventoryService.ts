@@ -1523,9 +1523,28 @@ export const recordBulkReceivePO = async (
   }
 };
 
+export const getExistingDRForJobsite = async (jobsiteId: string): Promise<string | null> => {
+  try {
+    const q = query(
+      collection(db, 'requests'),
+      where('jobsiteId', '==', jobsiteId),
+      where('status', '==', 'for delivery'),
+      limit(10)
+    );
+    const snap = await getDocs(q);
+    for (const d of snap.docs) {
+      const batchId = (d.data() as Request).batchId;
+      if (batchId) return batchId;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+};
+
 export const recordBulkPick = async (
-  selections: { requestId: string; deliveredQty: number; sourceLocationId: string; variant?: Record<string, string>; backorder?: boolean; serialNumbers?: string[] }[], 
-  warehousemanId: string, 
+  selections: { requestId: string; deliveredQty: number; sourceLocationId: string; variant?: Record<string, string>; backorder?: boolean; serialNumbers?: string[] }[],
+  warehousemanId: string,
   warehousemanName?: string,
   options?: { customBatchId?: string; customDate?: Date }
 ) => {

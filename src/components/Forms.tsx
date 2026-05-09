@@ -1,11 +1,12 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { Check, Loader2, Plus, X, Wrench, Box, Settings2, ChevronDown, ChevronUp, Search, Calendar, ChevronRight, Package, ArrowLeftRight, MapPin } from 'lucide-react';
 import { 
-  addItem, updateItem, 
+  addItem, updateItem,
   recordTransaction, updateTransaction,
   addRequest, recordBulkPullout,
   recordBulkReceivePO,
-  addPOPayment, updatePOPayment, deletePOPayment, subscribeToPOPayments
+  addPOPayment, updatePOPayment, deletePOPayment, subscribeToPOPayments,
+  getExistingDRForJobsite
 } from '../services/inventoryService';
 import { createPurchaseOrder, updatePurchaseOrder as updatePO } from '../services/purchaseOrderService';
 import { cn, normalizeVariant } from '../lib/utils';
@@ -2232,7 +2233,22 @@ interface PickingModalProps {
 
 export const PickingModal = ({ requests, items, locations, inventory, uoms, onDeliver, onClose }: PickingModalProps) => {
   const [customBatchId, setCustomBatchId] = useState('');
+  const [foundDR, setFoundDR] = useState<string | null>(null);
+  const [drLookupDone, setDrLookupDone] = useState(false);
   const [deliveryDate, setDeliveryDate] = useState(new Date().toISOString().split('T')[0]);
+
+  const jobsiteId = requests[0]?.jobsiteId;
+
+  useEffect(() => {
+    if (!jobsiteId) { setDrLookupDone(true); return; }
+    getExistingDRForJobsite(jobsiteId).then(existing => {
+      if (existing) {
+        setFoundDR(existing);
+        setCustomBatchId(existing);
+      }
+      setDrLookupDone(true);
+    });
+  }, [jobsiteId]);
   
   const [selections, setSelections] = useState<Record<string, { deliveredQty: number; sourceLocationId: string; serialNumbers?: string[]; backorder?: boolean }>>(() => {
     const initial: Record<string, { deliveredQty: number; sourceLocationId: string; serialNumbers?: string[]; backorder?: boolean }> = {};
@@ -2271,13 +2287,23 @@ export const PickingModal = ({ requests, items, locations, inventory, uoms, onDe
     <form onSubmit={handleSubmit} className="space-y-6">
       <div className="grid grid-cols-2 gap-4 p-4 bg-blue-50 rounded-2xl border border-blue-100">
         <div className="space-y-1">
-          <label className="text-[10px] font-black text-blue-400 uppercase tracking-widest pl-1">DR Number (Optional)</label>
-          <input 
+          <div className="flex items-center gap-2 pl-1">
+            <label className="text-[10px] font-black text-blue-400 uppercase tracking-widest">DR Number</label>
+            {drLookupDone && (
+              foundDR && customBatchId === foundDR
+                ? <span className="text-[9px] font-black uppercase tracking-widest text-emerald-600 bg-emerald-50 border border-emerald-200 px-1.5 py-0.5 rounded-md">Reusing existing</span>
+                : customBatchId.trim()
+                  ? <span className="text-[9px] font-black uppercase tracking-widest text-amber-600 bg-amber-50 border border-amber-200 px-1.5 py-0.5 rounded-md">Custom</span>
+                  : <span className="text-[9px] font-black uppercase tracking-widest text-gray-400 bg-gray-100 px-1.5 py-0.5 rounded-md">New (auto)</span>
+            )}
+          </div>
+          <input
             type="text"
             value={customBatchId}
             onChange={e => setCustomBatchId(e.target.value)}
-            placeholder="Auto-generate"
-            className="w-full p-3 bg-white border border-blue-100 rounded-xl text-xs font-bold outline-none focus:ring-2 focus:ring-blue-500"
+            placeholder={drLookupDone ? 'Auto-generate' : 'Checking…'}
+            disabled={!drLookupDone}
+            className="w-full p-3 bg-white border border-blue-100 rounded-xl text-xs font-bold outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50"
           />
         </div>
         <div className="space-y-1">

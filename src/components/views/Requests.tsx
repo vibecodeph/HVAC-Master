@@ -341,16 +341,15 @@ export const RequestsView = () => {
 
   const handleDeleteRequest = async () => {
     if (!deletingRequest) return;
-    setIsProcessing(true);
-    setError(null);
+    const deleted = deletingRequest;
+    setDeletingRequest(null);
+    setLocalRequests(prev => prev.filter(r => r.id !== deleted.id));
+    setSuccessMsg('Request deleted.');
     try {
-      await deleteRequest(deletingRequest.id);
-      setDeletingRequest(null);
-      setSuccessMsg('Request deleted.');
+      await deleteRequest(deleted.id);
     } catch (err: any) {
+      setLocalRequests(prev => [...prev, deleted]);
       setError(err.message || 'Failed to delete request');
-    } finally {
-      setIsProcessing(false);
     }
   };
 

@@ -1222,6 +1222,40 @@ export const cancelRequest = async (id: string) => {
   }
 };
 
+export const cancelApproval = async (id: string) => {
+  try {
+    await updateDoc(doc(db, 'requests', id), {
+      status: 'pending',
+      approverId: deleteField(),
+      approverName: deleteField(),
+      approvedQty: deleteField(),
+      approvedAt: deleteField(),
+      engineerNote: deleteField(),
+      updatedAt: serverTimestamp()
+    });
+  } catch (error) {
+    handleFirestoreError(error, OperationType.UPDATE, 'requests');
+  }
+};
+
+export const unpickRequest = async (id: string) => {
+  try {
+    await updateDoc(doc(db, 'requests', id), {
+      status: 'approved',
+      batchId: deleteField(),
+      warehousemanId: deleteField(),
+      warehousemanName: deleteField(),
+      pickedAt: deleteField(),
+      sourceLocationId: deleteField(),
+      deliveredQty: deleteField(),
+      serialNumbers: deleteField(),
+      updatedAt: serverTimestamp()
+    });
+  } catch (error) {
+    handleFirestoreError(error, OperationType.UPDATE, 'requests');
+  }
+};
+
 export const deleteRequest = async (id: string) => {
   try {
     await deleteDoc(doc(db, 'requests', id));

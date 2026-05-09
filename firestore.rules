@@ -542,6 +542,7 @@ service cloud.firestore {
                       ((isWarehouseman() || isEngineer() || isAdmin()) && 'backorderOf' in request.resource.data)
                     ) && hasRequiredFields(['itemId', 'requestedQty', 'uomId', 'jobsiteId', 'status', 'requestorId', 'timestamp']) && isValidRequest(request.resource.data);
       allow update: if isApproved() && (
+                     (request.auth.token.get('role', '') in ['engineer', 'admin'] && resource.data.status == 'approved' && request.resource.data.status == 'pending') ||
                      (isEngineer() && (request.resource.data.get('status', resource.data.status) in ['approved', 'rejected', 'for delivery', 'delivered', 'received', 'cancelled'])) ||
                      (isWarehouseman() && (request.resource.data.get('status', resource.data.status) in ['approved', 'rejected', 'for delivery', 'delivered', 'received', 'cancelled'])) ||
                      (isWorker() && (request.resource.data.get('status', resource.data.status) in ['delivered', 'received', 'cancelled'])) ||

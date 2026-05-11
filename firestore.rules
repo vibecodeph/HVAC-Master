@@ -557,6 +557,11 @@ service cloud.firestore {
                     (isEngineer() && resource.data.status != 'delivered');
     }
 
+    match /requests_archive/{requestId} {
+      allow read: if isAdmin();
+      allow write: if false; // Cloud Functions only
+    }
+
     match /boq/{boqId} {
       allow read, write: if isApproved();
     }

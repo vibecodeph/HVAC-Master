@@ -5,6 +5,7 @@ import { initializeApp } from "firebase-admin/app";
 initializeApp();
 
 export { updateRolePermissions, createRole, deleteRole } from "./rbacManager";
+export { archiveOldRequests, manualArchiveRequests } from "./requestArchiver";
 
 export const syncUserClaims = onDocumentWritten(
   {

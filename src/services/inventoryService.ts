@@ -2737,8 +2737,11 @@ export const subscribeToRequests = (callback: (data: Request[]) => void, locatio
   if (locationIds && locationIds.length > 0) {
     q = query(q, where('jobsiteId', 'in', locationIds));
   }
+  const activeStatuses = new Set(['pending', 'approved', 'for delivery']);
   return onSnapshot(q, (snapshot) => {
-    const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Request));
+    const data = snapshot.docs
+      .map(doc => ({ id: doc.id, ...doc.data() } as Request))
+      .filter(r => activeStatuses.has(r.status));
     callback(data);
   }, (error) => {
     handleFirestoreError(error, OperationType.LIST, 'requests', false);

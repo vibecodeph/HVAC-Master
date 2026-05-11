@@ -119,6 +119,8 @@ export interface Inventory {
   lastEditedBy?: string;
   lastEditedAt?: Timestamp;
   editNotes?: string;
+  assignedJobsiteId?: string;
+  assignedJobsiteName?: string;
 }
 
 export interface Transaction {
@@ -239,6 +241,8 @@ export interface PurchaseOrderItem {
   description?: string; // Snapshot for printing
   uom?: string; // Snapshot for printing
   sortOrder?: number;
+  assignedJobsiteId?: string;
+  assignedJobsiteName?: string;
 }
 
 export interface POTemplate {

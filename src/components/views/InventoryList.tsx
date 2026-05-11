@@ -164,6 +164,14 @@ const ItemCard = ({
                             </span>
                           </div>
                         )}
+                        {invList[0]?.assignedJobsiteId && (
+                          <div className="mb-2">
+                            <span className="text-[10px] px-2 py-1 bg-teal-50 text-teal-600 rounded-lg font-bold tracking-tight flex items-center gap-1 w-fit">
+                              <MapPin size={9} />
+                              {invList[0].assignedJobsiteName || invList[0].assignedJobsiteId}
+                            </span>
+                          </div>
+                        )}
 
                         {boq && (
                           <div className="flex flex-col space-y-1.5 max-w-[200px]">
@@ -927,6 +935,7 @@ export const InventoryList = () => {
             variant={editingInventory.variant}
             profile={profile}
             locationName={locations.find(l => l.id === selectedJobsiteId)?.name || ''}
+            locations={locations}
             onClose={() => setEditingInventory(null)}
           />
         )}

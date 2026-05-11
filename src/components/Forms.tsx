@@ -33,11 +33,12 @@ interface RequestFormProps {
   onComplete: () => void;
 }
 
-export const RequestForm = ({ 
-  item, locations, uoms, profile, 
+export const RequestForm = ({
+  item, locations, uoms, profile,
   defaultJobsiteId, initialVariant, initialCustomSpec,
-  onComplete 
+  onComplete
 }: RequestFormProps) => {
+  const { inventory } = useData();
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [selectedVariant, setSelectedVariant] = useState<Record<string, string>>(initialVariant || {});
@@ -71,7 +72,18 @@ export const RequestForm = ({
       }
 
       const isEngineer = profile?.role === 'engineer' || profile?.role === 'admin' || profile?.role === 'manager';
-      
+
+      // Jobsite assignment check: block requests if item is locked to a different jobsite
+      const variantKey = Object.keys(selectedVariant).length > 0 ? normalizeVariant(selectedVariant) : null;
+      const assignedInv = inventory.filter(inv =>
+        inv.itemId === item.id &&
+        inv.assignedJobsiteId &&
+        (variantKey === null || normalizeVariant(inv.variant) === variantKey)
+      );
+      if (assignedInv.length > 0 && !assignedInv.some(inv => inv.assignedJobsiteId === jobsiteId)) {
+        throw new Error(`This item is assigned to ${assignedInv[0].assignedJobsiteName || 'another jobsite'} only.`);
+      }
+
       await addRequest({
         itemId: item.id,
         requestedQty: qty,
@@ -381,6 +393,18 @@ export const WorkerRequestForm = ({ items, locations, uoms, inventory, profile, 
           })?.factor || 1);
 
       const isEngineer = profile?.role === 'engineer' || profile?.role === 'admin' || profile?.role === 'manager';
+
+      // Jobsite assignment check
+      const wVariantKey = Object.keys(selectedVariant).length > 0 ? normalizeVariant(selectedVariant) : null;
+      const wAssignedInv = inventory.filter(inv =>
+        inv.itemId === selectedItemId &&
+        inv.assignedJobsiteId &&
+        (wVariantKey === null || normalizeVariant(inv.variant) === wVariantKey)
+      );
+      if (wAssignedInv.length > 0 && !wAssignedInv.some(inv => inv.assignedJobsiteId === jobsiteId)) {
+        throw new Error(`This item is assigned to ${wAssignedInv[0].assignedJobsiteName || 'another jobsite'} only.`);
+      }
+
       await addRequest({
         itemId: selectedItemId,
         requestedQty: Number(quantity),
@@ -1641,6 +1665,8 @@ export const TransactionForm = ({ items, locations, inventory, uoms, purchaseOrd
             totalPrice: poi.unitPrice * qty,
             serialNumber: poItemSerials[key] || undefined,
             propertyNumber: poItemProperties[key] || undefined,
+            assignedJobsiteId: poi.assignedJobsiteId,
+            assignedJobsiteName: poi.assignedJobsiteName,
           };
         })
         .filter((i): i is NonNullable<typeof i> => i !== null);
@@ -3163,7 +3189,7 @@ export const PurchaseOrderForm = ({ items, locations, uoms, profile, initialData
                             {item.variantAttributes.map(attr => (
                               <div key={attr.name} className="space-y-1">
                                 <label className="text-[8px] font-black text-gray-400 uppercase tracking-widest pl-1">{attr.name}</label>
-                                <select 
+                                <select
                                   required={item.requireVariant}
                                   value={poItem.variant?.[attr.name] || ''}
                                   onChange={e => {
@@ -3179,6 +3205,30 @@ export const PurchaseOrderForm = ({ items, locations, uoms, profile, initialData
                             ))}
                           </div>
                         )}
+
+                        {/* Jobsite Assignment */}
+                        <div className="mt-2 space-y-1 px-1">
+                          <label className="text-[8px] font-black text-gray-400 uppercase tracking-widest">Assign to Jobsite (optional)</label>
+                          <select
+                            value={poItem.assignedJobsiteId || ''}
+                            onChange={e => {
+                              const loc = locations.find(l => l.id === e.target.value);
+                              updatePOItem(idx, {
+                                assignedJobsiteId: e.target.value || undefined,
+                                assignedJobsiteName: loc?.name || undefined,
+                              });
+                            }}
+                            className="w-full p-1.5 bg-white border border-gray-200 rounded-xl text-[10px] font-bold outline-none focus:ring-2 focus:ring-blue-500"
+                          >
+                            <option value="">— Unassigned —</option>
+                            {locations
+                              .filter(l => l.type === 'jobsite' && l.isActive)
+                              .sort((a, b) => a.name.localeCompare(b.name))
+                              .map(l => (
+                                <option key={l.id} value={l.id}>{l.name}</option>
+                              ))}
+                          </select>
+                        </div>
                       </div>
                     </div>
 

@@ -1333,17 +1333,19 @@ export const approveBulkRequests = async (requestIds: string[], approverId: stri
 
 export const recordBulkReceivePO = async (
   poId: string,
-  receivedItems: { 
-    itemId: string; 
-    variant?: Record<string, string>; 
-    quantity: number; 
-    uomId: string; 
+  receivedItems: {
+    itemId: string;
+    variant?: Record<string, string>;
+    quantity: number;
+    uomId: string;
     unitPrice: number;
     totalPrice: number;
     customSpec?: string;
     serialNumber?: string;
     propertyNumber?: string;
     note?: string;
+    assignedJobsiteId?: string;
+    assignedJobsiteName?: string;
   }[],
   userId: string,
   userName: string,
@@ -1460,7 +1462,11 @@ export const recordBulkReceivePO = async (
           serialNumber: receive.serialNumber || null,
           propertyNumber: receive.propertyNumber || null,
           quantity: invInfo.quantity,
-          updatedAt: serverTimestamp()
+          updatedAt: serverTimestamp(),
+          ...(receive.assignedJobsiteId ? {
+            assignedJobsiteId: receive.assignedJobsiteId,
+            assignedJobsiteName: receive.assignedJobsiteName || null,
+          } : {})
         }, { merge: true });
 
         // Update Asset if serialized
@@ -2769,6 +2775,8 @@ export const manualEditInventory = async (
     unitPrice?: number;
     customSpec?: string;
     notes: string;
+    assignedJobsiteId?: string | null;
+    assignedJobsiteName?: string | null;
   },
   userId: string
 ): Promise<void> => {
@@ -2796,6 +2804,8 @@ export const manualEditInventory = async (
     };
     if (updates.unitPrice !== undefined) invUpdate.unitPrice = updates.unitPrice;
     if (updates.customSpec !== undefined) invUpdate.customSpec = updates.customSpec || null;
+    if (updates.assignedJobsiteId !== undefined) invUpdate.assignedJobsiteId = updates.assignedJobsiteId;
+    if (updates.assignedJobsiteName !== undefined) invUpdate.assignedJobsiteName = updates.assignedJobsiteName;
     txn.update(invRef, invUpdate);
 
     const itemUpdate: Record<string, any> = {

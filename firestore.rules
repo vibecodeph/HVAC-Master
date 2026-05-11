@@ -219,7 +219,7 @@ service cloud.firestore {
     }
 
     function isValidInventory(data) {
-      return hasOnlyAllowedFields(['id', 'itemId', 'locationId', 'quantity', 'variant', 'customSpec', 'serialNumber', 'propertyNumber', 'updatedAt', 'createdBy', 'updatedBy', 'status', 'createdAt', 'unitPrice', 'lastEditedBy', 'lastEditedAt', 'editNotes']) &&
+      return hasOnlyAllowedFields(['id', 'itemId', 'locationId', 'quantity', 'variant', 'customSpec', 'serialNumber', 'propertyNumber', 'updatedAt', 'createdBy', 'updatedBy', 'status', 'createdAt', 'unitPrice', 'lastEditedBy', 'lastEditedAt', 'editNotes', 'assignedJobsiteId', 'assignedJobsiteName']) &&
              (!('itemId' in data) || (data.itemId is string && data.itemId.size() <= 50)) &&
              (!('locationId' in data) || (data.locationId is string && data.locationId.size() <= 50)) &&
              (!('quantity' in data) || data.quantity is number) &&
@@ -236,7 +236,9 @@ service cloud.firestore {
              (!('unitPrice' in data) || data.unitPrice is number) &&
              (!('lastEditedBy' in data) || data.lastEditedBy is string) &&
              (!('lastEditedAt' in data) || data.lastEditedAt is timestamp) &&
-             (!('editNotes' in data) || data.editNotes is string);
+             (!('editNotes' in data) || data.editNotes is string) &&
+             (!('assignedJobsiteId' in data) || data.assignedJobsiteId == null || data.assignedJobsiteId is string) &&
+             (!('assignedJobsiteName' in data) || data.assignedJobsiteName == null || data.assignedJobsiteName is string);
     }
 
     function isValidTransaction(data) {
@@ -421,7 +423,9 @@ service cloud.firestore {
              (!('total' in data) || data.total is number) &&
              (!('receivedQuantity' in data) || data.receivedQuantity is number) &&
              (!('note' in data) || data.note is string) &&
-             (!('description' in data) || data.description is string);
+             (!('description' in data) || data.description is string) &&
+             (!('assignedJobsiteId' in data) || data.assignedJobsiteId == null || data.assignedJobsiteId is string) &&
+             (!('assignedJobsiteName' in data) || data.assignedJobsiteName == null || data.assignedJobsiteName is string);
     }
 
     function isValidPOTemplate(data) {
@@ -444,7 +448,7 @@ service cloud.firestore {
              data.grossAmount is number &&
              data.cvNumber is string && data.cvNumber.size() <= 100 &&
              (!('chequeNumber' in data) || (data.chequeNumber is string && data.chequeNumber.size() <= 100)) &&
-             data.status in ['processing', 'prepared', 'collected'] &&
+             data.status in ['processing', 'prepared', 'collected', 'bank_deposit'] &&
              data.deductions is list && data.deductions.size() <= 20 &&
              data.createdAt is timestamp &&
              data.createdBy is string && data.createdBy.size() <= 50 &&
@@ -491,7 +495,8 @@ service cloud.firestore {
       allow update: if isAdmin()
                        && request.resource.data.diff(resource.data).affectedKeys()
                             .hasOnly(['quantity', 'unitPrice', 'customSpec', 'lastEditedBy',
-                                      'lastEditedAt', 'editNotes', 'updatedBy', 'updatedAt']);
+                                      'lastEditedAt', 'editNotes', 'updatedBy', 'updatedAt',
+                                      'assignedJobsiteId', 'assignedJobsiteName']);
       // Transaction-based updates (recordTransaction via warehouseman/engineer/admin)
       // Uses affectedKeys so admin-only fields already in the doc don't block future writes
       allow update: if isApproved() && (isAdmin() || isWarehouseman() || isEngineer())

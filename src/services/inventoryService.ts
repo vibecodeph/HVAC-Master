@@ -1707,7 +1707,7 @@ export const recordBulkPick = async (
           }
         }
         for (const jid of uniqueJobsiteIds) {
-          const seriesStr = nextSeries.toString().padStart(4, '0');
+          const seriesStr = nextSeries.toString().padStart(3, '0');
           jobsiteBatchIds.set(jid, `DR#${yearYY}-${seriesStr}`);
           nextSeries++;
         }
@@ -2065,7 +2065,7 @@ export const recordBulkReceive = async (requestIds: string[], receiverId: string
               nextSeries = (data.lastSeries || 0) + 1;
             }
           }
-          const seriesStr = nextSeries.toString().padStart(4, '0');
+          const seriesStr = nextSeries.toString().padStart(3, '0');
           sharedBatchId = `DR#${yearYY}-${seriesStr}`;
           dbTransaction.set(counterRef, {
             year: yearYY,

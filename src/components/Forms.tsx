@@ -2231,6 +2231,12 @@ interface PickingModalProps {
   onClose: () => void;
 }
 
+const normalizeDR = (val: string): string => {
+  const trimmed = val.trim();
+  if (!trimmed) return '';
+  return trimmed.startsWith('DR#') ? trimmed : `DR#${trimmed}`;
+};
+
 export const PickingModal = ({ requests, items, locations, inventory, uoms, onDeliver, onClose }: PickingModalProps) => {
   const [customBatchId, setCustomBatchId] = useState('');
   const [foundDR, setFoundDR] = useState<string | null>(null);
@@ -2278,7 +2284,7 @@ export const PickingModal = ({ requests, items, locations, inventory, uoms, onDe
     }));
     
     onDeliver(data, {
-      customBatchId: customBatchId.trim() || undefined,
+      customBatchId: normalizeDR(customBatchId) || undefined,
       customDate: deliveryDate ? new Date(deliveryDate) : undefined
     });
   };
@@ -2301,6 +2307,7 @@ export const PickingModal = ({ requests, items, locations, inventory, uoms, onDe
             type="text"
             value={customBatchId}
             onChange={e => setCustomBatchId(e.target.value)}
+            onBlur={e => setCustomBatchId(normalizeDR(e.target.value))}
             placeholder={drLookupDone ? 'Auto-generate' : 'Checking…'}
             disabled={!drLookupDone}
             className="w-full p-3 bg-white border border-blue-100 rounded-xl text-xs font-bold outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50"

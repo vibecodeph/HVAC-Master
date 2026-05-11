@@ -52,8 +52,6 @@ export const RequestsView = () => {
   const [editItemSearch, setEditItemSearch] = useState('');
   const [editShowItemSearch, setEditShowItemSearch] = useState(false);
   const [deletingRequest, setDeletingRequest] = useState<Request | null>(null);
-  const [cancellingApprovalRequest, setCancellingApprovalRequest] = useState<Request | null>(null);
-  const [unpickingRequest, setUnpickingRequest] = useState<Request | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
 
   const handleUpdateDeliveryQty = async (requestId: string, newQty: number, createBackorder: boolean) => {
@@ -355,13 +353,11 @@ export const RequestsView = () => {
     }
   };
 
-  const handleCancelApproval = async () => {
-    if (!cancellingApprovalRequest) return;
+  const handleCancelApproval = async (requestId: string) => {
     setIsProcessing(true);
     setError(null);
     try {
-      await cancelApproval(cancellingApprovalRequest.id);
-      setCancellingApprovalRequest(null);
+      await cancelApproval(requestId);
       setSuccessMsg('Approval cancelled. Request returned to pending.');
     } catch (err: any) {
       setError(err.message || 'Failed to cancel approval');
@@ -370,13 +366,11 @@ export const RequestsView = () => {
     }
   };
 
-  const handleUnpick = async () => {
-    if (!unpickingRequest) return;
+  const handleUnpick = async (requestId: string) => {
     setIsProcessing(true);
     setError(null);
     try {
-      await unpickRequest(unpickingRequest.id);
-      setUnpickingRequest(null);
+      await unpickRequest(requestId);
       setSuccessMsg('Items unpicked. Request returned to approved status.');
     } catch (err: any) {
       setError(err.message || 'Failed to unpick request');
@@ -682,7 +676,7 @@ export const RequestsView = () => {
                           )}
                           {canCancelApproval(r) && (
                             <button
-                              onClick={() => setCancellingApprovalRequest(r)}
+                              onClick={() => handleCancelApproval(r.id)}
                               title="Cancel Approval"
                               className="w-9 h-9 flex items-center justify-center text-gray-400 bg-gray-50 rounded-xl active:scale-95 transition-transform hover:text-amber-500 hover:bg-amber-50"
                             >
@@ -699,7 +693,7 @@ export const RequestsView = () => {
                           )}
                           {canUnpick(r) && (
                             <button
-                              onClick={() => setUnpickingRequest(r)}
+                              onClick={() => handleUnpick(r.id)}
                               title="Unpick"
                               className="w-9 h-9 flex items-center justify-center text-gray-400 bg-gray-50 rounded-xl active:scale-95 transition-transform hover:text-amber-500 hover:bg-amber-50"
                             >
@@ -942,48 +936,6 @@ export const RequestsView = () => {
             </div>
           );
         })()}
-      </Modal>
-
-      <Modal isOpen={!!cancellingApprovalRequest} onClose={() => setCancellingApprovalRequest(null)} title="Cancel Approval">
-        {cancellingApprovalRequest && (
-          <div className="space-y-6">
-            <div className="p-4 bg-amber-50 rounded-2xl">
-              <p className="text-sm text-amber-800 font-medium">Send this request back to pending?</p>
-              <p className="text-xs text-amber-600 mt-1">The approval will be removed and the worker can re-submit or modify the request.</p>
-            </div>
-            <div className="flex space-x-3">
-              <button onClick={() => setCancellingApprovalRequest(null)} className="flex-1 py-4 bg-gray-100 text-gray-900 rounded-2xl font-bold uppercase tracking-widest text-xs active:scale-95 transition-transform">
-                Cancel
-              </button>
-              <button onClick={handleCancelApproval} className="flex-1 py-4 bg-amber-500 text-white rounded-2xl font-bold uppercase tracking-widest text-xs active:scale-95 transition-transform">
-                Yes, Send Back
-              </button>
-            </div>
-          </div>
-        )}
-      </Modal>
-
-      <Modal isOpen={!!unpickingRequest} onClose={() => setUnpickingRequest(null)} title="Unpick Items">
-        {unpickingRequest && (
-          <div className="space-y-6">
-            <div className="p-4 bg-amber-50 rounded-2xl">
-              <p className="text-sm text-amber-800 font-medium">Remove from delivery and return to approved?</p>
-              <p className="text-xs text-amber-600 mt-1">
-                {unpickingRequest.batchId
-                  ? `This item will be removed from ${unpickingRequest.batchId} and returned to approved status for re-picking.`
-                  : 'This item will be unpicked and returned to approved status.'}
-              </p>
-            </div>
-            <div className="flex space-x-3">
-              <button onClick={() => setUnpickingRequest(null)} className="flex-1 py-4 bg-gray-100 text-gray-900 rounded-2xl font-bold uppercase tracking-widest text-xs active:scale-95 transition-transform">
-                Cancel
-              </button>
-              <button onClick={handleUnpick} className="flex-1 py-4 bg-amber-500 text-white rounded-2xl font-bold uppercase tracking-widest text-xs active:scale-95 transition-transform">
-                Yes, Unpick
-              </button>
-            </div>
-          </div>
-        )}
       </Modal>
 
       <Modal isOpen={!!deletingRequest} onClose={() => setDeletingRequest(null)} title="Delete Request">

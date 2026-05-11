@@ -157,7 +157,7 @@ const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   const [authError, setAuthError] = useState<string | null>(null);
   const prevClaimsRef = useRef<string | null>(null);
 
-  const signIn = async (method: 'popup' | 'redirect' = 'redirect') => {
+  const signIn = async (method: 'popup' | 'redirect' = 'popup') => {
     if (isSigningIn) return;
     setIsSigningIn(true);
     setAuthError(null);

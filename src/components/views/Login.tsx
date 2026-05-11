@@ -66,16 +66,29 @@ export const Login = () => {
               {authError !== 'Sign-in was cancelled.' && (
                 <p className="text-[10px] font-black text-red-900 uppercase tracking-widest mb-1">Sign-in Error</p>
               )}
-              <p className="text-[10px] text-red-700 font-bold leading-relaxed">
+              <p className="text-[10px] text-red-700 font-bold leading-relaxed mb-1">
                 {authError}
               </p>
+              {authError !== 'Sign-in was cancelled.' && (
+                <div className="mt-3 space-y-3">
+                  <p className="text-[9px] text-red-600 font-medium leading-tight italic">
+                    Tip: If the popup is being blocked, try the redirect method instead.
+                  </p>
+                  <button
+                    onClick={() => signIn('redirect')}
+                    className="w-full py-2 px-3 bg-white border border-red-200 text-red-600 rounded-xl text-[10px] font-black uppercase tracking-wider active:scale-95 transition-transform"
+                  >
+                    Try Redirect Method
+                  </button>
+                </div>
+              )}
             </>
           )}
         </div>
       )}
 
       <button 
-        onClick={() => signIn('redirect')}
+        onClick={() => signIn('popup')}
         disabled={isSigningIn}
         className="w-full max-w-xs py-4 bg-gray-900 text-white rounded-2xl font-bold flex items-center justify-center space-x-3 shadow-xl active:scale-95 transition-transform disabled:opacity-50"
       >

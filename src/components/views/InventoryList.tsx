@@ -935,7 +935,6 @@ export const InventoryList = () => {
             variant={editingInventory.variant}
             profile={profile}
             locationName={locations.find(l => l.id === selectedJobsiteId)?.name || ''}
-            locations={locations}
             onClose={() => setEditingInventory(null)}
           />
         )}

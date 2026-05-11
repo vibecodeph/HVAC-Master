@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { AlertTriangle, Loader2, CheckCircle } from 'lucide-react';
-import { Inventory, Item, Location, UserProfile } from '../../types';
+import { Inventory, Item, UserProfile } from '../../types';
 import { manualEditInventory } from '../../services/inventoryService';
 import { cn } from '../../lib/utils';
 
@@ -10,7 +10,6 @@ interface Props {
   variant?: Record<string, string>;
   profile: UserProfile;
   locationName: string;
-  locations: Location[];
   onClose: () => void;
 }
 
@@ -20,13 +19,11 @@ export const InventoryEditModal: React.FC<Props> = ({
   variant,
   profile,
   locationName,
-  locations,
   onClose,
 }) => {
   const [quantity, setQuantity] = useState(String(inv.quantity));
   const [unitPrice, setUnitPrice] = useState(inv.unitPrice !== undefined ? String(inv.unitPrice) : '');
   const [customSpec, setCustomSpec] = useState(inv.customSpec || '');
-  const [assignedJobsiteId, setAssignedJobsiteId] = useState(inv.assignedJobsiteId || '');
   const [notes, setNotes] = useState('');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -49,18 +46,10 @@ export const InventoryEditModal: React.FC<Props> = ({
       setError('Unit price must be a valid number.');
       return;
     }
-    if (!notes.trim()) {
-      setError('Please enter a reason for this manual edit.');
-      return;
-    }
-
     setSaving(true);
     setError(null);
 
     try {
-      const selectedLoc = assignedJobsiteId
-        ? locations.find(l => l.id === assignedJobsiteId)
-        : null;
       await manualEditInventory(
         inv.id!,
         item.id,
@@ -70,8 +59,6 @@ export const InventoryEditModal: React.FC<Props> = ({
           unitPrice: parsedPrice,
           customSpec: customSpec || undefined,
           notes: notes.trim(),
-          assignedJobsiteId: assignedJobsiteId || null,
-          assignedJobsiteName: selectedLoc?.name || null,
         },
         profile.uid
       );
@@ -166,34 +153,7 @@ export const InventoryEditModal: React.FC<Props> = ({
 
       <div>
         <label className="block text-[10px] font-black text-gray-500 uppercase tracking-widest mb-1.5">
-          Assigned Jobsite <span className="text-gray-400 font-medium normal-case tracking-normal">(optional)</span>
-        </label>
-        {inv.assignedJobsiteId && assignedJobsiteId !== inv.assignedJobsiteId && (
-          <div className="mb-2 flex items-start space-x-2 p-2.5 bg-amber-50 rounded-xl border border-amber-200">
-            <AlertTriangle size={12} className="text-amber-500 mt-0.5 shrink-0" />
-            <p className="text-[11px] font-semibold text-amber-700 leading-tight">
-              Changing assignment will affect which jobsite can request this item.
-            </p>
-          </div>
-        )}
-        <select
-          value={assignedJobsiteId}
-          onChange={e => setAssignedJobsiteId(e.target.value)}
-          className="w-full px-3 py-2.5 bg-gray-100 border-none rounded-xl text-sm font-medium focus:ring-2 focus:ring-blue-500 outline-none"
-        >
-          <option value="">— Unassigned (any jobsite) —</option>
-          {locations
-            .filter(l => l.type === 'jobsite' && l.isActive)
-            .sort((a, b) => a.name.localeCompare(b.name))
-            .map(l => (
-              <option key={l.id} value={l.id}>{l.name}</option>
-            ))}
-        </select>
-      </div>
-
-      <div>
-        <label className="block text-[10px] font-black text-gray-500 uppercase tracking-widest mb-1.5">
-          Notes <span className="text-red-500">*</span>
+          Notes <span className="text-gray-400 font-medium normal-case tracking-normal">(optional)</span>
         </label>
         <textarea
           value={notes}

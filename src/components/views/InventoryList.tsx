@@ -421,7 +421,7 @@ export const InventoryList = () => {
 
     itemIds.forEach(itemId => {
       const item = items.find(i => i.id === itemId);
-      if (!item) return;
+      if (!item || !item.isActive) return;
       
       // Filter by Tool/Material
       if (!debouncedSearchTerm) {

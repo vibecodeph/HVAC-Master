@@ -2318,6 +2318,249 @@ export const recordBulkReceive = async (requestIds: string[], receiverId: string
   }
 };
 
+export const reverseDeliveryBatch = async (
+  batchId: string,
+  adminId: string,
+  adminName?: string
+): Promise<void> => {
+  try {
+    const txSnap = await getDocs(query(collection(db, 'transactions'), where('batchId', '==', batchId)));
+    const allTxs = txSnap.docs.map(d => ({ id: d.id, ...d.data() } as Transaction));
+
+    const deliveryTxs = allTxs.filter(t => t.type === 'delivery');
+    const pickTxs     = allTxs.filter(t => t.type === 'pick');
+
+    if (deliveryTxs.length === 0) {
+      throw new Error(`No delivery transactions found for batch ${batchId}.`);
+    }
+
+    // Build source location maps from pick transactions
+    const sourceByItemId = new Map<string, string>(); // itemId → warehouse locationId
+    const sourceBySN     = new Map<string, string>(); // serialNumber → warehouse locationId
+    for (const tx of pickTxs) {
+      if (!tx.fromLocationId || tx.fromLocationId === 'in-transit') continue;
+      if (tx.serialNumber) sourceBySN.set(tx.serialNumber, tx.fromLocationId);
+      else                 sourceByItemId.set(tx.itemId, tx.fromLocationId);
+    }
+
+    const allRequestIds = [...new Set(allTxs.flatMap(t => t.requestIds ?? []))];
+
+    // Pre-fetch requests to supplement source maps and BOQ data
+    const reqPreFetch  = await Promise.all(allRequestIds.map(id => getDoc(doc(db, 'requests', id))));
+    const validReqDocs = reqPreFetch.filter(d => d.exists());
+
+    for (const d of validReqDocs) {
+      const req = d.data() as Request;
+      if (!req.sourceLocationId) continue;
+      if (req.serialNumbers?.length) {
+        for (const sn of req.serialNumbers) {
+          if (!sourceBySN.has(sn)) sourceBySN.set(sn, req.sourceLocationId);
+        }
+      } else {
+        if (!sourceByItemId.has(req.itemId)) sourceByItemId.set(req.itemId, req.sourceLocationId);
+      }
+    }
+
+    const boqMap = new Map<string, string>(); // key → boqId
+    await Promise.all(validReqDocs.map(async docSnap => {
+      const req = docSnap.data() as Request;
+      const { itemId, jobsiteId, variant } = req;
+      const q = query(collection(db, 'boq'), where('jobsiteId', '==', jobsiteId), where('itemId', '==', itemId));
+      const snap = await getDocs(q);
+      const variantStr = normalizeVariant(variant);
+      const match = snap.docs.find(d => normalizeVariant(d.data().variant) === variantStr);
+      if (match) boqMap.set(`${itemId}_${jobsiteId}_${variantStr}`, match.id);
+    }));
+
+    await runTransaction(db, async (dbTransaction) => {
+      const reverseTime = serverTimestamp();
+
+      // --- READS ---
+      const reqCache: Record<string, { ref: any; data: Request }> = {};
+      for (const id of allRequestIds) {
+        const ref  = doc(db, 'requests', id);
+        const snap = await dbTransaction.get(ref);
+        if (snap.exists()) reqCache[id] = { ref, data: snap.data() as Request };
+      }
+
+      const locIds = new Set<string>();
+      for (const tx of deliveryTxs) {
+        if (tx.toLocationId && tx.toLocationId !== 'in-transit') locIds.add(tx.toLocationId);
+      }
+      for (const locId of sourceByItemId.values()) locIds.add(locId);
+      for (const locId of sourceBySN.values())     locIds.add(locId);
+
+      const locDocMap = new Map<string, any>();
+      for (const locId of locIds) {
+        locDocMap.set(locId, await dbTransaction.get(doc(db, 'locations', locId)));
+      }
+      const isInternal = (locId: string | undefined) => {
+        if (!locId) return false;
+        const snap = locDocMap.get(locId);
+        return snap?.exists() && (snap.data()?.type === 'warehouse' || snap.data()?.type === 'jobsite');
+      };
+
+      const invCache: Record<string, { ref: any; quantity: number; serialNumber?: string; metadata: any }> = {};
+      const itemCache: Record<string, Item> = {};
+      const boqCache:  Record<string, { ref: any; quantity: number }> = {};
+
+      for (const tx of deliveryTxs) {
+        const { itemId, toLocationId: jobsiteId, serialNumber, variant, customSpec } = tx;
+        const srcId = serialNumber ? sourceBySN.get(serialNumber) : sourceByItemId.get(itemId);
+
+        if (!itemCache[itemId]) {
+          const snap = await dbTransaction.get(doc(db, 'items', itemId));
+          if (snap.exists()) itemCache[itemId] = snap.data() as Item;
+        }
+
+        if (jobsiteId && jobsiteId !== 'in-transit') {
+          const ref = getInventoryRef(itemId, jobsiteId, variant, serialNumber, customSpec);
+          const k   = ref.path;
+          if (!invCache[k]) {
+            const snap = await dbTransaction.get(ref);
+            invCache[k] = {
+              ref,
+              quantity: (snap.exists() ? snap.data()?.quantity : 0) || 0,
+              serialNumber,
+              metadata: { itemId, locationId: jobsiteId, variant, customSpec },
+            };
+          }
+        }
+
+        if (srcId) {
+          const ref = getInventoryRef(itemId, srcId, variant, serialNumber, customSpec);
+          const k   = ref.path;
+          if (!invCache[k]) {
+            const snap = await dbTransaction.get(ref);
+            invCache[k] = {
+              ref,
+              quantity: (snap.exists() ? snap.data()?.quantity : 0) || 0,
+              serialNumber,
+              metadata: { itemId, locationId: srcId, variant, customSpec },
+            };
+          }
+        }
+
+        for (const reqId of (tx.requestIds ?? [])) {
+          const rq = reqCache[reqId];
+          if (!rq) continue;
+          const variantStr = normalizeVariant(rq.data.variant);
+          const boqId = boqMap.get(`${rq.data.itemId}_${rq.data.jobsiteId}_${variantStr}`);
+          if (boqId && !boqCache[boqId]) {
+            const ref  = doc(db, 'boq', boqId);
+            const snap = await dbTransaction.get(ref);
+            if (snap.exists()) boqCache[boqId] = { ref, quantity: snap.data().currentQuantity || 0 };
+          }
+        }
+      }
+
+      // --- WRITES ---
+      const boqUpdatedReqIds = new Set<string>();
+
+      for (const tx of deliveryTxs) {
+        const { itemId, toLocationId: jobsiteId, serialNumber, variant, customSpec, quantity, baseQuantity, uomId, conversionFactor, requestIds: txReqIds = [] } = tx;
+        const srcId = serialNumber ? sourceBySN.get(serialNumber) : sourceByItemId.get(itemId);
+
+        if (jobsiteId && jobsiteId !== 'in-transit') {
+          const k = getInventoryRef(itemId, jobsiteId, variant, serialNumber, customSpec).path;
+          if (invCache[k]) invCache[k].quantity -= serialNumber ? 1 : baseQuantity;
+        }
+
+        if (srcId) {
+          const k = getInventoryRef(itemId, srcId, variant, serialNumber, customSpec).path;
+          if (invCache[k]) invCache[k].quantity += serialNumber ? 1 : baseQuantity;
+        }
+
+        const returnRef = doc(collection(db, 'transactions'));
+        dbTransaction.set(returnRef, cleanData({
+          itemId,
+          variant:        variant     || null,
+          customSpec:     customSpec  || null,
+          fromLocationId: jobsiteId   || null,
+          toLocationId:   srcId       || null,
+          quantity,
+          serialNumber:   serialNumber || null,
+          uomId,
+          conversionFactor,
+          baseQuantity,
+          type:      'return',
+          userId:    adminId,
+          userName:  adminName || '',
+          timestamp: reverseTime,
+          batchId,
+          requestIds: txReqIds,
+          notes: `Reversed by ${adminName || 'admin'}`,
+        }));
+
+        if (serialNumber && srcId) {
+          const assetRef = doc(db, 'assets', serialNumber);
+          dbTransaction.set(assetRef, { id: serialNumber, itemId, locationId: srcId, updatedAt: reverseTime }, { merge: true });
+        }
+
+        for (const reqId of txReqIds) {
+          if (boqUpdatedReqIds.has(reqId)) continue;
+          const rq = reqCache[reqId];
+          if (!rq) continue;
+          const variantStr = normalizeVariant(rq.data.variant);
+          const boqId = boqMap.get(`${rq.data.itemId}_${rq.data.jobsiteId}_${variantStr}`);
+          if (boqId && boqCache[boqId]) {
+            const newQty = Math.max(0, boqCache[boqId].quantity - baseQuantity);
+            dbTransaction.update(boqCache[boqId].ref, { currentQuantity: newQty });
+            boqCache[boqId].quantity = newQty;
+            boqUpdatedReqIds.add(reqId);
+          }
+        }
+      }
+
+      for (const k in invCache) {
+        const { ref, quantity, serialNumber, metadata } = invCache[k];
+        dbTransaction.set(ref, cleanData({
+          itemId:       metadata.itemId,
+          locationId:   metadata.locationId,
+          variant:      metadata.variant    || null,
+          customSpec:   metadata.customSpec || null,
+          serialNumber: serialNumber        || null,
+          quantity:     Math.max(0, quantity),
+          updatedAt:    serverTimestamp(),
+        }), { merge: true });
+      }
+
+      // Reversal: jobsite (internal) → warehouse (internal) → net = 0 in most cases
+      for (const itemId in itemCache) {
+        const itemData = itemCache[itemId];
+        let netChange = 0;
+        for (const tx of deliveryTxs.filter(t => t.itemId === itemId)) {
+          const srcId     = tx.serialNumber ? sourceBySN.get(tx.serialNumber) : sourceByItemId.get(itemId);
+          const fromIsInt = isInternal(tx.toLocationId);
+          const toIsInt   = isInternal(srcId);
+          netChange += (toIsInt ? tx.baseQuantity : 0) - (fromIsInt ? tx.baseQuantity : 0);
+        }
+        if (netChange !== 0) {
+          dbTransaction.update(doc(db, 'items', itemId), {
+            totalQuantity: (itemData.totalQuantity || 0) + netChange,
+            updatedAt: serverTimestamp(),
+            updatedBy: adminId,
+          });
+        }
+      }
+
+      for (const id of allRequestIds) {
+        const rq = reqCache[id];
+        if (!rq || rq.data.status !== 'delivered') continue;
+        dbTransaction.update(rq.ref, {
+          status:       'for delivery',
+          deliveredAt:  deleteField(),
+          receiverId:   deleteField(),
+          receiverName: deleteField(),
+        });
+      }
+    });
+  } catch (error) {
+    console.error('Reverse delivery failed:', error);
+    handleFirestoreError(error, OperationType.WRITE, 'reverse_delivery');
+  }
+};
+
 export const clearInventoryData = async (includeBOQ: boolean = true, includePOs: boolean = false) => {
   try {
     const collectionsToClear = ['inventory', 'requests', 'transactions', 'unplanned_stock'];

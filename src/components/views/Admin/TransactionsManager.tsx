@@ -9,11 +9,12 @@ import { Timestamp } from 'firebase/firestore';
 import {
   Loader2, RefreshCw, Search, ChevronUp, ChevronDown, Trash2,
   AlertTriangle, Edit3, CheckCircle, ChevronLeft, ChevronRight,
-  Database, Package, MapPin, ChevronRight as ChevronRightIcon, X,
+  Database, Package, MapPin, RotateCcw,
 } from 'lucide-react';
 import { db, handleFirestoreError, OperationType } from '../../../firebase';
 import { useAuth, useData } from '../../../App';
 import { Transaction, Request } from '../../../types';
+import { reverseDeliveryBatch } from '../../../services/inventoryService';
 import { cn } from '../../../lib/utils';
 import { Header } from '../../common/Header';
 import { Card } from '../../common/Card';
@@ -22,10 +23,11 @@ const PAGE_SIZE = 50;
 type SortDir = 'asc' | 'desc';
 
 const STATUS_STYLES: Record<string, { badge: string; border: string }> = {
-  Delivered:  { badge: 'bg-emerald-100 text-emerald-700', border: 'border-l-emerald-400' },
-  'In Transit': { badge: 'bg-amber-100 text-amber-700',   border: 'border-l-amber-400'   },
-  Partial:    { badge: 'bg-blue-100 text-blue-700',       border: 'border-l-blue-400'    },
-  Other:      { badge: 'bg-gray-100 text-gray-500',       border: 'border-l-gray-300'    },
+  Delivered:    { badge: 'bg-emerald-100 text-emerald-700', border: 'border-l-emerald-400' },
+  'In Transit': { badge: 'bg-amber-100 text-amber-700',     border: 'border-l-amber-400'   },
+  Partial:      { badge: 'bg-blue-100 text-blue-700',       border: 'border-l-blue-400'    },
+  Returned:     { badge: 'bg-purple-100 text-purple-700',   border: 'border-l-purple-400'  },
+  Other:        { badge: 'bg-gray-100 text-gray-500',       border: 'border-l-gray-300'    },
 };
 
 const TYPE_COLORS: Record<string, string> = {
@@ -69,14 +71,16 @@ interface BatchGroup {
   pickerName?: string;
   receiverName?: string;
   receiverMixed: boolean;
-  status: 'Delivered' | 'In Transit' | 'Partial' | 'Other';
+  status: 'Delivered' | 'In Transit' | 'Partial' | 'Other' | 'Returned';
   txTypes: string[];
   allRequestIds: string[];
+  returnTxs: Transaction[];
 }
 
-// --- Edit / Delete state ---
+// --- Edit / Delete / Reverse state ---
 interface EditState { key: string; notes: string; saving: boolean; error: string | null }
 interface DeleteState { key: string; txCount: number; requestIds: string[]; deleting: boolean; error: string | null }
+interface ReverseState { key: string; batchId: string; items: ItemSummary[]; requestIds: string[]; reversing: boolean; error: string | null }
 
 // --- Helper: build item summary from a set of transactions ---
 function buildItems(
@@ -112,8 +116,10 @@ function buildItems(
 function deriveStatus(
   txs: Transaction[],
   requestMap: Map<string, Request>,
-): 'Delivered' | 'In Transit' | 'Partial' | 'Other' {
+): 'Delivered' | 'In Transit' | 'Partial' | 'Other' | 'Returned' {
   const types = new Set(txs.map(t => t.type));
+  // Reversed delivery: has return transactions alongside pick/delivery
+  if (types.has('return') && (types.has('pick') || types.has('delivery'))) return 'Returned';
   // Non-delivery/pick transactions → Other
   if (!types.has('delivery') && !types.has('pick')) return 'Other';
 
@@ -151,6 +157,7 @@ export const TransactionsManager = () => {
   const [expandedKeys, setExpandedKeys] = useState<Set<string>>(new Set());
   const [edit, setEdit] = useState<EditState | null>(null);
   const [del, setDel] = useState<DeleteState | null>(null);
+  const [rev, setRev] = useState<ReverseState | null>(null);
 
   const isAdmin = profile?.role === 'admin';
 
@@ -257,6 +264,7 @@ export const TransactionsManager = () => {
         status: deriveStatus(txs, requestMap),
         txTypes: [...new Set(txs.map(t => t.type))],
         allRequestIds: [...new Set(txs.flatMap(t => t.requestIds ?? []))],
+        returnTxs: txs.filter(t => t.type === 'return'),
       });
     });
 
@@ -276,6 +284,7 @@ export const TransactionsManager = () => {
         status: tx.type === 'delivery' ? 'Delivered' : tx.type === 'pick' ? 'In Transit' : 'Other',
         txTypes: [tx.type],
         allRequestIds: tx.requestIds ?? [],
+        returnTxs: tx.type === 'return' ? [tx] : [],
       });
     });
 
@@ -359,6 +368,28 @@ export const TransactionsManager = () => {
     setEdit(null);
   };
   const cancelDelete = () => setDel(null);
+
+  // --- Reverse delivery ---
+  const startReverse = (g: BatchGroup) => {
+    if (!g.batchId) return;
+    setRev({ key: g.key, batchId: g.batchId, items: g.items, requestIds: g.allRequestIds, reversing: false, error: null });
+    setEdit(null);
+    setDel(null);
+  };
+  const cancelReverse = () => setRev(null);
+
+  const confirmReverse = async () => {
+    if (!rev || !profile) return;
+    setRev(r => r ? { ...r, reversing: true, error: null } : null);
+    try {
+      await reverseDeliveryBatch(rev.batchId, profile.uid, profile.displayName || '');
+      setRev(null);
+      fetchPage(page);
+    } catch (err) {
+      handleFirestoreError(err, OperationType.WRITE, 'transactions', false);
+      setRev(r => r ? { ...r, reversing: false, error: 'Reversal failed. Check console.' } : null);
+    }
+  };
 
   const confirmDelete = async () => {
     if (!del) return;
@@ -469,6 +500,7 @@ export const TransactionsManager = () => {
               const isExpanded = expandedKeys.has(g.key);
               const isEditing = edit?.key === g.key;
               const isDeleting = del?.key === g.key;
+              const isReversing = rev?.key === g.key;
               const s = STATUS_STYLES[g.status] ?? STATUS_STYLES.Other;
               const toName   = locMap.get(g.toLocationId   || '');
               const fromName = locMap.get(g.fromLocationId || '');
@@ -524,6 +556,14 @@ export const TransactionsManager = () => {
                         {g.receiverName && (
                           <div className="text-[10px] text-emerald-600 font-semibold">
                             Received by {g.receiverMixed ? 'multiple people' : g.receiverName}
+                          </div>
+                        )}
+
+                        {/* Reversal info */}
+                        {g.status === 'Returned' && g.returnTxs.length > 0 && (
+                          <div className="text-[10px] text-purple-600 font-semibold flex items-center gap-1">
+                            <RotateCcw size={9} />
+                            Reversed by {g.returnTxs[0].userName || 'admin'} · {formatTs(g.returnTxs[0].timestamp)}
                           </div>
                         )}
                       </div>
@@ -584,7 +624,7 @@ export const TransactionsManager = () => {
                     </div>
                   )}
 
-                  {/* ── Edit / Delete ── */}
+                  {/* ── Edit / Delete / Reverse ── */}
                   <div className="px-3 py-2.5 space-y-2">
                     {isEditing ? (
                       <div className="space-y-2">
@@ -640,6 +680,37 @@ export const TransactionsManager = () => {
                           </button>
                         </div>
                       </div>
+                    ) : isReversing ? (
+                      <div className="p-2.5 bg-purple-50 rounded-xl border border-purple-200 space-y-2">
+                        <div className="flex items-start gap-2">
+                          <AlertTriangle size={12} className="text-purple-500 shrink-0 mt-0.5" />
+                          <div className="space-y-1">
+                            <p className="text-[10px] font-bold text-purple-800">
+                              Reverse delivery for {rev.items.length} item type{rev.items.length !== 1 ? 's' : ''} ({rev.batchId})?
+                            </p>
+                            <p className="text-[10px] text-purple-700 font-medium leading-snug">
+                              Items will be decremented at the jobsite and returned to the source warehouse. Linked requests will revert to <span className="font-black">"For Delivery"</span> status.
+                            </p>
+                            {rev.requestIds.length > 0 && (
+                              <p className="text-[10px] font-semibold text-purple-600">
+                                {rev.requestIds.length} linked request{rev.requestIds.length !== 1 ? 's' : ''} will be affected.
+                              </p>
+                            )}
+                          </div>
+                        </div>
+                        {rev.error && <p className="text-[10px] font-semibold text-red-600">{rev.error}</p>}
+                        <div className="flex gap-2">
+                          <button onClick={confirmReverse} disabled={rev.reversing}
+                            className="flex items-center gap-1 px-3 py-1.5 bg-purple-600 text-white rounded-xl text-[10px] font-black uppercase tracking-widest active:scale-95 transition-transform disabled:opacity-50">
+                            {rev.reversing ? <Loader2 size={10} className="animate-spin" /> : <RotateCcw size={10} />}
+                            Reverse
+                          </button>
+                          <button onClick={cancelReverse}
+                            className="px-3 py-1.5 bg-gray-100 text-gray-600 rounded-xl text-[10px] font-black uppercase tracking-widest active:scale-95 transition-transform">
+                            Cancel
+                          </button>
+                        </div>
+                      </div>
                     ) : (
                       <div className="flex items-center gap-3">
                         <button onClick={() => startEdit(g)}
@@ -650,6 +721,12 @@ export const TransactionsManager = () => {
                           className="flex items-center gap-1 text-[10px] font-bold text-red-400 hover:text-red-600 transition-colors">
                           <Trash2 size={11} /> Delete Batch
                         </button>
+                        {g.batchId && (g.status === 'Delivered' || g.status === 'Partial') && (
+                          <button onClick={() => startReverse(g)}
+                            className="flex items-center gap-1 text-[10px] font-bold text-purple-400 hover:text-purple-600 transition-colors">
+                            <RotateCcw size={11} /> Reverse Delivery
+                          </button>
+                        )}
                       </div>
                     )}
                   </div>

@@ -19,7 +19,8 @@ import {
   or,
   orderBy,
   documentId,
-  arrayRemove
+  arrayRemove,
+  writeBatch,
 } from 'firebase/firestore';
 import { db, auth, handleFirestoreError, OperationType } from '../firebase';
 import { Item, Category, Location, Inventory, Transaction, UOM, Tag, UserProfile, Asset, Request, BOQItem, UnplannedStock, SystemConfig, PurchaseOrder, POPayment } from '../types';
@@ -2559,6 +2560,29 @@ export const reverseDeliveryBatch = async (
     console.error('Reverse delivery failed:', error);
     handleFirestoreError(error, OperationType.WRITE, 'reverse_delivery');
   }
+};
+
+export const bulkUpdateRequests = async (
+  requestIds: string[],
+  field: string,
+  value: string,
+  nameField?: string,
+  nameValue?: string,
+): Promise<number> => {
+  const batch = writeBatch(db);
+  for (const id of requestIds) {
+    const ref = doc(db, 'requests', id);
+    const update: Record<string, any> = {
+      [field]: value,
+      updatedAt: serverTimestamp(),
+    };
+    if (nameField !== undefined) {
+      update[nameField] = nameValue ?? '';
+    }
+    batch.update(ref, update);
+  }
+  await batch.commit();
+  return requestIds.length;
 };
 
 export const clearInventoryData = async (includeBOQ: boolean = true, includePOs: boolean = false) => {

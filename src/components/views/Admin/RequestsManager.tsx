@@ -14,6 +14,8 @@ import { Request, UserProfile } from '../../../types';
 import { cn } from '../../../lib/utils';
 import { Header } from '../../common/Header';
 import { Card } from '../../common/Card';
+import { Modal } from '../../common/Modal';
+import { bulkUpdateRequests } from '../../../services/inventoryService';
 import { Timestamp } from 'firebase/firestore';
 
 const PAGE_SIZE = 50;
@@ -32,6 +34,28 @@ const STATUS_COLORS: Record<string, string> = {
 
 const SENSITIVE_FIELDS = ['status', 'batchId'];
 const ALL_STATUSES = ['pending', 'approved', 'for delivery', 'delivered', 'rejected', 'cancelled'] as const;
+
+type BulkFieldType = 'status' | 'text' | 'user';
+interface BulkFieldDef {
+  field: string;
+  label: string;
+  type: BulkFieldType;
+  nameField?: string;
+  sensitive?: boolean;
+  roleFilter?: (u: UserProfile) => boolean;
+}
+
+const BULK_FIELDS: BulkFieldDef[] = [
+  { field: 'status',         label: 'Status',       type: 'status', sensitive: true },
+  { field: 'batchId',        label: 'Batch / DR',   type: 'text',   sensitive: true },
+  { field: 'requestorId',    label: 'Requestor',    type: 'user',   nameField: 'requestorName' },
+  { field: 'approverId',     label: 'Approver',     type: 'user',   nameField: 'approverName',
+    roleFilter: (u: UserProfile) => ['engineer', 'manager', 'admin'].includes(u.role) },
+  { field: 'warehousemanId', label: 'Warehouseman', type: 'user',   nameField: 'warehousemanName',
+    roleFilter: (u: UserProfile) => ['warehouseman', 'manager', 'admin'].includes(u.role) },
+  { field: 'workerNote',     label: 'Worker Note',  type: 'text' },
+  { field: 'engineerNote',   label: 'Eng. Note',    type: 'text' },
+];
 
 const formatTs = (ts: Timestamp | undefined | null): string => {
   if (!ts) return '—';
@@ -81,6 +105,12 @@ export const RequestsManager = () => {
 
   const [edit, setEdit] = useState<EditState | null>(null);
   const [del, setDel] = useState<DeleteState | null>(null);
+  const [isBulkEdit, setIsBulkEdit] = useState(false);
+  const [bulkField, setBulkField] = useState<string>('status');
+  const [bulkValue, setBulkValue] = useState<string>('');
+  const [bulkNameValue, setBulkNameValue] = useState<string>('');
+  const [bulkConfirm, setBulkConfirm] = useState<{ applying: boolean; error: string | null } | null>(null);
+  const [bulkSuccess, setBulkSuccess] = useState<string | null>(null);
 
   const isAdmin = profile?.role === 'admin';
 
@@ -211,6 +241,36 @@ export const RequestsManager = () => {
     return list;
   }, [records, search, statusFilter, jobsiteFilter, categoryFilter, drFilter, sortField, sortDir, itemMap, itemsByCategoryId]);
 
+  const hasActiveFilters = !!(search.trim() || statusFilter || jobsiteFilter || categoryFilter || drFilter);
+
+  const filterSummary = useMemo(() => {
+    const parts: string[] = [];
+    if (search.trim()) parts.push(`Search: "${search.trim()}"`);
+    if (statusFilter) parts.push(`Status: ${statusFilter}`);
+    if (jobsiteFilter) parts.push(`Jobsite: ${locMap.get(jobsiteFilter) || jobsiteFilter}`);
+    if (categoryFilter) {
+      const catName = categories.find(c => c.id === categoryFilter)?.name;
+      parts.push(`Category: ${catName || categoryFilter}`);
+    }
+    if (drFilter === '__none__') parts.push('No DR assigned');
+    else if (drFilter) parts.push(`DR: ${drFilter}`);
+    return parts.join(' · ');
+  }, [search, statusFilter, jobsiteFilter, categoryFilter, drFilter, locMap, categories]);
+
+  const currentBulkDef = BULK_FIELDS.find(f => f.field === bulkField);
+
+  const bulkUsers = useMemo(() => {
+    const def = BULK_FIELDS.find(f => f.field === bulkField);
+    if (!def || def.type !== 'user') return [] as UserProfile[];
+    return users
+      .filter(u => u.isActive && u.isApproved !== false)
+      .filter(u => jobsiteFilter ? (u.assignedLocationIds?.includes(jobsiteFilter) ?? false) : true)
+      .filter(u => def.roleFilter ? def.roleFilter(u) : true)
+      .sort((a, b) => (a.displayName || a.email).localeCompare(b.displayName || b.email));
+  }, [bulkField, users, jobsiteFilter]);
+
+  const bulkDisplayValue = currentBulkDef?.type === 'user' ? bulkNameValue : bulkValue;
+
   const startEdit = (requestId: string, field: string, currentValue: string, nameField?: string, nameValue?: string) => {
     setEdit({ requestId, field, value: currentValue, saving: false, error: null, nameField, nameValue });
   };
@@ -248,6 +308,36 @@ export const RequestsManager = () => {
   };
 
   const cancelDelete = () => setDel(null);
+
+  const handleBulkUpdate = async () => {
+    if (!bulkConfirm || !currentBulkDef) return;
+    setBulkConfirm(bc => bc ? { ...bc, applying: true, error: null } : null);
+    try {
+      const ids = displayed.map(r => r.id);
+      await bulkUpdateRequests(
+        ids,
+        bulkField,
+        bulkValue,
+        currentBulkDef.nameField,
+        currentBulkDef.type === 'user' ? bulkNameValue : undefined,
+      );
+      setRecords(prev => prev.map(r => {
+        if (!ids.includes(r.id)) return r;
+        const patch: any = { [bulkField]: bulkValue };
+        if (currentBulkDef.nameField) patch[currentBulkDef.nameField] = bulkNameValue;
+        return { ...r, ...patch };
+      }));
+      setBulkConfirm(null);
+      setBulkValue('');
+      setBulkNameValue('');
+      const msg = `Updated ${ids.length} request${ids.length !== 1 ? 's' : ''}.`;
+      setBulkSuccess(msg);
+      setTimeout(() => setBulkSuccess(null), 6000);
+    } catch (err) {
+      handleFirestoreError(err, OperationType.UPDATE, 'requests/bulk', false);
+      setBulkConfirm(bc => bc ? { ...bc, applying: false, error: 'Bulk update failed. Check console.' } : null);
+    }
+  };
 
   const confirmDelete = async () => {
     if (!del) return;
@@ -353,8 +443,12 @@ export const RequestsManager = () => {
             )}
             {!isTimestamp && raw !== undefined && (
               <button
-                onClick={() => startEdit(req.id, field, String(raw ?? ''))}
-                className="shrink-0 p-1 text-gray-300 hover:text-blue-500 transition-colors"
+                onClick={() => !isBulkEdit && startEdit(req.id, field, String(raw ?? ''))}
+                disabled={isBulkEdit}
+                className={cn(
+                  "shrink-0 p-1 transition-colors",
+                  isBulkEdit ? "text-gray-200 cursor-not-allowed" : "text-gray-300 hover:text-blue-500"
+                )}
               >
                 <Edit3 size={11} />
               </button>
@@ -442,8 +536,12 @@ export const RequestsManager = () => {
               {currentName || '—'}
             </span>
             <button
-              onClick={() => startEdit(req.id, String(idField), currentId || '', String(nameField), currentName || '')}
-              className="shrink-0 p-1 text-gray-300 hover:text-blue-500 transition-colors"
+              onClick={() => !isBulkEdit && startEdit(req.id, String(idField), currentId || '', String(nameField), currentName || '')}
+              disabled={isBulkEdit}
+              className={cn(
+                "shrink-0 p-1 transition-colors",
+                isBulkEdit ? "text-gray-200 cursor-not-allowed" : "text-gray-300 hover:text-blue-500"
+              )}
             >
               <Edit3 size={11} />
             </button>
@@ -550,6 +648,26 @@ export const RequestsManager = () => {
               ))}
             </div>
           </div>
+          {hasActiveFilters && (
+            <label className="flex items-center gap-2 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={isBulkEdit}
+                onChange={e => {
+                  setIsBulkEdit(e.target.checked);
+                  setEdit(null);
+                  if (!e.target.checked) {
+                    setBulkConfirm(null);
+                    setBulkSuccess(null);
+                  }
+                }}
+                className="w-4 h-4 rounded accent-amber-500"
+              />
+              <span className="text-[10px] font-black text-amber-700 uppercase tracking-widest">
+                Bulk edit — apply to all {displayed.length} filtered request{displayed.length !== 1 ? 's' : ''}
+              </span>
+            </label>
+          )}
           <div className="flex items-center justify-between text-[10px] text-gray-400 font-medium">
             <span>
               {displayed.length} of {records.length} on this page — Page {page + 1}
@@ -572,6 +690,92 @@ export const RequestsManager = () => {
             </div>
           </div>
         </Card>
+
+        {/* Bulk edit panel */}
+        {isBulkEdit && (
+          <Card className="p-4 space-y-3 bg-amber-50 border border-amber-200">
+            <p className="text-[10px] font-black text-amber-800 uppercase tracking-widest flex items-center gap-1.5">
+              <AlertTriangle size={12} />
+              Bulk Edit — {displayed.length} request{displayed.length !== 1 ? 's' : ''} will be updated
+            </p>
+            <div className="flex items-center gap-2 flex-wrap">
+              <select
+                value={bulkField}
+                onChange={e => { setBulkField(e.target.value); setBulkValue(''); setBulkNameValue(''); }}
+                className="px-2.5 py-1.5 bg-white border border-amber-200 rounded-xl text-xs font-bold text-gray-700 outline-none focus:ring-2 focus:ring-amber-400"
+              >
+                {BULK_FIELDS.map(f => (
+                  <option key={f.field} value={f.field}>{f.label}{f.sensitive ? ' ⚠' : ''}</option>
+                ))}
+              </select>
+
+              {currentBulkDef?.type === 'status' && (
+                <select
+                  value={bulkValue}
+                  onChange={e => setBulkValue(e.target.value)}
+                  className="px-2.5 py-1.5 bg-white border border-amber-200 rounded-xl text-xs font-bold text-gray-700 outline-none focus:ring-2 focus:ring-amber-400"
+                >
+                  <option value="">— select status —</option>
+                  {ALL_STATUSES.map(s => <option key={s} value={s}>{s}</option>)}
+                </select>
+              )}
+
+              {currentBulkDef?.type === 'text' && (
+                <input
+                  type="text"
+                  value={bulkValue}
+                  onChange={e => setBulkValue(e.target.value)}
+                  placeholder={`New ${currentBulkDef.label.toLowerCase()}…`}
+                  className="flex-1 min-w-[140px] px-2.5 py-1.5 bg-white border border-amber-200 rounded-xl text-xs font-medium outline-none focus:ring-2 focus:ring-amber-400"
+                />
+              )}
+
+              {currentBulkDef?.type === 'user' && (
+                <select
+                  value={bulkValue}
+                  onChange={e => {
+                    const u = users.find(u => u.uid === e.target.value);
+                    setBulkValue(e.target.value);
+                    setBulkNameValue(u ? (u.displayName || u.email) : '');
+                  }}
+                  className="px-2.5 py-1.5 bg-white border border-amber-200 rounded-xl text-xs font-bold text-gray-700 outline-none focus:ring-2 focus:ring-amber-400"
+                >
+                  <option value="">— select user —</option>
+                  {bulkUsers.map(u => (
+                    <option key={u.uid} value={u.uid}>{u.displayName || u.email}</option>
+                  ))}
+                </select>
+              )}
+
+              <button
+                onClick={() => setBulkConfirm({ applying: false, error: null })}
+                disabled={!bulkValue}
+                className="px-3 py-1.5 bg-amber-600 text-white rounded-xl text-[10px] font-black uppercase tracking-widest active:scale-95 transition-transform disabled:opacity-40"
+              >
+                Apply to {displayed.length}
+              </button>
+            </div>
+
+            {currentBulkDef?.sensitive && (
+              <p className="text-[9px] font-bold text-amber-700 flex items-center gap-1">
+                <AlertTriangle size={9} />
+                Sensitive field — changes affect app behavior for all {displayed.length} requests.
+              </p>
+            )}
+            {currentBulkDef?.type === 'user' && bulkUsers.length === 0 && (
+              <p className="text-[9px] font-bold text-amber-600">
+                No eligible users found{jobsiteFilter ? ' for selected jobsite' : ''}.
+              </p>
+            )}
+
+            {bulkSuccess && (
+              <div className="p-2.5 bg-green-50 rounded-xl border border-green-200 flex items-center gap-2">
+                <CheckCircle size={12} className="text-green-500 shrink-0" />
+                <span className="text-[10px] font-bold text-green-700">{bulkSuccess}</span>
+              </div>
+            )}
+          </Card>
+        )}
 
         {/* Records */}
         {loading ? (
@@ -776,6 +980,53 @@ export const RequestsManager = () => {
           </div>
         )}
       </div>
+
+      {/* Bulk update confirmation modal */}
+      <Modal
+        isOpen={bulkConfirm !== null}
+        onClose={() => !bulkConfirm?.applying && setBulkConfirm(null)}
+        title="Confirm Bulk Update"
+      >
+        <div className="space-y-4">
+          <div className="p-4 bg-amber-50 rounded-2xl border border-amber-100 flex items-start space-x-3">
+            <AlertTriangle className="text-amber-600 shrink-0 mt-0.5" size={20} />
+            <div className="space-y-1">
+              <p className="text-sm font-bold text-amber-900">
+                Set <span className="font-black">{currentBulkDef?.label}</span> to{' '}
+                <span className="italic font-black">"{bulkDisplayValue || '(empty)'}"</span>
+              </p>
+              <p className="text-sm font-semibold text-amber-800">
+                on <span className="font-black">{displayed.length}</span> request{displayed.length !== 1 ? 's' : ''}?
+              </p>
+              {filterSummary && (
+                <p className="text-[11px] text-amber-700 font-medium leading-snug mt-1">
+                  Filters: {filterSummary}
+                </p>
+              )}
+            </div>
+          </div>
+          {bulkConfirm?.error && (
+            <p className="text-xs font-semibold text-red-600">{bulkConfirm.error}</p>
+          )}
+          <div className="flex flex-col space-y-2">
+            <button
+              onClick={handleBulkUpdate}
+              disabled={bulkConfirm?.applying}
+              className="w-full py-4 bg-red-600 text-white rounded-2xl font-black uppercase tracking-widest text-xs active:scale-95 transition-transform shadow-lg shadow-red-200 flex items-center justify-center gap-2 disabled:opacity-70"
+            >
+              {bulkConfirm?.applying && <Loader2 size={14} className="animate-spin" />}
+              Confirm Bulk Update
+            </button>
+            <button
+              onClick={() => setBulkConfirm(null)}
+              disabled={bulkConfirm?.applying}
+              className="w-full py-4 bg-gray-100 text-gray-600 rounded-2xl font-black uppercase tracking-widest text-xs active:scale-95 transition-transform disabled:opacity-50"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      </Modal>
     </div>
   );
 };

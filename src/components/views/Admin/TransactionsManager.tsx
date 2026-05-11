@@ -721,11 +721,16 @@ export const TransactionsManager = () => {
                           className="flex items-center gap-1 text-[10px] font-bold text-red-400 hover:text-red-600 transition-colors">
                           <Trash2 size={11} /> Delete Batch
                         </button>
-                        {g.batchId && (g.status === 'Delivered' || g.status === 'Partial') && (
+                        {g.batchId && (g.status === 'Delivered' || g.status === 'Partial') && g.txTypes.includes('delivery') && (
                           <button onClick={() => startReverse(g)}
                             className="flex items-center gap-1 text-[10px] font-bold text-purple-400 hover:text-purple-600 transition-colors">
                             <RotateCcw size={11} /> Reverse Delivery
                           </button>
+                        )}
+                        {g.batchId && (g.status === 'Delivered' || g.status === 'Partial') && !g.txTypes.includes('delivery') && (
+                          <span className="text-[9px] text-gray-400 font-medium italic" title="Delivery transactions were recorded under a different DR number. Find the batch with type 'delivery' to reverse it.">
+                            Delivery in separate DR
+                          </span>
                         )}
                       </div>
                     )}

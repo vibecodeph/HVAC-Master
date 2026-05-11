@@ -2332,7 +2332,18 @@ export const reverseDeliveryBatch = async (
     const pickTxs     = allTxs.filter(t => t.type === 'pick');
 
     if (deliveryTxs.length === 0) {
-      throw new Error(`No delivery transactions found for batch ${batchId}.`);
+      const foundTypes = [...new Set(allTxs.map(t => t.type))].join(', ') || 'none';
+      console.error(
+        `[reverseDeliveryBatch] batchId="${batchId}": ` +
+        `${allTxs.length} total txs (${pickTxs.length} picks, 0 deliveries). ` +
+        `Types found: ${foundTypes}. ` +
+        `Delivery may have been recorded under a different batch ID.`
+      );
+      throw new Error(
+        `No delivery transactions found for batch ${batchId}. ` +
+        `The delivery was likely recorded under a different DR number. ` +
+        `Find the batch with type "delivery" in the Transactions Manager and reverse that one instead.`
+      );
     }
 
     // Build source location maps from pick transactions

@@ -62,7 +62,7 @@ interface DeleteState {
 
 export const RequestsManager = () => {
   const { profile } = useAuth();
-  const { items, locations, uoms } = useData();
+  const { items, locations, uoms, categories } = useData();
 
   const [records, setRecords] = useState<Request[]>([]);
   const [loading, setLoading] = useState(true);
@@ -74,15 +74,28 @@ export const RequestsManager = () => {
   const [sortDir, setSortDir] = useState<SortDir>('desc');
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
+  const [jobsiteFilter, setJobsiteFilter] = useState('');
+  const [categoryFilter, setCategoryFilter] = useState('');
 
   const [edit, setEdit] = useState<EditState | null>(null);
   const [del, setDel] = useState<DeleteState | null>(null);
 
   const isAdmin = profile?.role === 'admin';
 
-  const itemMap = useMemo(() => new Map(items.map(i => [i.id, i.name])), [items]);
+  const itemMap = useMemo(() => new Map(items.map(i => [i.id, i])), [items]);
   const uomMap = useMemo(() => new Map(uoms.map(u => [u.id, u.symbol])), [uoms]);
   const locMap = useMemo(() => new Map(locations.map(l => [l.id, l.name])), [locations]);
+  const categoryMap = useMemo(() => new Map(categories.map(c => [c.id, c.name])), [categories]);
+  const jobsites = useMemo(() => locations.filter(l => l.type === 'jobsite' && l.isActive).sort((a, b) => a.name.localeCompare(b.name)), [locations]);
+  const itemsByCategoryId = useMemo(() => {
+    const m = new Map<string, Set<string>>();
+    items.forEach(i => {
+      if (!i.categoryId) return;
+      if (!m.has(i.categoryId)) m.set(i.categoryId, new Set());
+      m.get(i.categoryId)!.add(i.id);
+    });
+    return m;
+  }, [items]);
 
   const fetchPage = async (pageIndex: number) => {
     setLoading(true);
@@ -157,11 +170,18 @@ export const RequestsManager = () => {
         r.itemId.toLowerCase().includes(q) ||
         (r.requestorName || '').toLowerCase().includes(q) ||
         (r.batchId || '').toLowerCase().includes(q) ||
-        (itemMap.get(r.itemId) || '').toLowerCase().includes(q)
+        (itemMap.get(r.itemId)?.name || '').toLowerCase().includes(q)
       );
     }
     if (statusFilter) {
       list = list.filter(r => r.status === statusFilter);
+    }
+    if (jobsiteFilter) {
+      list = list.filter(r => r.jobsiteId === jobsiteFilter);
+    }
+    if (categoryFilter) {
+      const itemIds = itemsByCategoryId.get(categoryFilter);
+      list = list.filter(r => itemIds?.has(r.itemId));
     }
     list.sort((a, b) => {
       let av: string | number = '';
@@ -178,7 +198,7 @@ export const RequestsManager = () => {
       return 0;
     });
     return list;
-  }, [records, search, statusFilter, sortField, sortDir, itemMap]);
+  }, [records, search, statusFilter, jobsiteFilter, categoryFilter, sortField, sortDir, itemMap, itemsByCategoryId]);
 
   const startEdit = (requestId: string, field: string, currentValue: string) => {
     setEdit({ requestId, field, value: currentValue, saving: false, error: null });
@@ -376,6 +396,26 @@ export const RequestsManager = () => {
                 <option key={s} value={s}>{s}</option>
               ))}
             </select>
+            <select
+              value={jobsiteFilter}
+              onChange={e => setJobsiteFilter(e.target.value)}
+              className="px-2.5 py-1.5 bg-gray-50 border border-gray-100 rounded-xl text-xs font-bold text-gray-700 outline-none"
+            >
+              <option value="">All Jobsites</option>
+              {jobsites.map(j => (
+                <option key={j.id} value={j.id}>{j.name}</option>
+              ))}
+            </select>
+            <select
+              value={categoryFilter}
+              onChange={e => setCategoryFilter(e.target.value)}
+              className="px-2.5 py-1.5 bg-gray-50 border border-gray-100 rounded-xl text-xs font-bold text-gray-700 outline-none"
+            >
+              <option value="">All Categories</option>
+              {categories.filter(c => c.isActive).sort((a, b) => a.name.localeCompare(b.name)).map(c => (
+                <option key={c.id} value={c.id}>{c.name}</option>
+              ))}
+            </select>
             <div className="ml-auto flex items-center gap-1 text-[10px] text-gray-400 font-bold uppercase tracking-widest">
               <span>Sort:</span>
               {(['timestamp', 'status', 'requestorName'] as SortField[]).map(f => (
@@ -430,7 +470,7 @@ export const RequestsManager = () => {
           <div className="space-y-3">
             {displayed.map(req => {
               const isDeleting = del?.requestId === req.id;
-              const itemName = itemMap.get(req.itemId);
+              const itemName = itemMap.get(req.itemId)?.name;
               const jobsiteName = locMap.get(req.jobsiteId);
               const uomSymbol = uomMap.get(req.uomId) || '';
 

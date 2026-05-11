@@ -2904,6 +2904,7 @@ export const PurchaseOrderForm = ({ items, locations, uoms, profile, initialData
       ? item.uomConversions.reduce((best, curr) => curr.factor > best.factor ? curr : best)
       : null;
     const baseCost = item.averageCost && item.averageCost > 0 ? item.averageCost : undefined;
+    const jobsiteLoc = project ? locations.find(l => l.type === 'jobsite' && l.name === project && l.isActive) : null;
     const newItem: PurchaseOrderItem = {
       itemId: item.id,
       quantity: 1,
@@ -2915,7 +2916,8 @@ export const PurchaseOrderForm = ({ items, locations, uoms, profile, initialData
       unitPrice: baseCost || 0,
       totalPrice: baseCost || 0,
       receivedQuantity: 0,
-      note: ''
+      note: '',
+      ...(jobsiteLoc ? { assignedJobsiteId: jobsiteLoc.id, assignedJobsiteName: project } : {})
     };
     setPoItems([...poItems, newItem]);
     setItemSearch('');
@@ -3206,28 +3208,14 @@ export const PurchaseOrderForm = ({ items, locations, uoms, profile, initialData
                           </div>
                         )}
 
-                        {/* Jobsite Assignment */}
-                        <div className="mt-2 space-y-1 px-1">
-                          <label className="text-[8px] font-black text-gray-400 uppercase tracking-widest">Assign to Jobsite (optional)</label>
-                          <select
-                            value={poItem.assignedJobsiteId || ''}
-                            onChange={e => {
-                              const loc = locations.find(l => l.id === e.target.value);
-                              updatePOItem(idx, {
-                                assignedJobsiteId: e.target.value || undefined,
-                                assignedJobsiteName: loc?.name || undefined,
-                              });
-                            }}
-                            className="w-full p-1.5 bg-white border border-gray-200 rounded-xl text-[10px] font-bold outline-none focus:ring-2 focus:ring-blue-500"
-                          >
-                            <option value="">— Unassigned —</option>
-                            {locations
-                              .filter(l => l.type === 'jobsite' && l.isActive)
-                              .sort((a, b) => a.name.localeCompare(b.name))
-                              .map(l => (
-                                <option key={l.id} value={l.id}>{l.name}</option>
-                              ))}
-                          </select>
+                        {/* Jobsite Assignment - read-only, inherited from PO project */}
+                        <div className="mt-2 px-1">
+                          <p className="text-[8px] font-black text-gray-400 uppercase tracking-widest mb-0.5">Assigned Jobsite</p>
+                          {poItem.assignedJobsiteName ? (
+                            <p className="text-[10px] font-bold text-blue-600">{poItem.assignedJobsiteName}</p>
+                          ) : (
+                            <p className="text-[10px] font-bold text-gray-400">Unassigned</p>
+                          )}
                         </div>
                       </div>
                     </div>

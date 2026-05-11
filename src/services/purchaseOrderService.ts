@@ -17,6 +17,18 @@ import { PurchaseOrder, PurchaseOrderItem, POTemplate } from '../types';
 
 const TEMPLATE_ID = 'default';
 
+const cleanData = (data: any): any => {
+  if (data === null || data === undefined || typeof data !== 'object') return data;
+  if (Array.isArray(data)) return data.map(cleanData);
+  const proto = Object.getPrototypeOf(data);
+  if (proto !== Object.prototype && proto !== null) return data;
+  return Object.fromEntries(
+    Object.entries(data)
+      .filter(([, v]) => v !== undefined)
+      .map(([k, v]) => [k, cleanData(v)])
+  );
+};
+
 export const getPOTemplate = async (): Promise<POTemplate | null> => {
   try {
     const docSnap = await getDoc(doc(db, 'po_templates', TEMPLATE_ID));
@@ -48,17 +60,17 @@ export const createPurchaseOrder = async (po: Omit<PurchaseOrder, 'id' | 'create
     const poRef = doc(collection(db, 'purchase_orders'));
     const id = poRef.id;
     
-    await setDoc(poRef, {
+    await setDoc(poRef, cleanData({
       ...po,
       id,
       createdAt: serverTimestamp(),
       createdBy: auth.currentUser?.uid
-    });
+    }));
 
     // Add items
     const itemsPromises = items.map((item, index) => {
       const itemRef = doc(collection(db, 'purchase_orders', id, 'items'));
-      return setDoc(itemRef, { ...item, id: itemRef.id, sortOrder: index });
+      return setDoc(itemRef, cleanData({ ...item, id: itemRef.id, sortOrder: index }));
     });
     
     await Promise.all(itemsPromises);
@@ -71,11 +83,11 @@ export const createPurchaseOrder = async (po: Omit<PurchaseOrder, 'id' | 'create
 export const updatePurchaseOrder = async (id: string, po: Partial<PurchaseOrder>, items?: PurchaseOrderItem[]) => {
   try {
     const poRef = doc(db, 'purchase_orders', id);
-    await updateDoc(poRef, {
+    await updateDoc(poRef, cleanData({
       ...po,
       updatedAt: serverTimestamp(),
       updatedBy: auth.currentUser?.uid
-    });
+    }));
 
     if (items) {
       // For simplicity, we'll replace all items
@@ -87,7 +99,7 @@ export const updatePurchaseOrder = async (id: string, po: Partial<PurchaseOrder>
       // Then add new items
       const itemsPromises = items.map((item, index) => {
         const itemRef = doc(collection(db, 'purchase_orders', id, 'items'));
-        return setDoc(itemRef, { ...item, id: itemRef.id, sortOrder: index });
+        return setDoc(itemRef, cleanData({ ...item, id: itemRef.id, sortOrder: index }));
       });
       await Promise.all(itemsPromises);
     }

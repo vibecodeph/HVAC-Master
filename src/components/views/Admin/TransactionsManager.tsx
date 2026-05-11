@@ -2,42 +2,40 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { Navigate } from 'react-router-dom';
 import {
   collection, query, orderBy, limit, getDocs, startAfter,
-  doc, updateDoc, deleteDoc, serverTimestamp, QueryDocumentSnapshot, DocumentData,
+  doc, updateDoc, deleteDoc, serverTimestamp,
+  QueryDocumentSnapshot, DocumentData, writeBatch as firestoreWriteBatch,
 } from 'firebase/firestore';
+import { Timestamp } from 'firebase/firestore';
 import {
   Loader2, RefreshCw, Search, ChevronUp, ChevronDown, Trash2,
-  AlertTriangle, Edit3, CheckCircle, ChevronLeft, ChevronRight, Database,
+  AlertTriangle, Edit3, CheckCircle, ChevronLeft, ChevronRight,
+  Database, Package, MapPin, ChevronRight as ChevronRightIcon, X,
 } from 'lucide-react';
-import { Timestamp } from 'firebase/firestore';
 import { db, handleFirestoreError, OperationType } from '../../../firebase';
 import { useAuth, useData } from '../../../App';
-import { Transaction } from '../../../types';
+import { Transaction, Request } from '../../../types';
 import { cn } from '../../../lib/utils';
 import { Header } from '../../common/Header';
 import { Card } from '../../common/Card';
 
 const PAGE_SIZE = 50;
-
-type SortField = 'timestamp' | 'type' | 'quantity';
 type SortDir = 'asc' | 'desc';
 
+const STATUS_STYLES: Record<string, { badge: string; border: string }> = {
+  Delivered:  { badge: 'bg-emerald-100 text-emerald-700', border: 'border-l-emerald-400' },
+  'In Transit': { badge: 'bg-amber-100 text-amber-700',   border: 'border-l-amber-400'   },
+  Partial:    { badge: 'bg-blue-100 text-blue-700',       border: 'border-l-blue-400'    },
+  Other:      { badge: 'bg-gray-100 text-gray-500',       border: 'border-l-gray-300'    },
+};
+
 const TYPE_COLORS: Record<string, string> = {
-  delivery: 'bg-blue-100 text-blue-700',
-  usage: 'bg-red-100 text-red-700',
-  return: 'bg-orange-100 text-orange-700',
+  delivery:   'bg-blue-100 text-blue-700',
+  usage:      'bg-red-100 text-red-700',
+  return:     'bg-orange-100 text-orange-700',
   adjustment: 'bg-amber-100 text-amber-700',
-  pick: 'bg-green-100 text-green-700',
+  pick:       'bg-green-100 text-green-700',
 };
 
-const TYPE_BORDER: Record<string, string> = {
-  delivery: 'border-l-blue-400',
-  usage: 'border-l-red-400',
-  return: 'border-l-orange-400',
-  adjustment: 'border-l-amber-400',
-  pick: 'border-l-green-400',
-};
-
-const SENSITIVE_FIELDS = ['type', 'fromLocationId', 'toLocationId'];
 const ALL_TYPES = ['delivery', 'usage', 'return', 'adjustment', 'pick'] as const;
 
 const formatTs = (ts: Timestamp | undefined | null): string => {
@@ -49,25 +47,94 @@ const formatTs = (ts: Timestamp | undefined | null): string => {
   });
 };
 
-const truncateId = (id: string) => id.length > 12 ? `${id.slice(0, 8)}…` : id;
+const truncateId = (id: string) => id.length > 14 ? `${id.slice(0, 10)}…` : id;
 
-interface EditState {
-  txId: string;
-  field: string;
-  value: string;
-  saving: boolean;
-  error: string | null;
+// --- Batch grouping types ---
+interface ItemSummary {
+  itemId: string;
+  name: string;
+  qty: number;
+  uomSymbol: string;
+  serialNumbers: string[];
 }
 
-interface DeleteState {
-  txId: string;
-  deleting: boolean;
-  error: string | null;
+interface BatchGroup {
+  key: string;                   // batchId, or 'tx-{id}' for ungrouped
+  batchId?: string;
+  transactions: Transaction[];
+  items: ItemSummary[];
+  toLocationId?: string;
+  fromLocationId?: string;
+  timestamp: Timestamp;
+  pickerName?: string;
+  receiverName?: string;
+  receiverMixed: boolean;
+  status: 'Delivered' | 'In Transit' | 'Partial' | 'Other';
+  txTypes: string[];
+  allRequestIds: string[];
+}
+
+// --- Edit / Delete state ---
+interface EditState { key: string; notes: string; saving: boolean; error: string | null }
+interface DeleteState { key: string; txCount: number; requestIds: string[]; deleting: boolean; error: string | null }
+
+// --- Helper: build item summary from a set of transactions ---
+function buildItems(
+  txs: Transaction[],
+  itemMap: Map<string, { name: string }>,
+  uomMap: Map<string, string>,
+): ItemSummary[] {
+  // Prefer pick transactions for "what was sent"; fall back to all
+  const source = txs.filter(t => t.type === 'pick');
+  const pool = source.length > 0 ? source : txs;
+
+  const map = new Map<string, ItemSummary>();
+  pool.forEach(tx => {
+    const key = tx.itemId;
+    const cur = map.get(key);
+    if (cur) {
+      cur.qty += tx.quantity ?? 0;
+      if (tx.serialNumber) cur.serialNumbers.push(tx.serialNumber);
+    } else {
+      map.set(key, {
+        itemId: tx.itemId,
+        name: itemMap.get(tx.itemId)?.name || tx.itemId,
+        qty: tx.quantity ?? 0,
+        uomSymbol: uomMap.get(tx.uomId) || '',
+        serialNumbers: tx.serialNumber ? [tx.serialNumber] : [],
+      });
+    }
+  });
+  return Array.from(map.values());
+}
+
+// --- Helper: derive batch status ---
+function deriveStatus(
+  txs: Transaction[],
+  requestMap: Map<string, Request>,
+): 'Delivered' | 'In Transit' | 'Partial' | 'Other' {
+  const types = new Set(txs.map(t => t.type));
+  // Non-delivery/pick transactions → Other
+  if (!types.has('delivery') && !types.has('pick')) return 'Other';
+
+  // Try requests first (most accurate)
+  const allRequestIds = txs.flatMap(t => t.requestIds ?? []);
+  const found = allRequestIds.map(id => requestMap.get(id)).filter(Boolean) as Request[];
+  if (found.length > 0) {
+    const deliveredCount = found.filter(r => r.status === 'delivered').length;
+    if (deliveredCount === found.length) return 'Delivered';
+    if (deliveredCount === 0) return 'In Transit';
+    return 'Partial';
+  }
+
+  // Fallback: transaction types
+  if (types.has('delivery')) return 'Delivered';
+  return 'In Transit';
 }
 
 export const TransactionsManager = () => {
   const { profile } = useAuth();
-  const { items, locations, uoms, categories } = useData();
+  const { items, locations, uoms, categories, requests } = useData();
 
   const [records, setRecords] = useState<Transaction[]>([]);
   const [loading, setLoading] = useState(true);
@@ -75,21 +142,23 @@ export const TransactionsManager = () => {
   const [cursors, setCursors] = useState<QueryDocumentSnapshot<DocumentData>[]>([]);
   const [hasMore, setHasMore] = useState(false);
 
-  const [sortField, setSortField] = useState<SortField>('timestamp');
   const [sortDir, setSortDir] = useState<SortDir>('desc');
   const [search, setSearch] = useState('');
   const [typeFilter, setTypeFilter] = useState('');
   const [locationFilter, setLocationFilter] = useState('');
   const [categoryFilter, setCategoryFilter] = useState('');
 
+  const [expandedKeys, setExpandedKeys] = useState<Set<string>>(new Set());
   const [edit, setEdit] = useState<EditState | null>(null);
   const [del, setDel] = useState<DeleteState | null>(null);
 
   const isAdmin = profile?.role === 'admin';
 
+  // --- Lookup maps ---
   const itemMap = useMemo(() => new Map(items.map(i => [i.id, i])), [items]);
-  const uomMap = useMemo(() => new Map(uoms.map(u => [u.id, u.symbol])), [uoms]);
-  const locMap = useMemo(() => new Map(locations.map(l => [l.id, l.name])), [locations]);
+  const uomMap  = useMemo(() => new Map(uoms.map(u => [u.id, u.symbol])), [uoms]);
+  const locMap  = useMemo(() => new Map(locations.map(l => [l.id, l.name])), [locations]);
+  const requestMap = useMemo(() => new Map(requests.map(r => [r.id, r])), [requests]);
   const allLocations = useMemo(() => [...locations].sort((a, b) => a.name.localeCompare(b.name)), [locations]);
   const itemsByCategoryId = useMemo(() => {
     const m = new Map<string, Set<string>>();
@@ -101,14 +170,11 @@ export const TransactionsManager = () => {
     return m;
   }, [items]);
 
+  // --- Fetch ---
   const fetchPage = async (pageIndex: number) => {
     setLoading(true);
     try {
-      let q = query(
-        collection(db, 'transactions'),
-        orderBy('timestamp', 'desc'),
-        limit(PAGE_SIZE + 1),
-      );
+      let q = query(collection(db, 'transactions'), orderBy('timestamp', 'desc'), limit(PAGE_SIZE + 1));
       if (pageIndex > 0 && cursors[pageIndex - 1]) {
         q = query(
           collection(db, 'transactions'),
@@ -121,9 +187,9 @@ export const TransactionsManager = () => {
       const docs = snap.docs.slice(0, PAGE_SIZE);
       setHasMore(snap.docs.length > PAGE_SIZE);
       if (docs.length > 0) {
-        const newCursors = [...cursors];
-        newCursors[pageIndex] = docs[docs.length - 1];
-        setCursors(newCursors);
+        const next = [...cursors];
+        next[pageIndex] = docs[docs.length - 1];
+        setCursors(next);
       }
       setRecords(docs.map(d => ({ id: d.id, ...d.data() } as Transaction)));
     } catch (err) {
@@ -133,251 +199,199 @@ export const TransactionsManager = () => {
     }
   };
 
-  useEffect(() => {
-    if (!isAdmin) return;
-    fetchPage(0);
-  }, [isAdmin]);
+  useEffect(() => { if (isAdmin) fetchPage(0); }, [isAdmin]);
 
-  const handleRefresh = () => {
-    setPage(0);
-    setCursors([]);
-    fetchPage(0);
-  };
+  const handleRefresh = () => { setPage(0); setCursors([]); fetchPage(0); };
+  const handleNext    = () => { const n = page + 1; setPage(n); fetchPage(n); };
+  const handlePrev    = () => { const p = page - 1; setPage(p); fetchPage(p); };
 
-  const handleNextPage = () => {
-    const next = page + 1;
-    setPage(next);
-    fetchPage(next);
-  };
+  // --- Group by batchId ---
+  const grouped = useMemo((): BatchGroup[] => {
+    const batchMap = new Map<string, Transaction[]>();
+    const ungrouped: Transaction[] = [];
 
-  const handlePrevPage = () => {
-    const prev = page - 1;
-    setPage(prev);
-    fetchPage(prev);
-  };
+    records.forEach(tx => {
+      if (tx.batchId) {
+        if (!batchMap.has(tx.batchId)) batchMap.set(tx.batchId, []);
+        batchMap.get(tx.batchId)!.push(tx);
+      } else {
+        ungrouped.push(tx);
+      }
+    });
 
-  const handleSort = (field: SortField) => {
-    if (sortField === field) {
-      setSortDir(d => d === 'asc' ? 'desc' : 'asc');
-    } else {
-      setSortField(field);
-      setSortDir('asc');
-    }
-  };
+    const groups: BatchGroup[] = [];
 
+    // Batched groups
+    batchMap.forEach((txs, batchId) => {
+      const pickTxs     = txs.filter(t => t.type === 'pick');
+      const deliveryTxs = txs.filter(t => t.type === 'delivery');
+
+      // Earliest timestamp
+      const ts = txs.reduce<Timestamp | undefined>((best, tx) => {
+        if (!best) return tx.timestamp;
+        const tMs = tx.timestamp?.toDate?.()?.getTime() ?? 0;
+        const bMs = best?.toDate?.()?.getTime() ?? 0;
+        return tMs < bMs ? tx.timestamp : best;
+      }, undefined);
+
+      const pickerName   = pickTxs[0]?.userName || txs[0]?.userName;
+      const receiverNames = [...new Set(deliveryTxs.map(t => t.userName).filter(Boolean))];
+      const receiverMixed = receiverNames.length > 1;
+      const receiverName  = receiverMixed ? 'Multiple' : (receiverNames[0] || undefined);
+
+      const destTxs = deliveryTxs.length > 0 ? deliveryTxs : txs;
+      const toLocationId   = destTxs.find(t => t.toLocationId && t.toLocationId !== 'in-transit')?.toLocationId;
+      const fromLocationId = pickTxs.find(t => t.fromLocationId && t.fromLocationId !== 'in-transit')?.fromLocationId;
+
+      groups.push({
+        key: batchId,
+        batchId,
+        transactions: txs,
+        items: buildItems(txs, itemMap, uomMap),
+        toLocationId,
+        fromLocationId,
+        timestamp: ts ?? txs[0]?.timestamp,
+        pickerName,
+        receiverName,
+        receiverMixed,
+        status: deriveStatus(txs, requestMap),
+        txTypes: [...new Set(txs.map(t => t.type))],
+        allRequestIds: [...new Set(txs.flatMap(t => t.requestIds ?? []))],
+      });
+    });
+
+    // Ungrouped (individual transactions)
+    ungrouped.forEach(tx => {
+      groups.push({
+        key: `tx-${tx.id}`,
+        batchId: undefined,
+        transactions: [tx],
+        items: buildItems([tx], itemMap, uomMap),
+        toLocationId: tx.toLocationId !== 'in-transit' ? tx.toLocationId : undefined,
+        fromLocationId: tx.fromLocationId !== 'in-transit' ? tx.fromLocationId : undefined,
+        timestamp: tx.timestamp,
+        pickerName: tx.userName,
+        receiverName: undefined,
+        receiverMixed: false,
+        status: tx.type === 'delivery' ? 'Delivered' : tx.type === 'pick' ? 'In Transit' : 'Other',
+        txTypes: [tx.type],
+        allRequestIds: tx.requestIds ?? [],
+      });
+    });
+
+    // Sort by timestamp
+    groups.sort((a, b) => {
+      const at = a.timestamp?.toDate?.()?.getTime() ?? 0;
+      const bt = b.timestamp?.toDate?.()?.getTime() ?? 0;
+      return sortDir === 'desc' ? bt - at : at - bt;
+    });
+
+    return groups;
+  }, [records, requestMap, itemMap, uomMap, sortDir]);
+
+  // --- Filter ---
   const displayed = useMemo(() => {
-    let list = [...records];
+    let list = [...grouped];
     const q = search.trim().toLowerCase();
     if (q) {
-      list = list.filter(tx =>
-        tx.id.toLowerCase().includes(q) ||
-        tx.itemId.toLowerCase().includes(q) ||
-        (tx.userName || '').toLowerCase().includes(q) ||
-        (tx.batchId || '').toLowerCase().includes(q) ||
-        (tx.poNumber || '').toLowerCase().includes(q) ||
-        (tx.supplierDR || '').toLowerCase().includes(q) ||
-        (itemMap.get(tx.itemId)?.name || '').toLowerCase().includes(q)
+      list = list.filter(g =>
+        (g.batchId || '').toLowerCase().includes(q) ||
+        (g.pickerName || '').toLowerCase().includes(q) ||
+        (g.receiverName || '').toLowerCase().includes(q) ||
+        g.items.some(item => item.name.toLowerCase().includes(q)) ||
+        (locMap.get(g.toLocationId || '') || '').toLowerCase().includes(q)
       );
     }
     if (typeFilter) {
-      list = list.filter(tx => tx.type === typeFilter);
+      list = list.filter(g => g.txTypes.includes(typeFilter));
     }
     if (locationFilter) {
-      list = list.filter(tx => tx.fromLocationId === locationFilter || tx.toLocationId === locationFilter);
+      list = list.filter(g => g.toLocationId === locationFilter || g.fromLocationId === locationFilter);
     }
     if (categoryFilter) {
-      const itemIds = itemsByCategoryId.get(categoryFilter);
-      list = list.filter(tx => itemIds?.has(tx.itemId));
+      const ids = itemsByCategoryId.get(categoryFilter);
+      list = list.filter(g => g.items.some(item => ids?.has(item.itemId)));
     }
-    list.sort((a, b) => {
-      let av: string | number = '';
-      let bv: string | number = '';
-      if (sortField === 'timestamp') {
-        av = a.timestamp?.toDate?.()?.getTime() ?? 0;
-        bv = b.timestamp?.toDate?.()?.getTime() ?? 0;
-      } else if (sortField === 'quantity') {
-        av = a.baseQuantity ?? 0;
-        bv = b.baseQuantity ?? 0;
-      } else {
-        av = String((a as any)[sortField] ?? '');
-        bv = String((b as any)[sortField] ?? '');
-      }
-      if (av < bv) return sortDir === 'asc' ? -1 : 1;
-      if (av > bv) return sortDir === 'asc' ? 1 : -1;
-      return 0;
-    });
     return list;
-  }, [records, search, typeFilter, locationFilter, categoryFilter, sortField, sortDir, itemMap, itemsByCategoryId]);
+  }, [grouped, search, typeFilter, locationFilter, categoryFilter, locMap, itemsByCategoryId]);
 
-  const startEdit = (txId: string, field: string, currentValue: string) => {
-    setEdit({ txId, field, value: currentValue, saving: false, error: null });
+  // --- Expand toggle ---
+  const toggleExpand = (key: string) => {
+    setExpandedKeys(prev => {
+      const next = new Set(prev);
+      next.has(key) ? next.delete(key) : next.add(key);
+      return next;
+    });
   };
 
+  // --- Edit (notes on all transactions in batch) ---
+  const startEdit = (g: BatchGroup) => {
+    const existingNotes = g.transactions[0]?.notes || '';
+    setEdit({ key: g.key, notes: existingNotes, saving: false, error: null });
+    setDel(null);
+  };
   const cancelEdit = () => setEdit(null);
 
   const saveEdit = async () => {
     if (!edit) return;
     setEdit(e => e ? { ...e, saving: true, error: null } : null);
+    const group = grouped.find(g => g.key === edit.key);
+    if (!group) return;
     try {
-      const ref = doc(db, 'transactions', edit.txId);
-      await updateDoc(ref, {
-        [edit.field]: edit.value,
-        updatedAt: serverTimestamp(),
+      const batch = firestoreWriteBatch(db);
+      group.transactions.forEach(tx => {
+        batch.update(doc(db, 'transactions', tx.id), { notes: edit.notes, updatedAt: serverTimestamp() });
       });
+      await batch.commit();
       setRecords(prev => prev.map(tx =>
-        tx.id === edit.txId ? { ...tx, [edit.field]: edit.value } : tx
+        group.transactions.some(gt => gt.id === tx.id) ? { ...tx, notes: edit.notes } : tx
       ));
       setEdit(null);
     } catch (err) {
-      handleFirestoreError(err, OperationType.UPDATE, `transactions/${edit.txId}`, false);
-      setEdit(e => e ? { ...e, saving: false, error: 'Save failed. Check permissions.' } : null);
+      handleFirestoreError(err, OperationType.UPDATE, 'transactions', false);
+      setEdit(e => e ? { ...e, saving: false, error: 'Save failed.' } : null);
     }
   };
 
-  const startDelete = (txId: string) => {
-    setDel({ txId, deleting: false, error: null });
+  // --- Delete (all transactions in batch) ---
+  const startDelete = (g: BatchGroup) => {
+    setDel({ key: g.key, txCount: g.transactions.length, requestIds: g.allRequestIds, deleting: false, error: null });
+    setEdit(null);
   };
-
   const cancelDelete = () => setDel(null);
 
   const confirmDelete = async () => {
     if (!del) return;
     setDel(d => d ? { ...d, deleting: true, error: null } : null);
+    const group = grouped.find(g => g.key === del.key);
+    if (!group) return;
     try {
-      await deleteDoc(doc(db, 'transactions', del.txId));
-      setRecords(prev => prev.filter(tx => tx.id !== del.txId));
+      const batch = firestoreWriteBatch(db);
+      group.transactions.forEach(tx => batch.delete(doc(db, 'transactions', tx.id)));
+      await batch.commit();
+      const deletedIds = new Set(group.transactions.map(t => t.id));
+      setRecords(prev => prev.filter(tx => !deletedIds.has(tx.id)));
       setDel(null);
     } catch (err) {
-      handleFirestoreError(err, OperationType.DELETE, `transactions/${del.txId}`, false);
-      setDel(d => d ? { ...d, deleting: false, error: 'Delete failed. Check permissions.' } : null);
+      handleFirestoreError(err, OperationType.DELETE, 'transactions', false);
+      setDel(d => d ? { ...d, deleting: false, error: 'Delete failed.' } : null);
     }
   };
 
   if (!isAdmin) return <Navigate to="/settings" replace />;
-
-  const SortIcon = ({ field }: { field: SortField }) => {
-    if (sortField !== field) return <ChevronUp size={10} className="text-gray-300" />;
-    return sortDir === 'asc'
-      ? <ChevronUp size={10} className="text-blue-500" />
-      : <ChevronDown size={10} className="text-blue-500" />;
-  };
-
-  const FieldRow = ({ tx, field, label, readOnly }: { tx: Transaction; field: string; label: string; readOnly?: boolean }) => {
-    const isSensitive = SENSITIVE_FIELDS.includes(field);
-    const raw = (tx as any)[field];
-    const isTimestamp = raw instanceof Timestamp;
-    const isArray = Array.isArray(raw);
-    let display: string;
-    if (isTimestamp) {
-      display = formatTs(raw);
-    } else if (isArray) {
-      display = raw.length > 0 ? raw.join(', ') : '—';
-    } else if (field === 'fromLocationId' || field === 'toLocationId') {
-      display = locMap.get(raw) ? `${locMap.get(raw)} (${truncateId(raw || '')})` : (raw || '—');
-    } else {
-      display = (raw !== undefined && raw !== null && raw !== '') ? String(raw) : '—';
-    }
-    const isEditing = edit?.txId === tx.id && edit.field === field;
-
-    return (
-      <div className="flex items-start gap-2 py-1 border-b border-gray-50 last:border-0">
-        <div className="w-32 shrink-0">
-          <span className={cn(
-            "text-[9px] font-black uppercase tracking-widest",
-            isSensitive ? "text-amber-500" : "text-gray-400"
-          )}>
-            {label}
-            {isSensitive && <AlertTriangle size={8} className="inline ml-0.5 mb-0.5" />}
-          </span>
-        </div>
-        {isEditing ? (
-          <div className="flex-1 space-y-1.5">
-            {field === 'type' ? (
-              <select
-                value={edit.value}
-                onChange={e => setEdit(ev => ev ? { ...ev, value: e.target.value } : null)}
-                className="w-full px-2 py-1.5 bg-gray-100 rounded-lg text-xs font-medium outline-none"
-              >
-                {ALL_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
-              </select>
-            ) : (
-              <input
-                type="text"
-                value={edit.value}
-                onChange={e => setEdit(ev => ev ? { ...ev, value: e.target.value } : null)}
-                className="w-full px-2 py-1.5 bg-gray-100 rounded-lg text-xs font-medium outline-none focus:ring-2 focus:ring-blue-500"
-                autoFocus
-              />
-            )}
-            {isSensitive && (
-              <p className="text-[9px] text-amber-600 font-semibold flex items-center gap-1">
-                <AlertTriangle size={9} />
-                Editing this field does NOT update inventory balances.
-              </p>
-            )}
-            {edit.error && (
-              <p className="text-[9px] text-red-600 font-semibold">{edit.error}</p>
-            )}
-            <div className="flex gap-1.5">
-              <button
-                onClick={saveEdit}
-                disabled={edit.saving}
-                className="flex items-center gap-1 px-2.5 py-1 bg-gray-900 text-white rounded-lg text-[10px] font-bold active:scale-95 transition-transform disabled:opacity-50"
-              >
-                {edit.saving ? <Loader2 size={9} className="animate-spin" /> : <CheckCircle size={9} />}
-                Save
-              </button>
-              <button
-                onClick={cancelEdit}
-                className="px-2.5 py-1 bg-gray-100 text-gray-600 rounded-lg text-[10px] font-bold active:scale-95 transition-transform"
-              >
-                Cancel
-              </button>
-            </div>
-          </div>
-        ) : (
-          <div className="flex-1 flex items-start justify-between gap-2 min-w-0">
-            {field === 'type' ? (
-              <span className={cn(
-                "text-[9px] font-black uppercase tracking-widest px-1.5 py-0.5 rounded",
-                TYPE_COLORS[raw] || 'bg-gray-100 text-gray-500'
-              )}>
-                {raw || '—'}
-              </span>
-            ) : (
-              <span
-                className="text-xs font-medium text-gray-700 break-all"
-                title={isTimestamp || isArray ? undefined : String(raw ?? '')}
-              >
-                {display}
-              </span>
-            )}
-            {!readOnly && !isTimestamp && !isArray && raw !== undefined && (
-              <button
-                onClick={() => startEdit(tx.id, field, String(raw ?? ''))}
-                className="shrink-0 p-1 text-gray-300 hover:text-blue-500 transition-colors"
-              >
-                <Edit3 size={11} />
-              </button>
-            )}
-          </div>
-        )}
-      </div>
-    );
-  };
 
   return (
     <div className="pb-20">
       <Header title="Transactions Manager" />
       <div className="p-4 space-y-4">
 
-        {/* Warning banner */}
+        {/* Warning */}
         <div className="flex items-start gap-2.5 p-3 bg-amber-50 border border-amber-200 rounded-2xl">
           <AlertTriangle size={14} className="text-amber-500 shrink-0 mt-0.5" />
           <div className="space-y-0.5">
             <p className="text-xs font-bold text-amber-800">Admin Debug Tool</p>
             <p className="text-[10px] text-amber-700 font-medium leading-snug">
-              Direct Firestore edits bypass all inventory logic. Editing <span className="font-black">type</span>, <span className="font-black">fromLocationId</span>, or <span className="font-black">toLocationId</span> will NOT update inventory balances. Deleting a transaction will NOT reverse stock changes.
+              Transactions are grouped by delivery batch (DR number). Deleting a batch removes all linked transaction documents but does <span className="font-black">not</span> reverse inventory changes. Fetches {PAGE_SIZE} transactions per page.
             </p>
           </div>
         </div>
@@ -391,88 +405,55 @@ export const TransactionsManager = () => {
                 type="text"
                 value={search}
                 onChange={e => setSearch(e.target.value)}
-                placeholder="Search by ID, item, user, batch, PO, DR…"
+                placeholder="Search by DR#, item, picker, receiver, jobsite…"
                 className="w-full pl-8 pr-3 py-2 bg-gray-50 border border-gray-100 rounded-xl text-xs font-medium outline-none focus:ring-2 focus:ring-blue-500"
               />
             </div>
-            <button
-              onClick={handleRefresh}
-              disabled={loading}
-              className="shrink-0 p-2 text-gray-400 hover:text-blue-500 transition-colors"
-            >
+            <button onClick={handleRefresh} disabled={loading} className="shrink-0 p-2 text-gray-400 hover:text-blue-500 transition-colors">
               <RefreshCw size={15} className={loading ? 'animate-spin' : ''} />
             </button>
           </div>
           <div className="flex items-center gap-2 flex-wrap">
-            <select
-              value={typeFilter}
-              onChange={e => setTypeFilter(e.target.value)}
-              className="px-2.5 py-1.5 bg-gray-50 border border-gray-100 rounded-xl text-xs font-bold text-gray-700 outline-none"
-            >
+            <select value={typeFilter} onChange={e => setTypeFilter(e.target.value)}
+              className="px-2.5 py-1.5 bg-gray-50 border border-gray-100 rounded-xl text-xs font-bold text-gray-700 outline-none">
               <option value="">All Types</option>
-              {ALL_TYPES.map(t => (
-                <option key={t} value={t}>{t}</option>
-              ))}
+              {ALL_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
             </select>
-            <select
-              value={locationFilter}
-              onChange={e => setLocationFilter(e.target.value)}
-              className="px-2.5 py-1.5 bg-gray-50 border border-gray-100 rounded-xl text-xs font-bold text-gray-700 outline-none"
-            >
+            <select value={locationFilter} onChange={e => setLocationFilter(e.target.value)}
+              className="px-2.5 py-1.5 bg-gray-50 border border-gray-100 rounded-xl text-xs font-bold text-gray-700 outline-none">
               <option value="">All Locations</option>
-              {allLocations.map(l => (
-                <option key={l.id} value={l.id}>{l.name}</option>
-              ))}
+              {allLocations.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}
             </select>
-            <select
-              value={categoryFilter}
-              onChange={e => setCategoryFilter(e.target.value)}
-              className="px-2.5 py-1.5 bg-gray-50 border border-gray-100 rounded-xl text-xs font-bold text-gray-700 outline-none"
-            >
+            <select value={categoryFilter} onChange={e => setCategoryFilter(e.target.value)}
+              className="px-2.5 py-1.5 bg-gray-50 border border-gray-100 rounded-xl text-xs font-bold text-gray-700 outline-none">
               <option value="">All Categories</option>
-              {categories.filter(c => c.isActive).sort((a, b) => a.name.localeCompare(b.name)).map(c => (
+              {categories.filter(c => c.isActive).sort((a, b) => a.name.localeCompare(b.name)).map(c =>
                 <option key={c.id} value={c.id}>{c.name}</option>
-              ))}
+              )}
             </select>
-            <div className="ml-auto flex items-center gap-1 text-[10px] text-gray-400 font-bold uppercase tracking-widest">
-              <span>Sort:</span>
-              {(['timestamp', 'type', 'quantity'] as SortField[]).map(f => (
-                <button
-                  key={f}
-                  onClick={() => handleSort(f)}
-                  className={cn(
-                    "flex items-center gap-0.5 px-2 py-1 rounded-lg transition-colors",
-                    sortField === f ? "bg-blue-50 text-blue-600" : "hover:bg-gray-50"
-                  )}
-                >
-                  {f === 'timestamp' ? 'Date' : f === 'quantity' ? 'Qty' : f}
-                  <SortIcon field={f} />
-                </button>
-              ))}
-            </div>
+            <button
+              onClick={() => setSortDir(d => d === 'desc' ? 'asc' : 'desc')}
+              className="flex items-center gap-1 px-2.5 py-1.5 bg-gray-50 border border-gray-100 rounded-xl text-xs font-bold text-gray-700"
+            >
+              Date {sortDir === 'desc' ? <ChevronDown size={11} /> : <ChevronUp size={11} />}
+            </button>
           </div>
           <div className="flex items-center justify-between text-[10px] text-gray-400 font-medium">
-            <span>{displayed.length} of {records.length} on this page — Page {page + 1}</span>
+            <span>{displayed.length} batch{displayed.length !== 1 ? 'es' : ''} from {records.length} transactions — Page {page + 1}</span>
             <div className="flex items-center gap-1">
-              <button
-                onClick={handlePrevPage}
-                disabled={page === 0 || loading}
-                className="p-1 rounded-lg hover:bg-gray-50 disabled:opacity-30 transition-colors"
-              >
+              <button onClick={handlePrev} disabled={page === 0 || loading}
+                className="p-1 rounded-lg hover:bg-gray-50 disabled:opacity-30 transition-colors">
                 <ChevronLeft size={14} />
               </button>
-              <button
-                onClick={handleNextPage}
-                disabled={!hasMore || loading}
-                className="p-1 rounded-lg hover:bg-gray-50 disabled:opacity-30 transition-colors"
-              >
+              <button onClick={handleNext} disabled={!hasMore || loading}
+                className="p-1 rounded-lg hover:bg-gray-50 disabled:opacity-30 transition-colors">
                 <ChevronRight size={14} />
               </button>
             </div>
           </div>
         </Card>
 
-        {/* Records */}
+        {/* Batch cards */}
         {loading ? (
           <div className="flex justify-center py-12">
             <Loader2 size={24} className="animate-spin text-blue-400" />
@@ -484,138 +465,192 @@ export const TransactionsManager = () => {
           </div>
         ) : (
           <div className="space-y-3">
-            {displayed.map(tx => {
-              const isDeleting = del?.txId === tx.id;
-              const itemName = itemMap.get(tx.itemId)?.name;
-              const fromName = locMap.get(tx.fromLocationId || '');
-              const toName = locMap.get(tx.toLocationId || '');
-              const uomSymbol = uomMap.get(tx.uomId) || '';
-              const hasLinks = !!(tx.batchId || (tx.requestIds && tx.requestIds.length > 0));
+            {displayed.map(g => {
+              const isExpanded = expandedKeys.has(g.key);
+              const isEditing = edit?.key === g.key;
+              const isDeleting = del?.key === g.key;
+              const s = STATUS_STYLES[g.status] ?? STATUS_STYLES.Other;
+              const toName   = locMap.get(g.toLocationId   || '');
+              const fromName = locMap.get(g.fromLocationId || '');
 
               return (
-                <Card key={tx.id} className={cn(
-                  "overflow-hidden border-l-2",
-                  TYPE_BORDER[tx.type] || 'border-l-gray-300',
-                )}>
-                  {/* Card header */}
-                  <div className="flex items-start justify-between gap-2 p-3 pb-2 bg-gray-50 border-b border-gray-100">
-                    <div className="min-w-0">
-                      <p className="text-sm font-bold text-gray-900 truncate">
-                        {itemName || tx.itemId}
-                      </p>
-                      <div className="flex items-center gap-2 mt-0.5 flex-wrap">
-                        <span className="text-[9px] font-mono text-gray-400" title={tx.id}>
-                          {truncateId(tx.id)}
-                        </span>
-                        {fromName && toName && (
-                          <span className="text-[10px] font-medium text-gray-500">{fromName} → {toName}</span>
-                        )}
-                        {fromName && !toName && (
-                          <span className="text-[10px] font-medium text-gray-500">From: {fromName}</span>
-                        )}
-                        {!fromName && toName && (
-                          <span className="text-[10px] font-medium text-gray-500">To: {toName}</span>
-                        )}
-                        {tx.batchId && (
-                          <span className="text-[9px] font-bold text-blue-500" title={tx.batchId}>
-                            Batch: {truncateId(tx.batchId)}
+                <Card key={g.key} className={cn('overflow-hidden border-l-2', s.border)}>
+
+                  {/* ── Header ── */}
+                  <div className="p-3 bg-gray-50 border-b border-gray-100">
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0 space-y-1">
+                        {/* Batch ID + status + count */}
+                        <div className="flex items-center gap-2 flex-wrap">
+                          {g.batchId ? (
+                            <span className="text-xs font-black text-gray-900 tracking-tight">{g.batchId}</span>
+                          ) : (
+                            <span className="text-[10px] font-mono text-gray-400" title={g.transactions[0]?.id}>
+                              {truncateId(g.transactions[0]?.id || '')}
+                            </span>
+                          )}
+                          <span className={cn('text-[9px] font-black uppercase tracking-widest px-1.5 py-0.5 rounded', s.badge)}>
+                            {g.status}
                           </span>
+                          {g.txTypes.map(t => (
+                            <span key={t} className={cn('text-[9px] font-bold uppercase tracking-widest px-1.5 py-0.5 rounded', TYPE_COLORS[t] || 'bg-gray-100 text-gray-500')}>
+                              {t}
+                            </span>
+                          ))}
+                          <span className="text-[10px] font-semibold text-gray-500 flex items-center gap-0.5">
+                            <Package size={10} />
+                            {g.items.length} item{g.items.length !== 1 ? 's' : ''}
+                            {g.transactions.length > g.items.length && ` (${g.transactions.length} txs)`}
+                          </span>
+                        </div>
+
+                        {/* Location */}
+                        {(fromName || toName) && (
+                          <div className="flex items-center gap-1 text-[10px] font-medium text-gray-500">
+                            <MapPin size={10} className="shrink-0" />
+                            {fromName && <span>{fromName}</span>}
+                            {fromName && toName && <span>→</span>}
+                            {toName && <span className="font-bold text-gray-700">{toName}</span>}
+                          </div>
+                        )}
+
+                        {/* Picker + timestamp */}
+                        <div className="text-[10px] text-gray-400 font-medium">
+                          {g.pickerName && <span>Picked by <span className="font-bold text-gray-600">{g.pickerName}</span> · </span>}
+                          {formatTs(g.timestamp)}
+                        </div>
+
+                        {/* Receiver */}
+                        {g.receiverName && (
+                          <div className="text-[10px] text-emerald-600 font-semibold">
+                            Received by {g.receiverMixed ? 'multiple people' : g.receiverName}
+                          </div>
                         )}
                       </div>
+
+                      {/* Expand toggle */}
+                      <button
+                        onClick={() => toggleExpand(g.key)}
+                        className="shrink-0 p-1.5 rounded-xl bg-gray-100 text-gray-400 hover:text-gray-700 hover:bg-gray-200 transition-colors"
+                      >
+                        {isExpanded
+                          ? <ChevronUp size={14} />
+                          : <ChevronDown size={14} />}
+                      </button>
                     </div>
-                    <span className={cn(
-                      "shrink-0 text-[9px] font-black uppercase tracking-widest px-1.5 py-0.5 rounded",
-                      TYPE_COLORS[tx.type] || 'bg-gray-100 text-gray-500'
-                    )}>
-                      {tx.type}
-                    </span>
                   </div>
 
-                  {/* Fields */}
-                  <div className="p-3 space-y-0">
-                    <FieldRow tx={tx} field="type" label="Type" />
-                    <FieldRow tx={tx} field="userName" label="User" />
-                    <FieldRow tx={tx} field="fromLocationId" label="From Location" />
-                    <FieldRow tx={tx} field="toLocationId" label="To Location" />
-                    <FieldRow tx={tx} field="notes" label="Notes" />
-                    <FieldRow tx={tx} field="batchId" label="Batch ID" />
-                    <FieldRow tx={tx} field="poNumber" label="PO Number" />
-                    <FieldRow tx={tx} field="supplierDR" label="Supplier DR" />
-                    <FieldRow tx={tx} field="supplierInvoice" label="Invoice" />
-
-                    {/* Read-only rows */}
-                    <div className="flex items-start gap-2 py-1 border-b border-gray-50">
-                      <div className="w-32 shrink-0">
-                        <span className="text-[9px] font-black uppercase tracking-widest text-gray-400">Quantity</span>
+                  {/* ── Item list (expandable) ── */}
+                  {isExpanded && (
+                    <div className="px-3 py-2 border-b border-gray-100 bg-white">
+                      <div className="space-y-1">
+                        {g.items.map(item => (
+                          <div key={item.itemId} className="flex items-center justify-between text-xs">
+                            <span className="font-medium text-gray-700 truncate flex-1">{item.name}</span>
+                            <span className="shrink-0 font-bold text-gray-900 ml-3">
+                              {item.qty}{item.uomSymbol && ` ${item.uomSymbol}`}
+                            </span>
+                          </div>
+                        ))}
+                        {g.items.length === 0 && (
+                          <p className="text-[10px] text-gray-400 font-medium">No item data</p>
+                        )}
                       </div>
-                      <span className="text-xs font-medium text-gray-700">
-                        {tx.quantity}{uomSymbol && ` ${uomSymbol}`}
-                        {tx.conversionFactor !== 1 && ` (base: ${tx.baseQuantity})`}
-                      </span>
-                    </div>
-                    <div className="flex items-start gap-2 py-1 border-b border-gray-50">
-                      <div className="w-32 shrink-0">
-                        <span className="text-[9px] font-black uppercase tracking-widest text-gray-400">Timestamp</span>
-                      </div>
-                      <span className="text-xs font-medium text-gray-700">{formatTs(tx.timestamp)}</span>
-                    </div>
-                    {tx.requestIds && tx.requestIds.length > 0 && (
-                      <div className="flex items-start gap-2 py-1">
-                        <div className="w-32 shrink-0">
-                          <span className="text-[9px] font-black uppercase tracking-widest text-gray-400">Request IDs</span>
+                      {/* Serial numbers if any */}
+                      {g.items.some(i => i.serialNumbers.length > 0) && (
+                        <div className="mt-2 pt-2 border-t border-gray-50">
+                          {g.items.filter(i => i.serialNumbers.length > 0).map(item => (
+                            <div key={item.itemId} className="text-[9px] text-gray-400 font-mono">
+                              {item.name}: {item.serialNumbers.join(', ')}
+                            </div>
+                          ))}
                         </div>
-                        <span className="text-[10px] font-mono text-gray-600 break-all">
-                          {tx.requestIds.map(truncateId).join(', ')}
-                        </span>
-                      </div>
-                    )}
-                  </div>
+                      )}
+                      {/* Linked request IDs (truncated) */}
+                      {g.allRequestIds.length > 0 && (
+                        <div className="mt-2 pt-2 border-t border-gray-50">
+                          <p className="text-[9px] text-gray-400 font-semibold uppercase tracking-widest mb-1">
+                            Linked Requests ({g.allRequestIds.length})
+                          </p>
+                          <div className="flex flex-wrap gap-1">
+                            {g.allRequestIds.map(id => (
+                              <span key={id} className="text-[9px] font-mono bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded" title={id}>
+                                {truncateId(id)}
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
 
-                  {/* Delete section */}
-                  <div className="px-3 pb-3">
-                    {isDeleting ? (
+                  {/* ── Edit / Delete ── */}
+                  <div className="px-3 py-2.5 space-y-2">
+                    {isEditing ? (
+                      <div className="space-y-2">
+                        <label className="text-[9px] font-black text-gray-400 uppercase tracking-widest">
+                          Notes — updates all {g.transactions.length} transaction{g.transactions.length !== 1 ? 's' : ''} in this batch
+                        </label>
+                        <textarea
+                          value={edit.notes}
+                          onChange={e => setEdit(ev => ev ? { ...ev, notes: e.target.value } : null)}
+                          rows={2}
+                          className="w-full px-2 py-1.5 bg-gray-100 rounded-lg text-xs font-medium outline-none focus:ring-2 focus:ring-blue-500 resize-none"
+                          autoFocus
+                        />
+                        {edit.error && <p className="text-[9px] text-red-600 font-semibold">{edit.error}</p>}
+                        <div className="flex gap-1.5">
+                          <button onClick={saveEdit} disabled={edit.saving}
+                            className="flex items-center gap-1 px-2.5 py-1 bg-gray-900 text-white rounded-lg text-[10px] font-bold active:scale-95 transition-transform disabled:opacity-50">
+                            {edit.saving ? <Loader2 size={9} className="animate-spin" /> : <CheckCircle size={9} />}
+                            Save
+                          </button>
+                          <button onClick={cancelEdit}
+                            className="px-2.5 py-1 bg-gray-100 text-gray-600 rounded-lg text-[10px] font-bold active:scale-95 transition-transform">
+                            Cancel
+                          </button>
+                        </div>
+                      </div>
+                    ) : isDeleting ? (
                       <div className="p-2.5 bg-red-50 rounded-xl border border-red-200 space-y-2">
                         <div className="flex items-start gap-2">
                           <AlertTriangle size={12} className="text-red-500 shrink-0 mt-0.5" />
                           <div className="space-y-1">
                             <p className="text-[10px] font-bold text-red-700">
-                              Permanently delete this transaction? This will NOT reverse any inventory stock changes.
+                              Delete {del.txCount} transaction document{del.txCount !== 1 ? 's' : ''} for this batch?
+                              This will <span className="underline">not</span> reverse inventory changes.
                             </p>
-                            {hasLinks && (
+                            {del.requestIds.length > 0 && (
                               <p className="text-[10px] font-bold text-red-600">
-                                ⚠ This transaction has linked {tx.batchId ? 'batch' : ''}{tx.batchId && tx.requestIds?.length ? ' and ' : ''}{tx.requestIds?.length ? 'requests' : ''} — deleting may cause data inconsistencies.
+                                ⚠ {del.requestIds.length} linked request{del.requestIds.length !== 1 ? 's' : ''} will lose their transaction reference.
                               </p>
                             )}
                           </div>
                         </div>
-                        {del.error && (
-                          <p className="text-[10px] font-semibold text-red-600">{del.error}</p>
-                        )}
+                        {del.error && <p className="text-[10px] font-semibold text-red-600">{del.error}</p>}
                         <div className="flex gap-2">
-                          <button
-                            onClick={confirmDelete}
-                            disabled={del.deleting}
-                            className="flex items-center gap-1 px-3 py-1.5 bg-red-600 text-white rounded-xl text-[10px] font-black uppercase tracking-widest active:scale-95 transition-transform disabled:opacity-50"
-                          >
+                          <button onClick={confirmDelete} disabled={del.deleting}
+                            className="flex items-center gap-1 px-3 py-1.5 bg-red-600 text-white rounded-xl text-[10px] font-black uppercase tracking-widest active:scale-95 transition-transform disabled:opacity-50">
                             {del.deleting ? <Loader2 size={10} className="animate-spin" /> : <Trash2 size={10} />}
                             Delete
                           </button>
-                          <button
-                            onClick={cancelDelete}
-                            className="px-3 py-1.5 bg-gray-100 text-gray-600 rounded-xl text-[10px] font-black uppercase tracking-widest active:scale-95 transition-transform"
-                          >
+                          <button onClick={cancelDelete}
+                            className="px-3 py-1.5 bg-gray-100 text-gray-600 rounded-xl text-[10px] font-black uppercase tracking-widest active:scale-95 transition-transform">
                             Cancel
                           </button>
                         </div>
                       </div>
                     ) : (
-                      <button
-                        onClick={() => startDelete(tx.id)}
-                        className="flex items-center gap-1.5 text-[10px] font-bold text-red-400 hover:text-red-600 transition-colors active:opacity-60"
-                      >
-                        <Trash2 size={11} />
-                        Delete Transaction
-                      </button>
+                      <div className="flex items-center gap-3">
+                        <button onClick={() => startEdit(g)}
+                          className="flex items-center gap-1 text-[10px] font-bold text-gray-400 hover:text-blue-500 transition-colors">
+                          <Edit3 size={11} /> Edit Notes
+                        </button>
+                        <button onClick={() => startDelete(g)}
+                          className="flex items-center gap-1 text-[10px] font-bold text-red-400 hover:text-red-600 transition-colors">
+                          <Trash2 size={11} /> Delete Batch
+                        </button>
+                      </div>
                     )}
                   </div>
                 </Card>
@@ -627,28 +662,16 @@ export const TransactionsManager = () => {
         {/* Bottom pagination */}
         {!loading && displayed.length > 0 && (
           <div className="flex items-center justify-between pt-2">
-            <button
-              onClick={handlePrevPage}
-              disabled={page === 0 || loading}
-              className={cn(
-                "flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold transition-colors",
-                page === 0 ? "text-gray-300 cursor-not-allowed" : "text-gray-600 hover:bg-gray-100 active:scale-95"
-              )}
-            >
-              <ChevronLeft size={14} />
-              Previous
+            <button onClick={handlePrev} disabled={page === 0 || loading}
+              className={cn('flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold transition-colors',
+                page === 0 ? 'text-gray-300 cursor-not-allowed' : 'text-gray-600 hover:bg-gray-100 active:scale-95')}>
+              <ChevronLeft size={14} /> Previous
             </button>
             <span className="text-[10px] text-gray-400 font-bold">Page {page + 1}</span>
-            <button
-              onClick={handleNextPage}
-              disabled={!hasMore || loading}
-              className={cn(
-                "flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold transition-colors",
-                !hasMore ? "text-gray-300 cursor-not-allowed" : "text-gray-600 hover:bg-gray-100 active:scale-95"
-              )}
-            >
-              Next
-              <ChevronRight size={14} />
+            <button onClick={handleNext} disabled={!hasMore || loading}
+              className={cn('flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold transition-colors',
+                !hasMore ? 'text-gray-300 cursor-not-allowed' : 'text-gray-600 hover:bg-gray-100 active:scale-95')}>
+              Next <ChevronRight size={14} />
             </button>
           </div>
         )}

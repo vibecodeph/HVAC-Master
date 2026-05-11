@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { Search, MapPin, Wrench, Box, Truck, Target, AlertTriangle, Plus, X, ChevronDown, History, ArrowLeftRight, Package, Loader2 } from 'lucide-react';
+import { Search, MapPin, Wrench, Box, Truck, Target, AlertTriangle, Plus, X, ChevronDown, History, ArrowLeftRight, Package, Loader2, Pencil } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { useAuth, useData } from '../../App';
 import { useIsMobile } from '../../hooks/useApp';
@@ -7,6 +7,7 @@ import { cn, getMillis, normalizeVariant } from '../../lib/utils';
 import { Header } from '../common/Header';
 import { Card } from '../common/Card';
 import { Modal } from '../common/Modal';
+import { InventoryEditModal } from '../common/InventoryEditModal';
 import { RequestForm, ItemForm } from '../Forms';
 import { Item, Location, Transaction, Inventory } from '../../types';
 import { Pagination } from '../common/Pagination';
@@ -15,16 +16,17 @@ import { subscribeToTransactions } from '../../services/inventoryService';
 
 const ITEMS_PER_PAGE = 10;
 
-const ItemCard = ({ 
-  item, 
-  entries, 
-  profile, 
-  categories, 
-  uoms, 
-  inventory, 
+const ItemCard = ({
+  item,
+  entries,
+  profile,
+  categories,
+  uoms,
+  inventory,
   selectedJobsiteId,
-  setRequestingItem, 
+  setRequestingItem,
   setViewingTransactions,
+  setEditingInventory,
   setFilter
 }: any) => {
   const [isExpanded, setIsExpanded] = useState(false);
@@ -229,12 +231,12 @@ const ItemCard = ({
                         )}
 
                         {entries.length > 1 && (
-                          <button 
+                          <button
                             onClick={(e) => {
                               e.stopPropagation();
                               setFilter(item.isTool ? 'Tools' : 'Materials');
-                              setRequestingItem({ 
-                                item, 
+                              setRequestingItem({
+                                item,
                                 variant: variantToMatch || undefined,
                                 customSpec: invList[0]?.customSpec
                               });
@@ -242,6 +244,22 @@ const ItemCard = ({
                             className="mt-3 px-3 py-1.5 bg-gray-100 text-gray-900 text-[9px] font-black uppercase tracking-widest rounded-lg hover:bg-gray-200 active:scale-95 transition-all opacity-0 group-hover:opacity-100"
                           >
                             Request
+                          </button>
+                        )}
+                        {profile?.role === 'admin' && invList[0]?.id && (
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setEditingInventory({
+                                inv: invList[0],
+                                item,
+                                variant: variantToMatch || undefined,
+                              });
+                            }}
+                            className="mt-2 p-1.5 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-all opacity-0 group-hover:opacity-100 active:scale-95"
+                            title="Edit inventory record"
+                          >
+                            <Pencil size={12} />
                           </button>
                         )}
                       </div>
@@ -301,6 +319,7 @@ export const InventoryList = () => {
   }, [debouncedSearchTerm, filter, selectedJobsiteId, showZeroQty]);
 
   const [viewingTransactions, setViewingTransactions] = useState<{ item: Item, variant?: Record<string, string> } | null>(null);
+  const [editingInventory, setEditingInventory] = useState<{ inv: Inventory, item: Item, variant?: Record<string, string> } | null>(null);
   const [itemTransactions, setItemTransactions] = useState<Transaction[]>([]);
   const [isLoadingTransactions, setIsLoadingTransactions] = useState(false);
 
@@ -645,9 +664,9 @@ export const InventoryList = () => {
                                   transition={{ delay: idx * 0.05 }}
                                   className="space-y-4"
                                 >
-                                  <ItemCard 
-                                    item={item} 
-                                    entries={entries} 
+                                  <ItemCard
+                                    item={item}
+                                    entries={entries}
                                     profile={profile}
                                     categories={categories}
                                     uoms={uoms}
@@ -655,6 +674,7 @@ export const InventoryList = () => {
                                     selectedJobsiteId={selectedJobsiteId}
                                     setRequestingItem={setRequestingItem}
                                     setViewingTransactions={setViewingTransactions}
+                                    setEditingInventory={setEditingInventory}
                                     setFilter={setFilter}
                                   />
                                 </motion.div>
@@ -892,6 +912,23 @@ export const InventoryList = () => {
               )}
             </div>
           </div>
+        )}
+      </Modal>
+
+      <Modal
+        isOpen={!!editingInventory}
+        onClose={() => setEditingInventory(null)}
+        title="Edit Inventory Record"
+      >
+        {editingInventory && profile && (
+          <InventoryEditModal
+            inv={editingInventory.inv}
+            item={editingInventory.item}
+            variant={editingInventory.variant}
+            profile={profile}
+            locationName={locations.find(l => l.id === selectedJobsiteId)?.name || ''}
+            onClose={() => setEditingInventory(null)}
+          />
         )}
       </Modal>
     </div>

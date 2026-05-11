@@ -115,6 +115,10 @@ export interface Inventory {
   serialNumber?: string;
   propertyNumber?: string;
   quantity: number;
+  unitPrice?: number;
+  lastEditedBy?: string;
+  lastEditedAt?: Timestamp;
+  editNotes?: string;
 }
 
 export interface Transaction {
@@ -331,7 +335,7 @@ export interface POPayment {
   grossAmount: number;
   cvNumber: string;
   chequeNumber?: string;
-  status: 'processing' | 'prepared' | 'collected';
+  status: 'processing' | 'prepared' | 'collected' | 'bank_deposit';
   deductions: {
     type: string;
     amount: number;
@@ -339,4 +343,8 @@ export interface POPayment {
   notes?: string;
   createdAt: Timestamp;
   createdBy: string;
+  updatedAt?: Timestamp;
+  updatedBy?: string;
+  lastEditedBy?: string;
+  lastEditedAt?: Timestamp;
 }

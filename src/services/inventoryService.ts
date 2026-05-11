@@ -980,14 +980,6 @@ export const addPOPayment = async (poId: string, payment: Omit<POPayment, 'id' |
       createdBy: userId
     });
 
-    // Update PO payment status if needed
-    // This is a simple update, more complex logic could be added to derive status from all payments
-    await updateDoc(doc(db, 'purchase_orders', poId), {
-      paymentStatus: payment.status === 'collected' ? 'paid' : (payment.status === 'prepared' ? 'prepared' : 'processing'),
-      updatedAt: serverTimestamp(),
-      updatedBy: userId
-    });
-
     return docRef.id;
   } catch (error) {
     handleFirestoreError(error, OperationType.CREATE, `purchase_orders/${poId}/payments`);
@@ -999,23 +991,45 @@ export const updatePOPayment = async (poId: string, paymentId: string, data: Par
   if (!userId) throw new Error('User not authenticated');
 
   try {
-    await updateDoc(doc(db, 'purchase_orders', poId, 'payments', paymentId), cleanData(data));
-    
-    if (data.status) {
-      await updateDoc(doc(db, 'purchase_orders', poId), {
-        paymentStatus: data.status === 'collected' ? 'paid' : (data.status === 'prepared' ? 'prepared' : 'processing'),
-        updatedAt: serverTimestamp(),
-        updatedBy: userId
-      });
-    }
+    await updateDoc(doc(db, 'purchase_orders', poId, 'payments', paymentId), {
+      ...cleanData(data),
+      lastEditedBy: userId,
+      lastEditedAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+      updatedBy: userId,
+    });
   } catch (error) {
     handleFirestoreError(error, OperationType.UPDATE, `purchase_orders/${poId}/payments/${paymentId}`);
   }
 };
 
 export const deletePOPayment = async (poId: string, paymentId: string) => {
+  const userId = auth.currentUser?.uid;
+  if (!userId) throw new Error('User not authenticated');
+
   try {
     await deleteDoc(doc(db, 'purchase_orders', poId, 'payments', paymentId));
+
+    // Re-derive PO paymentStatus from remaining payments so the card stays in sync
+    const remainingSnap = await getDocs(collection(db, 'purchase_orders', poId, 'payments'));
+    const remaining = remainingSnap.docs.map(d => d.data());
+
+    let newPaymentStatus: PurchaseOrder['paymentStatus'];
+    if (remaining.length === 0) {
+      newPaymentStatus = 'unpaid';
+    } else if (remaining.some(p => p.status === 'collected' || p.status === 'bank_deposit')) {
+      newPaymentStatus = 'paid';
+    } else if (remaining.some(p => p.status === 'prepared')) {
+      newPaymentStatus = 'prepared';
+    } else {
+      newPaymentStatus = 'processing';
+    }
+
+    await updateDoc(doc(db, 'purchase_orders', poId), {
+      paymentStatus: newPaymentStatus,
+      updatedAt: serverTimestamp(),
+      updatedBy: userId,
+    });
   } catch (error) {
     handleFirestoreError(error, OperationType.DELETE, `purchase_orders/${poId}/payments/${paymentId}`);
   }
@@ -2743,6 +2757,71 @@ export const subscribeToRequests = (callback: (data: Request[]) => void, locatio
   }, (error) => {
     handleFirestoreError(error, OperationType.LIST, 'requests', false);
     callback([]);
+  });
+};
+
+export const manualEditInventory = async (
+  inventoryId: string,
+  itemId: string,
+  variant: Record<string, string> | undefined,
+  updates: {
+    quantity: number;
+    unitPrice?: number;
+    customSpec?: string;
+    notes: string;
+  },
+  userId: string
+): Promise<void> => {
+  const invRef = doc(db, 'inventory', inventoryId);
+  const itemRef = doc(db, 'items', itemId);
+
+  await runTransaction(db, async (txn) => {
+    const invSnap = await txn.get(invRef);
+    const itemSnap = await txn.get(itemRef);
+
+    if (!invSnap.exists()) throw new Error('Inventory record not found.');
+    if (!itemSnap.exists()) throw new Error('Item not found.');
+
+    const currentQty: number = invSnap.data()!.quantity || 0;
+    const currentItem = itemSnap.data() as Item;
+    const qtyDiff = updates.quantity - currentQty;
+
+    const invUpdate: Record<string, any> = {
+      quantity: updates.quantity,
+      updatedBy: userId,
+      updatedAt: serverTimestamp(),
+      lastEditedBy: userId,
+      lastEditedAt: serverTimestamp(),
+      editNotes: updates.notes,
+    };
+    if (updates.unitPrice !== undefined) invUpdate.unitPrice = updates.unitPrice;
+    if (updates.customSpec !== undefined) invUpdate.customSpec = updates.customSpec || null;
+    txn.update(invRef, invUpdate);
+
+    const itemUpdate: Record<string, any> = {
+      totalQuantity: (currentItem.totalQuantity || 0) + qtyDiff,
+      updatedBy: userId,
+      updatedAt: serverTimestamp(),
+    };
+
+    if (updates.unitPrice !== undefined) {
+      const hasVariant = variant && Object.keys(variant).length > 0;
+      if (hasVariant) {
+        const varKey = normalizeVariant(variant!);
+        const configs = [...(currentItem.variantConfigs || [])];
+        const idx = configs.findIndex(vc => normalizeVariant(vc.variant) === varKey);
+        if (idx >= 0) {
+          configs[idx] = { ...configs[idx], averageCost: updates.unitPrice };
+        } else {
+          configs.push({ variant: variant!, averageCost: updates.unitPrice });
+        }
+        itemUpdate.variantConfigs = configs;
+      } else {
+        itemUpdate.averageCost = updates.unitPrice;
+      }
+    }
+
+    txn.update(itemRef, itemUpdate);
   });
 };
 

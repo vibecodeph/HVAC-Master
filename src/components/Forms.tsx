@@ -19,7 +19,8 @@ import {
 import { useData } from '../App';
 import { Timestamp, serverTimestamp } from 'firebase/firestore';
 import { format } from 'date-fns';
-import { CreditCard, Receipt, Trash2, AlertCircle, DollarSign, MinusCircle } from 'lucide-react';
+import { CreditCard, Receipt, Trash2, AlertCircle, DollarSign, MinusCircle, Pencil } from 'lucide-react';
+import { POPaymentEditModal } from './common/POPaymentEditModal';
 
 interface RequestFormProps {
   item: Item;
@@ -742,6 +743,7 @@ export const POPaymentForm = ({ po, onComplete, onCancel }: POPaymentFormProps) 
               <option value="processing">For Processing</option>
               <option value="prepared">Cheque Prepared</option>
               <option value="collected">Collected (Paid)</option>
+              <option value="bank_deposit">Bank Deposit</option>
             </select>
           </div>
         </div>
@@ -2729,6 +2731,7 @@ export const PurchaseOrderForm = ({ items, locations, uoms, profile, initialData
   const [discountType, setDiscountType] = useState<'amount' | 'percentage'>(initialData?.discountType || 'amount');
   const [vatEnabled, setVatEnabled] = useState(initialData?.vatEnabled !== false);
   const [deletingPaymentId, setDeletingPaymentId] = useState<string | null>(null);
+  const [editingPayment, setEditingPayment] = useState<POPayment | null>(null);
   const [poItems, setPoItems] = useState<PurchaseOrderItem[]>(initialData?.items || []);
   
   const [itemSearch, setItemSearch] = useState('');
@@ -2874,16 +2877,17 @@ export const PurchaseOrderForm = ({ items, locations, uoms, profile, initialData
     const largestConv = item.uomConversions?.length
       ? item.uomConversions.reduce((best, curr) => curr.factor > best.factor ? curr : best)
       : null;
+    const baseCost = item.averageCost && item.averageCost > 0 ? item.averageCost : undefined;
     const newItem: PurchaseOrderItem = {
       itemId: item.id,
       quantity: 1,
       uomId: largestConv ? largestConv.uomId : item.uomId,
       conversionFactor: largestConv ? largestConv.factor : 1,
-      srp: item.averageCost || 0,
+      srp: baseCost,
       discount: 0,
       discountType: 'amount',
-      unitPrice: item.averageCost || 0,
-      totalPrice: item.averageCost || 0,
+      unitPrice: baseCost || 0,
+      totalPrice: baseCost || 0,
       receivedQuantity: 0,
       note: ''
     };
@@ -2902,12 +2906,33 @@ export const PurchaseOrderForm = ({ items, locations, uoms, profile, initialData
   const updatePOItem = (idx: number, updates: Partial<PurchaseOrderItem>) => {
     const next = [...poItems];
     const item = { ...next[idx], ...updates };
-    
+
+    // When variant changes, update SRP from variantConfigs or base averageCost
+    if ('variant' in updates) {
+      const fullItem = items.find(i => i.id === item.itemId);
+      if (fullItem) {
+        const newVariant = updates.variant;
+        let cost: number | undefined;
+        if (newVariant && Object.keys(newVariant).some(k => newVariant[k])) {
+          const config = fullItem.variantConfigs?.find(
+            vc => normalizeVariant(vc.variant) === normalizeVariant(newVariant)
+          );
+          cost = config?.averageCost && config.averageCost > 0 ? config.averageCost : undefined;
+          if (cost === undefined && fullItem.averageCost && fullItem.averageCost > 0) {
+            cost = fullItem.averageCost;
+          }
+        } else {
+          cost = fullItem.averageCost && fullItem.averageCost > 0 ? fullItem.averageCost : undefined;
+        }
+        item.srp = cost;
+      }
+    }
+
     // Recalculate unit price based on srp and discount
     const srp = item.srp || 0;
     const disc = item.discount || 0;
     const discType = item.discountType || 'amount';
-    
+
     let unitPrice = srp;
     if (disc > 0) {
       if (discType === 'percentage') {
@@ -2916,10 +2941,10 @@ export const PurchaseOrderForm = ({ items, locations, uoms, profile, initialData
         unitPrice = Math.max(0, srp - disc);
       }
     }
-    
+
     item.unitPrice = unitPrice;
     item.totalPrice = item.quantity * unitPrice;
-    
+
     next[idx] = item;
     setPoItems(next);
   };
@@ -3171,11 +3196,12 @@ export const PurchaseOrderForm = ({ items, locations, uoms, profile, initialData
 
                       <div className="w-[90px] space-y-1">
                         <label className="text-[8px] font-black text-gray-400 uppercase tracking-widest pl-1">SRP</label>
-                        <input 
+                        <input
                           type="number"
                           step="0.01"
-                          value={poItem.srp || poItem.unitPrice || 0}
-                          onChange={e => updatePOItem(idx, { srp: Number(e.target.value) })}
+                          value={poItem.srp !== undefined ? poItem.srp : ''}
+                          placeholder="0.00"
+                          onChange={e => updatePOItem(idx, { srp: e.target.value === '' ? undefined : Number(e.target.value) })}
                           className="w-full p-2 bg-white border border-gray-200 rounded-xl text-xs font-bold outline-none focus:ring-2 focus:ring-blue-500"
                         />
                       </div>
@@ -3417,10 +3443,13 @@ export const PurchaseOrderForm = ({ items, locations, uoms, profile, initialData
                     </div>
                     <div className={cn(
                       "px-2 py-0.5 rounded-full text-[8px] font-black uppercase tracking-widest",
-                      payment.status === 'collected' ? "bg-green-100 text-green-600" : 
+                      payment.status === 'collected' ? "bg-green-100 text-green-600" :
+                      payment.status === 'bank_deposit' ? "bg-teal-100 text-teal-600" :
                       payment.status === 'prepared' ? "bg-blue-100 text-blue-600" : "bg-orange-100 text-orange-600"
                     )}>
-                      {payment.status}
+                      {payment.status === 'collected' ? 'Collected' :
+                       payment.status === 'bank_deposit' ? 'Bank Deposit' :
+                       payment.status === 'prepared' ? 'Cheque Prepared' : 'For Processing'}
                     </div>
                   </div>
                   
@@ -3442,7 +3471,7 @@ export const PurchaseOrderForm = ({ items, locations, uoms, profile, initialData
                       
                       {deletingPaymentId === payment.id ? (
                         <div className="flex items-center space-x-1">
-                          <button 
+                          <button
                             type="button"
                             onClick={async () => {
                               await deletePOPayment(initialData.id, payment.id);
@@ -3452,7 +3481,7 @@ export const PurchaseOrderForm = ({ items, locations, uoms, profile, initialData
                           >
                             Confirm
                           </button>
-                          <button 
+                          <button
                             type="button"
                             onClick={() => setDeletingPaymentId(null)}
                             className="px-2 py-1 bg-gray-200 text-gray-600 text-[8px] font-black rounded-lg uppercase tracking-widest"
@@ -3461,13 +3490,25 @@ export const PurchaseOrderForm = ({ items, locations, uoms, profile, initialData
                           </button>
                         </div>
                       ) : (
-                        <button 
-                          type="button"
-                          onClick={() => setDeletingPaymentId(payment.id)}
-                          className="p-2 text-gray-300 hover:text-red-500 transition-colors opacity-0 group-hover:opacity-100"
-                        >
-                          <Trash2 size={14} />
-                        </button>
+                        <div className="flex items-center space-x-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                          {profile?.role === 'admin' && (
+                            <button
+                              type="button"
+                              onClick={() => setEditingPayment(payment)}
+                              className="p-2 text-gray-300 hover:text-blue-500 transition-colors"
+                              title="Edit payment"
+                            >
+                              <Pencil size={14} />
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            onClick={() => setDeletingPaymentId(payment.id)}
+                            className="p-2 text-gray-300 hover:text-red-500 transition-colors"
+                          >
+                            <Trash2 size={14} />
+                          </button>
+                        </div>
                       )}
                     </div>
                 </div>
@@ -3504,6 +3545,21 @@ export const PurchaseOrderForm = ({ items, locations, uoms, profile, initialData
           </div>
         </div>
       </div>
+
+      <Modal
+        isOpen={!!editingPayment}
+        onClose={() => setEditingPayment(null)}
+        title="Edit Payment"
+      >
+        {editingPayment && profile && (
+          <POPaymentEditModal
+            payment={editingPayment}
+            po={initialData}
+            profile={profile}
+            onClose={() => setEditingPayment(null)}
+          />
+        )}
+      </Modal>
     </div>
   );
 };

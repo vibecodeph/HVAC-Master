@@ -17,6 +17,7 @@
   ],
   "hosting": {
     "target": "hvacmaster",
+    "predeploy": ["npm run build"],
     "public": "dist",
     "ignore": [
       "firebase.json",

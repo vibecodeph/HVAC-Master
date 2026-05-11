@@ -10,15 +10,18 @@ export default defineConfig(({mode}) => {
     define: {
       'process.env.GEMINI_API_KEY': JSON.stringify(env.GEMINI_API_KEY),
       'import.meta.env.VITE_APP_VERSION': JSON.stringify(
-        new Date().toLocaleString('en-PH', {
-          timeZone: 'Asia/Manila',
-          year: 'numeric',
-          month: 'short',
-          day: '2-digit',
-          hour: '2-digit',
-          minute: '2-digit',
-          hour12: true,
-        })
+        (() => {
+          const gmt8 = new Date(Date.now() + 8 * 60 * 60 * 1000);
+          return gmt8.toLocaleString('en-PH', {
+            timeZone: 'UTC',
+            year: 'numeric',
+            month: 'short',
+            day: '2-digit',
+            hour: '2-digit',
+            minute: '2-digit',
+            hour12: true,
+          });
+        })()
       ),
     },
     resolve: {

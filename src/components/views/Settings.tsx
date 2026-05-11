@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ChevronRight, Package, Filter, MapPin, Box, Users, Shield, Trash2, AlertCircle, Loader2, Check, LogOut, Hammer, UserCheck, Tag, Archive } from 'lucide-react';
+import { ChevronRight, Package, Filter, MapPin, Box, Users, Shield, Trash2, AlertCircle, Loader2, Check, LogOut, Hammer, UserCheck, Tag, Archive, Database } from 'lucide-react';
 import { useAuth, useData } from '../../App';
 import { clearInventoryData, updateSystemConfig } from '../../services/inventoryService';
 import { cn } from '../../lib/utils';
@@ -117,6 +117,30 @@ export const SettingsView = () => {
                 >
                   <div className="flex items-center space-x-3">
                     <item.icon size={18} className="text-gray-400" />
+                    <span className="text-sm font-bold text-gray-700">{item.label}</span>
+                  </div>
+                  <ChevronRight size={16} className="text-gray-300" />
+                </button>
+              ))}
+            </Card>
+          </div>
+        )}
+
+        {profile?.role === 'admin' && (
+          <div className="space-y-2">
+            <h3 className="text-xs font-bold text-gray-400 uppercase tracking-widest px-2">Debug & Troubleshooting</h3>
+            <Card className="divide-y divide-gray-100">
+              {[
+                { label: 'Requests Manager', icon: Database, path: '/settings/manage/requests' },
+                { label: 'Transactions Manager', icon: Database, path: '/settings/manage/transactions' },
+              ].map((item) => (
+                <button
+                  key={item.label}
+                  onClick={() => navigate(item.path)}
+                  className="w-full p-4 flex items-center justify-between active:bg-gray-50 transition-colors"
+                >
+                  <div className="flex items-center space-x-3">
+                    <item.icon size={18} className="text-amber-500" />
                     <span className="text-sm font-bold text-gray-700">{item.label}</span>
                   </div>
                   <ChevronRight size={16} className="text-gray-300" />

@@ -6,32 +6,39 @@ import {
 } from 'firebase/firestore';
 import {
   Loader2, RefreshCw, Search, ChevronUp, ChevronDown, Trash2,
-  AlertTriangle, Edit3, CheckCircle, X, ChevronLeft, ChevronRight, Database,
+  AlertTriangle, Edit3, CheckCircle, ChevronLeft, ChevronRight, Database,
 } from 'lucide-react';
+import { Timestamp } from 'firebase/firestore';
 import { db, handleFirestoreError, OperationType } from '../../../firebase';
 import { useAuth, useData } from '../../../App';
-import { Request } from '../../../types';
+import { Transaction } from '../../../types';
 import { cn } from '../../../lib/utils';
 import { Header } from '../../common/Header';
 import { Card } from '../../common/Card';
-import { Timestamp } from 'firebase/firestore';
 
 const PAGE_SIZE = 50;
 
-type SortField = 'timestamp' | 'status' | 'itemId' | 'jobsiteId' | 'requestorName';
+type SortField = 'timestamp' | 'type' | 'quantity';
 type SortDir = 'asc' | 'desc';
 
-const STATUS_COLORS: Record<string, string> = {
-  pending: 'bg-amber-100 text-amber-700',
-  approved: 'bg-blue-100 text-blue-700',
-  'for delivery': 'bg-purple-100 text-purple-700',
-  delivered: 'bg-emerald-100 text-emerald-700',
-  rejected: 'bg-red-100 text-red-700',
-  cancelled: 'bg-gray-100 text-gray-500',
+const TYPE_COLORS: Record<string, string> = {
+  delivery: 'bg-blue-100 text-blue-700',
+  usage: 'bg-red-100 text-red-700',
+  return: 'bg-orange-100 text-orange-700',
+  adjustment: 'bg-amber-100 text-amber-700',
+  pick: 'bg-green-100 text-green-700',
 };
 
-const SENSITIVE_FIELDS = ['status', 'batchId'];
-const ALL_STATUSES = ['pending', 'approved', 'for delivery', 'delivered', 'rejected', 'cancelled'] as const;
+const TYPE_BORDER: Record<string, string> = {
+  delivery: 'border-l-blue-400',
+  usage: 'border-l-red-400',
+  return: 'border-l-orange-400',
+  adjustment: 'border-l-amber-400',
+  pick: 'border-l-green-400',
+};
+
+const SENSITIVE_FIELDS = ['type', 'fromLocationId', 'toLocationId'];
+const ALL_TYPES = ['delivery', 'usage', 'return', 'adjustment', 'pick'] as const;
 
 const formatTs = (ts: Timestamp | undefined | null): string => {
   if (!ts) return '—';
@@ -45,7 +52,7 @@ const formatTs = (ts: Timestamp | undefined | null): string => {
 const truncateId = (id: string) => id.length > 12 ? `${id.slice(0, 8)}…` : id;
 
 interface EditState {
-  requestId: string;
+  txId: string;
   field: string;
   value: string;
   saving: boolean;
@@ -53,17 +60,16 @@ interface EditState {
 }
 
 interface DeleteState {
-  requestId: string;
-  confirming: boolean;
+  txId: string;
   deleting: boolean;
   error: string | null;
 }
 
-export const RequestsManager = () => {
+export const TransactionsManager = () => {
   const { profile } = useAuth();
   const { items, locations, uoms, categories } = useData();
 
-  const [records, setRecords] = useState<Request[]>([]);
+  const [records, setRecords] = useState<Transaction[]>([]);
   const [loading, setLoading] = useState(true);
   const [page, setPage] = useState(0);
   const [cursors, setCursors] = useState<QueryDocumentSnapshot<DocumentData>[]>([]);
@@ -72,10 +78,9 @@ export const RequestsManager = () => {
   const [sortField, setSortField] = useState<SortField>('timestamp');
   const [sortDir, setSortDir] = useState<SortDir>('desc');
   const [search, setSearch] = useState('');
-  const [statusFilter, setStatusFilter] = useState('');
-  const [jobsiteFilter, setJobsiteFilter] = useState('');
+  const [typeFilter, setTypeFilter] = useState('');
+  const [locationFilter, setLocationFilter] = useState('');
   const [categoryFilter, setCategoryFilter] = useState('');
-  const [drFilter, setDrFilter] = useState('');
 
   const [edit, setEdit] = useState<EditState | null>(null);
   const [del, setDel] = useState<DeleteState | null>(null);
@@ -85,12 +90,7 @@ export const RequestsManager = () => {
   const itemMap = useMemo(() => new Map(items.map(i => [i.id, i])), [items]);
   const uomMap = useMemo(() => new Map(uoms.map(u => [u.id, u.symbol])), [uoms]);
   const locMap = useMemo(() => new Map(locations.map(l => [l.id, l.name])), [locations]);
-  const jobsites = useMemo(() => locations.filter(l => l.type === 'jobsite' && l.isActive).sort((a, b) => a.name.localeCompare(b.name)), [locations]);
-  const uniqueDRs = useMemo(() => {
-    const set = new Set<string>();
-    records.forEach(r => { if (r.batchId) set.add(r.batchId); });
-    return Array.from(set).sort();
-  }, [records]);
+  const allLocations = useMemo(() => [...locations].sort((a, b) => a.name.localeCompare(b.name)), [locations]);
   const itemsByCategoryId = useMemo(() => {
     const m = new Map<string, Set<string>>();
     items.forEach(i => {
@@ -105,13 +105,13 @@ export const RequestsManager = () => {
     setLoading(true);
     try {
       let q = query(
-        collection(db, 'requests'),
+        collection(db, 'transactions'),
         orderBy('timestamp', 'desc'),
         limit(PAGE_SIZE + 1),
       );
       if (pageIndex > 0 && cursors[pageIndex - 1]) {
         q = query(
-          collection(db, 'requests'),
+          collection(db, 'transactions'),
           orderBy('timestamp', 'desc'),
           startAfter(cursors[pageIndex - 1]),
           limit(PAGE_SIZE + 1),
@@ -125,9 +125,9 @@ export const RequestsManager = () => {
         newCursors[pageIndex] = docs[docs.length - 1];
         setCursors(newCursors);
       }
-      setRecords(docs.map(d => ({ id: d.id, ...d.data() } as Request)));
+      setRecords(docs.map(d => ({ id: d.id, ...d.data() } as Transaction)));
     } catch (err) {
-      handleFirestoreError(err, OperationType.LIST, 'requests', false);
+      handleFirestoreError(err, OperationType.LIST, 'transactions', false);
     } finally {
       setLoading(false);
     }
@@ -169,28 +169,25 @@ export const RequestsManager = () => {
     let list = [...records];
     const q = search.trim().toLowerCase();
     if (q) {
-      list = list.filter(r =>
-        r.id.toLowerCase().includes(q) ||
-        r.itemId.toLowerCase().includes(q) ||
-        (r.requestorName || '').toLowerCase().includes(q) ||
-        (r.batchId || '').toLowerCase().includes(q) ||
-        (itemMap.get(r.itemId)?.name || '').toLowerCase().includes(q)
+      list = list.filter(tx =>
+        tx.id.toLowerCase().includes(q) ||
+        tx.itemId.toLowerCase().includes(q) ||
+        (tx.userName || '').toLowerCase().includes(q) ||
+        (tx.batchId || '').toLowerCase().includes(q) ||
+        (tx.poNumber || '').toLowerCase().includes(q) ||
+        (tx.supplierDR || '').toLowerCase().includes(q) ||
+        (itemMap.get(tx.itemId)?.name || '').toLowerCase().includes(q)
       );
     }
-    if (statusFilter) {
-      list = list.filter(r => r.status === statusFilter);
+    if (typeFilter) {
+      list = list.filter(tx => tx.type === typeFilter);
     }
-    if (jobsiteFilter) {
-      list = list.filter(r => r.jobsiteId === jobsiteFilter);
+    if (locationFilter) {
+      list = list.filter(tx => tx.fromLocationId === locationFilter || tx.toLocationId === locationFilter);
     }
     if (categoryFilter) {
       const itemIds = itemsByCategoryId.get(categoryFilter);
-      list = list.filter(r => itemIds?.has(r.itemId));
-    }
-    if (drFilter === '__none__') {
-      list = list.filter(r => !r.batchId);
-    } else if (drFilter) {
-      list = list.filter(r => r.batchId === drFilter);
+      list = list.filter(tx => itemIds?.has(tx.itemId));
     }
     list.sort((a, b) => {
       let av: string | number = '';
@@ -198,6 +195,9 @@ export const RequestsManager = () => {
       if (sortField === 'timestamp') {
         av = a.timestamp?.toDate?.()?.getTime() ?? 0;
         bv = b.timestamp?.toDate?.()?.getTime() ?? 0;
+      } else if (sortField === 'quantity') {
+        av = a.baseQuantity ?? 0;
+        bv = b.baseQuantity ?? 0;
       } else {
         av = String((a as any)[sortField] ?? '');
         bv = String((b as any)[sortField] ?? '');
@@ -207,10 +207,10 @@ export const RequestsManager = () => {
       return 0;
     });
     return list;
-  }, [records, search, statusFilter, jobsiteFilter, categoryFilter, drFilter, sortField, sortDir, itemMap, itemsByCategoryId]);
+  }, [records, search, typeFilter, locationFilter, categoryFilter, sortField, sortDir, itemMap, itemsByCategoryId]);
 
-  const startEdit = (requestId: string, field: string, currentValue: string) => {
-    setEdit({ requestId, field, value: currentValue, saving: false, error: null });
+  const startEdit = (txId: string, field: string, currentValue: string) => {
+    setEdit({ txId, field, value: currentValue, saving: false, error: null });
   };
 
   const cancelEdit = () => setEdit(null);
@@ -219,23 +219,23 @@ export const RequestsManager = () => {
     if (!edit) return;
     setEdit(e => e ? { ...e, saving: true, error: null } : null);
     try {
-      const ref = doc(db, 'requests', edit.requestId);
+      const ref = doc(db, 'transactions', edit.txId);
       await updateDoc(ref, {
         [edit.field]: edit.value,
         updatedAt: serverTimestamp(),
       });
-      setRecords(prev => prev.map(r =>
-        r.id === edit.requestId ? { ...r, [edit.field]: edit.value } : r
+      setRecords(prev => prev.map(tx =>
+        tx.id === edit.txId ? { ...tx, [edit.field]: edit.value } : tx
       ));
       setEdit(null);
     } catch (err) {
-      handleFirestoreError(err, OperationType.UPDATE, `requests/${edit.requestId}`, false);
+      handleFirestoreError(err, OperationType.UPDATE, `transactions/${edit.txId}`, false);
       setEdit(e => e ? { ...e, saving: false, error: 'Save failed. Check permissions.' } : null);
     }
   };
 
-  const startDelete = (requestId: string) => {
-    setDel({ requestId, confirming: true, deleting: false, error: null });
+  const startDelete = (txId: string) => {
+    setDel({ txId, deleting: false, error: null });
   };
 
   const cancelDelete = () => setDel(null);
@@ -244,11 +244,11 @@ export const RequestsManager = () => {
     if (!del) return;
     setDel(d => d ? { ...d, deleting: true, error: null } : null);
     try {
-      await deleteDoc(doc(db, 'requests', del.requestId));
-      setRecords(prev => prev.filter(r => r.id !== del.requestId));
+      await deleteDoc(doc(db, 'transactions', del.txId));
+      setRecords(prev => prev.filter(tx => tx.id !== del.txId));
       setDel(null);
     } catch (err) {
-      handleFirestoreError(err, OperationType.DELETE, `requests/${del.requestId}`, false);
+      handleFirestoreError(err, OperationType.DELETE, `transactions/${del.txId}`, false);
       setDel(d => d ? { ...d, deleting: false, error: 'Delete failed. Check permissions.' } : null);
     }
   };
@@ -262,12 +262,22 @@ export const RequestsManager = () => {
       : <ChevronDown size={10} className="text-blue-500" />;
   };
 
-  const FieldRow = ({ req, field, label }: { req: Request; field: string; label: string }) => {
+  const FieldRow = ({ tx, field, label, readOnly }: { tx: Transaction; field: string; label: string; readOnly?: boolean }) => {
     const isSensitive = SENSITIVE_FIELDS.includes(field);
-    const raw = (req as any)[field];
+    const raw = (tx as any)[field];
     const isTimestamp = raw instanceof Timestamp;
-    const display = isTimestamp ? formatTs(raw) : (raw !== undefined && raw !== null && raw !== '') ? String(raw) : '—';
-    const isEditing = edit?.requestId === req.id && edit.field === field;
+    const isArray = Array.isArray(raw);
+    let display: string;
+    if (isTimestamp) {
+      display = formatTs(raw);
+    } else if (isArray) {
+      display = raw.length > 0 ? raw.join(', ') : '—';
+    } else if (field === 'fromLocationId' || field === 'toLocationId') {
+      display = locMap.get(raw) ? `${locMap.get(raw)} (${truncateId(raw || '')})` : (raw || '—');
+    } else {
+      display = (raw !== undefined && raw !== null && raw !== '') ? String(raw) : '—';
+    }
+    const isEditing = edit?.txId === tx.id && edit.field === field;
 
     return (
       <div className="flex items-start gap-2 py-1 border-b border-gray-50 last:border-0">
@@ -282,13 +292,13 @@ export const RequestsManager = () => {
         </div>
         {isEditing ? (
           <div className="flex-1 space-y-1.5">
-            {field === 'status' ? (
+            {field === 'type' ? (
               <select
                 value={edit.value}
                 onChange={e => setEdit(ev => ev ? { ...ev, value: e.target.value } : null)}
                 className="w-full px-2 py-1.5 bg-gray-100 rounded-lg text-xs font-medium outline-none"
               >
-                {ALL_STATUSES.map(s => <option key={s} value={s}>{s}</option>)}
+                {ALL_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
               </select>
             ) : (
               <input
@@ -302,7 +312,7 @@ export const RequestsManager = () => {
             {isSensitive && (
               <p className="text-[9px] text-amber-600 font-semibold flex items-center gap-1">
                 <AlertTriangle size={9} />
-                Editing sensitive field — changes affect app behavior.
+                Editing this field does NOT update inventory balances.
               </p>
             )}
             {edit.error && (
@@ -327,24 +337,24 @@ export const RequestsManager = () => {
           </div>
         ) : (
           <div className="flex-1 flex items-start justify-between gap-2 min-w-0">
-            {field === 'status' ? (
+            {field === 'type' ? (
               <span className={cn(
                 "text-[9px] font-black uppercase tracking-widest px-1.5 py-0.5 rounded",
-                STATUS_COLORS[raw] || 'bg-gray-100 text-gray-500'
+                TYPE_COLORS[raw] || 'bg-gray-100 text-gray-500'
               )}>
                 {raw || '—'}
               </span>
             ) : (
               <span
                 className="text-xs font-medium text-gray-700 break-all"
-                title={isTimestamp ? undefined : String(raw ?? '')}
+                title={isTimestamp || isArray ? undefined : String(raw ?? '')}
               >
                 {display}
               </span>
             )}
-            {!isTimestamp && raw !== undefined && (
+            {!readOnly && !isTimestamp && !isArray && raw !== undefined && (
               <button
-                onClick={() => startEdit(req.id, field, String(raw ?? ''))}
+                onClick={() => startEdit(tx.id, field, String(raw ?? ''))}
                 className="shrink-0 p-1 text-gray-300 hover:text-blue-500 transition-colors"
               >
                 <Edit3 size={11} />
@@ -358,7 +368,7 @@ export const RequestsManager = () => {
 
   return (
     <div className="pb-20">
-      <Header title="Requests Manager" />
+      <Header title="Transactions Manager" />
       <div className="p-4 space-y-4">
 
         {/* Warning banner */}
@@ -367,8 +377,7 @@ export const RequestsManager = () => {
           <div className="space-y-0.5">
             <p className="text-xs font-bold text-amber-800">Admin Debug Tool</p>
             <p className="text-[10px] text-amber-700 font-medium leading-snug">
-              Direct Firestore edits bypass all business logic and inventory transactions.
-              Changes to <span className="font-black">status</span>, <span className="font-black">batchId</span>, and <span className="font-black">requestorId</span> can break app state. Use with caution.
+              Direct Firestore edits bypass all inventory logic. Editing <span className="font-black">type</span>, <span className="font-black">fromLocationId</span>, or <span className="font-black">toLocationId</span> will NOT update inventory balances. Deleting a transaction will NOT reverse stock changes.
             </p>
           </div>
         </div>
@@ -382,7 +391,7 @@ export const RequestsManager = () => {
                 type="text"
                 value={search}
                 onChange={e => setSearch(e.target.value)}
-                placeholder="Search by ID, item, requestor, batch…"
+                placeholder="Search by ID, item, user, batch, PO, DR…"
                 className="w-full pl-8 pr-3 py-2 bg-gray-50 border border-gray-100 rounded-xl text-xs font-medium outline-none focus:ring-2 focus:ring-blue-500"
               />
             </div>
@@ -396,23 +405,23 @@ export const RequestsManager = () => {
           </div>
           <div className="flex items-center gap-2 flex-wrap">
             <select
-              value={statusFilter}
-              onChange={e => setStatusFilter(e.target.value)}
+              value={typeFilter}
+              onChange={e => setTypeFilter(e.target.value)}
               className="px-2.5 py-1.5 bg-gray-50 border border-gray-100 rounded-xl text-xs font-bold text-gray-700 outline-none"
             >
-              <option value="">All Statuses</option>
-              {ALL_STATUSES.map(s => (
-                <option key={s} value={s}>{s}</option>
+              <option value="">All Types</option>
+              {ALL_TYPES.map(t => (
+                <option key={t} value={t}>{t}</option>
               ))}
             </select>
             <select
-              value={jobsiteFilter}
-              onChange={e => setJobsiteFilter(e.target.value)}
+              value={locationFilter}
+              onChange={e => setLocationFilter(e.target.value)}
               className="px-2.5 py-1.5 bg-gray-50 border border-gray-100 rounded-xl text-xs font-bold text-gray-700 outline-none"
             >
-              <option value="">All Jobsites</option>
-              {jobsites.map(j => (
-                <option key={j.id} value={j.id}>{j.name}</option>
+              <option value="">All Locations</option>
+              {allLocations.map(l => (
+                <option key={l.id} value={l.id}>{l.name}</option>
               ))}
             </select>
             <select
@@ -425,20 +434,9 @@ export const RequestsManager = () => {
                 <option key={c.id} value={c.id}>{c.name}</option>
               ))}
             </select>
-            <select
-              value={drFilter}
-              onChange={e => setDrFilter(e.target.value)}
-              className="px-2.5 py-1.5 bg-gray-50 border border-gray-100 rounded-xl text-xs font-bold text-gray-700 outline-none"
-            >
-              <option value="">All DRs</option>
-              <option value="__none__">Unassigned (no DR)</option>
-              {uniqueDRs.map(dr => (
-                <option key={dr} value={dr}>{dr}</option>
-              ))}
-            </select>
             <div className="ml-auto flex items-center gap-1 text-[10px] text-gray-400 font-bold uppercase tracking-widest">
               <span>Sort:</span>
-              {(['timestamp', 'status', 'requestorName'] as SortField[]).map(f => (
+              {(['timestamp', 'type', 'quantity'] as SortField[]).map(f => (
                 <button
                   key={f}
                   onClick={() => handleSort(f)}
@@ -447,16 +445,14 @@ export const RequestsManager = () => {
                     sortField === f ? "bg-blue-50 text-blue-600" : "hover:bg-gray-50"
                   )}
                 >
-                  {f === 'timestamp' ? 'Date' : f === 'requestorName' ? 'Name' : f}
+                  {f === 'timestamp' ? 'Date' : f === 'quantity' ? 'Qty' : f}
                   <SortIcon field={f} />
                 </button>
               ))}
             </div>
           </div>
           <div className="flex items-center justify-between text-[10px] text-gray-400 font-medium">
-            <span>
-              {displayed.length} of {records.length} on this page — Page {page + 1}
-            </span>
+            <span>{displayed.length} of {records.length} on this page — Page {page + 1}</span>
             <div className="flex items-center gap-1">
               <button
                 onClick={handlePrevPage}
@@ -484,104 +480,92 @@ export const RequestsManager = () => {
         ) : displayed.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-12 space-y-2">
             <Database size={36} className="text-gray-200" />
-            <p className="text-xs font-bold text-gray-400">No requests found</p>
+            <p className="text-xs font-bold text-gray-400">No transactions found</p>
           </div>
         ) : (
           <div className="space-y-3">
-            {displayed.map(req => {
-              const isDeleting = del?.requestId === req.id;
-              const itemName = itemMap.get(req.itemId)?.name;
-              const jobsiteName = locMap.get(req.jobsiteId);
-              const uomSymbol = uomMap.get(req.uomId) || '';
+            {displayed.map(tx => {
+              const isDeleting = del?.txId === tx.id;
+              const itemName = itemMap.get(tx.itemId)?.name;
+              const fromName = locMap.get(tx.fromLocationId || '');
+              const toName = locMap.get(tx.toLocationId || '');
+              const uomSymbol = uomMap.get(tx.uomId) || '';
+              const hasLinks = !!(tx.batchId || (tx.requestIds && tx.requestIds.length > 0));
 
               return (
-                <Card key={req.id} className={cn(
-                  "overflow-hidden",
-                  req.status === 'pending' && "border-l-2 border-l-amber-400",
-                  req.status === 'approved' && "border-l-2 border-l-blue-400",
-                  req.status === 'for delivery' && "border-l-2 border-l-purple-400",
-                  req.status === 'delivered' && "border-l-2 border-l-emerald-400",
-                  req.status === 'rejected' && "border-l-2 border-l-red-400",
-                  req.status === 'cancelled' && "border-l-2 border-l-gray-300",
+                <Card key={tx.id} className={cn(
+                  "overflow-hidden border-l-2",
+                  TYPE_BORDER[tx.type] || 'border-l-gray-300',
                 )}>
                   {/* Card header */}
                   <div className="flex items-start justify-between gap-2 p-3 pb-2 bg-gray-50 border-b border-gray-100">
                     <div className="min-w-0">
                       <p className="text-sm font-bold text-gray-900 truncate">
-                        {itemName || req.itemId}
+                        {itemName || tx.itemId}
                       </p>
                       <div className="flex items-center gap-2 mt-0.5 flex-wrap">
-                        <span className="text-[9px] font-mono text-gray-400" title={req.id}>
-                          {truncateId(req.id)}
+                        <span className="text-[9px] font-mono text-gray-400" title={tx.id}>
+                          {truncateId(tx.id)}
                         </span>
-                        {jobsiteName && (
-                          <span className="text-[10px] font-medium text-gray-500">{jobsiteName}</span>
+                        {fromName && toName && (
+                          <span className="text-[10px] font-medium text-gray-500">{fromName} → {toName}</span>
                         )}
-                        {req.batchId && (
-                          <span className="text-[9px] font-bold text-blue-500" title={req.batchId}>
-                            Batch: {truncateId(req.batchId)}
+                        {fromName && !toName && (
+                          <span className="text-[10px] font-medium text-gray-500">From: {fromName}</span>
+                        )}
+                        {!fromName && toName && (
+                          <span className="text-[10px] font-medium text-gray-500">To: {toName}</span>
+                        )}
+                        {tx.batchId && (
+                          <span className="text-[9px] font-bold text-blue-500" title={tx.batchId}>
+                            Batch: {truncateId(tx.batchId)}
                           </span>
                         )}
                       </div>
                     </div>
-                    <div className="flex items-center gap-1.5 shrink-0">
-                      <span className={cn(
-                        "text-[9px] font-black uppercase tracking-widest px-1.5 py-0.5 rounded",
-                        STATUS_COLORS[req.status] || 'bg-gray-100 text-gray-500'
-                      )}>
-                        {req.status}
-                      </span>
-                    </div>
+                    <span className={cn(
+                      "shrink-0 text-[9px] font-black uppercase tracking-widest px-1.5 py-0.5 rounded",
+                      TYPE_COLORS[tx.type] || 'bg-gray-100 text-gray-500'
+                    )}>
+                      {tx.type}
+                    </span>
                   </div>
 
                   {/* Fields */}
                   <div className="p-3 space-y-0">
-                    <FieldRow req={req} field="status" label="Status" />
-                    <FieldRow req={req} field="requestorName" label="Requestor" />
-                    <FieldRow req={req} field="approverName" label="Approver" />
-                    <FieldRow req={req} field="warehousemanName" label="Warehouseman" />
-                    <FieldRow req={req} field="batchId" label="Batch / DR" />
-                    <FieldRow req={req} field="workerNote" label="Worker Note" />
-                    <FieldRow req={req} field="engineerNote" label="Eng. Note" />
+                    <FieldRow tx={tx} field="type" label="Type" />
+                    <FieldRow tx={tx} field="userName" label="User" />
+                    <FieldRow tx={tx} field="fromLocationId" label="From Location" />
+                    <FieldRow tx={tx} field="toLocationId" label="To Location" />
+                    <FieldRow tx={tx} field="notes" label="Notes" />
+                    <FieldRow tx={tx} field="batchId" label="Batch ID" />
+                    <FieldRow tx={tx} field="poNumber" label="PO Number" />
+                    <FieldRow tx={tx} field="supplierDR" label="Supplier DR" />
+                    <FieldRow tx={tx} field="supplierInvoice" label="Invoice" />
 
-                    {/* Read-only computed row */}
+                    {/* Read-only rows */}
                     <div className="flex items-start gap-2 py-1 border-b border-gray-50">
                       <div className="w-32 shrink-0">
                         <span className="text-[9px] font-black uppercase tracking-widest text-gray-400">Quantity</span>
                       </div>
                       <span className="text-xs font-medium text-gray-700">
-                        Req: {req.requestedQty}{uomSymbol && ` ${uomSymbol}`}
-                        {req.approvedQty != null && ` · Appr: ${req.approvedQty}${uomSymbol && ` ${uomSymbol}`}`}
-                        {req.deliveredQty != null && ` · Del: ${req.deliveredQty}${uomSymbol && ` ${uomSymbol}`}`}
+                        {tx.quantity}{uomSymbol && ` ${uomSymbol}`}
+                        {tx.conversionFactor !== 1 && ` (base: ${tx.baseQuantity})`}
                       </span>
                     </div>
                     <div className="flex items-start gap-2 py-1 border-b border-gray-50">
                       <div className="w-32 shrink-0">
-                        <span className="text-[9px] font-black uppercase tracking-widest text-gray-400">Timestamps</span>
+                        <span className="text-[9px] font-black uppercase tracking-widest text-gray-400">Timestamp</span>
                       </div>
-                      <div className="text-[10px] text-gray-500 font-medium space-y-0.5">
-                        <div>Created: {formatTs(req.timestamp)}</div>
-                        {req.approvedAt && <div>Approved: {formatTs(req.approvedAt)}</div>}
-                        {req.deliveredAt && <div>Delivered: {formatTs(req.deliveredAt)}</div>}
-                      </div>
+                      <span className="text-xs font-medium text-gray-700">{formatTs(tx.timestamp)}</span>
                     </div>
-                    {req.backorderOf && (
-                      <div className="flex items-start gap-2 py-1 border-b border-gray-50">
-                        <div className="w-32 shrink-0">
-                          <span className="text-[9px] font-black uppercase tracking-widest text-gray-400">Backorder Of</span>
-                        </div>
-                        <span className="text-[10px] font-mono text-orange-500" title={req.backorderOf}>
-                          {truncateId(req.backorderOf)}
-                        </span>
-                      </div>
-                    )}
-                    {req.serialNumbers && req.serialNumbers.length > 0 && (
+                    {tx.requestIds && tx.requestIds.length > 0 && (
                       <div className="flex items-start gap-2 py-1">
                         <div className="w-32 shrink-0">
-                          <span className="text-[9px] font-black uppercase tracking-widest text-gray-400">Serial Nos</span>
+                          <span className="text-[9px] font-black uppercase tracking-widest text-gray-400">Request IDs</span>
                         </div>
                         <span className="text-[10px] font-mono text-gray-600 break-all">
-                          {req.serialNumbers.join(', ')}
+                          {tx.requestIds.map(truncateId).join(', ')}
                         </span>
                       </div>
                     )}
@@ -593,9 +577,16 @@ export const RequestsManager = () => {
                       <div className="p-2.5 bg-red-50 rounded-xl border border-red-200 space-y-2">
                         <div className="flex items-start gap-2">
                           <AlertTriangle size={12} className="text-red-500 shrink-0 mt-0.5" />
-                          <p className="text-[10px] font-bold text-red-700">
-                            Permanently delete this request? This cannot be undone and will NOT reverse any inventory changes.
-                          </p>
+                          <div className="space-y-1">
+                            <p className="text-[10px] font-bold text-red-700">
+                              Permanently delete this transaction? This will NOT reverse any inventory stock changes.
+                            </p>
+                            {hasLinks && (
+                              <p className="text-[10px] font-bold text-red-600">
+                                ⚠ This transaction has linked {tx.batchId ? 'batch' : ''}{tx.batchId && tx.requestIds?.length ? ' and ' : ''}{tx.requestIds?.length ? 'requests' : ''} — deleting may cause data inconsistencies.
+                              </p>
+                            )}
+                          </div>
                         </div>
                         {del.error && (
                           <p className="text-[10px] font-semibold text-red-600">{del.error}</p>
@@ -619,11 +610,11 @@ export const RequestsManager = () => {
                       </div>
                     ) : (
                       <button
-                        onClick={() => startDelete(req.id)}
+                        onClick={() => startDelete(tx.id)}
                         className="flex items-center gap-1.5 text-[10px] font-bold text-red-400 hover:text-red-600 transition-colors active:opacity-60"
                       >
                         <Trash2 size={11} />
-                        Delete Request
+                        Delete Transaction
                       </button>
                     )}
                   </div>

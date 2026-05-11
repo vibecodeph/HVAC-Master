@@ -38,6 +38,7 @@ const POTemplateSettings = lazy(() => import('./components/views/Admin/POTemplat
 const SupplierPricingView = lazy(() => import('./components/views/Admin/SupplierPricing').then(m => ({ default: m.SupplierPricingView })));
 const ArchivedRequestsView = lazy(() => import('./components/views/Admin/ArchivedRequests').then(m => ({ default: m.ArchivedRequestsView })));
 const RequestsManager = lazy(() => import('./components/views/Admin/RequestsManager').then(m => ({ default: m.RequestsManager })));
+const TransactionsManager = lazy(() => import('./components/views/Admin/TransactionsManager').then(m => ({ default: m.TransactionsManager })));
 const POPrintView = lazy(() => import('./components/views/POPrintView').then(m => ({ default: m.POPrintView })));
 
 const PurchaseOrderView = () => {
@@ -599,6 +600,14 @@ const App = () => {
                     <ProtectedRoute requireAdmin>
                       <Layout>
                         <RequestsManager />
+                      </Layout>
+                    </ProtectedRoute>
+                  } />
+
+                  <Route path="/settings/manage/transactions" element={
+                    <ProtectedRoute requireAdmin>
+                      <Layout>
+                        <TransactionsManager />
                       </Layout>
                     </ProtectedRoute>
                   } />

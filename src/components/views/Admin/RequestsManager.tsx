@@ -10,7 +10,7 @@ import {
 } from 'lucide-react';
 import { db, handleFirestoreError, OperationType } from '../../../firebase';
 import { useAuth, useData } from '../../../App';
-import { Request } from '../../../types';
+import { Request, UserProfile } from '../../../types';
 import { cn } from '../../../lib/utils';
 import { Header } from '../../common/Header';
 import { Card } from '../../common/Card';
@@ -50,6 +50,8 @@ interface EditState {
   value: string;
   saving: boolean;
   error: string | null;
+  nameField?: string;
+  nameValue?: string;
 }
 
 interface DeleteState {
@@ -61,7 +63,7 @@ interface DeleteState {
 
 export const RequestsManager = () => {
   const { profile } = useAuth();
-  const { items, locations, uoms, categories } = useData();
+  const { items, locations, uoms, categories, users } = useData();
 
   const [records, setRecords] = useState<Request[]>([]);
   const [loading, setLoading] = useState(true);
@@ -209,8 +211,8 @@ export const RequestsManager = () => {
     return list;
   }, [records, search, statusFilter, jobsiteFilter, categoryFilter, drFilter, sortField, sortDir, itemMap, itemsByCategoryId]);
 
-  const startEdit = (requestId: string, field: string, currentValue: string) => {
-    setEdit({ requestId, field, value: currentValue, saving: false, error: null });
+  const startEdit = (requestId: string, field: string, currentValue: string, nameField?: string, nameValue?: string) => {
+    setEdit({ requestId, field, value: currentValue, saving: false, error: null, nameField, nameValue });
   };
 
   const cancelEdit = () => setEdit(null);
@@ -220,13 +222,20 @@ export const RequestsManager = () => {
     setEdit(e => e ? { ...e, saving: true, error: null } : null);
     try {
       const ref = doc(db, 'requests', edit.requestId);
-      await updateDoc(ref, {
+      const updates: Record<string, any> = {
         [edit.field]: edit.value,
         updatedAt: serverTimestamp(),
-      });
-      setRecords(prev => prev.map(r =>
-        r.id === edit.requestId ? { ...r, [edit.field]: edit.value } : r
-      ));
+      };
+      if (edit.nameField !== undefined) {
+        updates[edit.nameField] = edit.nameValue ?? '';
+      }
+      await updateDoc(ref, updates);
+      setRecords(prev => prev.map(r => {
+        if (r.id !== edit.requestId) return r;
+        const patch: any = { [edit.field]: edit.value };
+        if (edit.nameField !== undefined) patch[edit.nameField] = edit.nameValue ?? '';
+        return { ...r, ...patch };
+      }));
       setEdit(null);
     } catch (err) {
       handleFirestoreError(err, OperationType.UPDATE, `requests/${edit.requestId}`, false);
@@ -350,6 +359,94 @@ export const RequestsManager = () => {
                 <Edit3 size={11} />
               </button>
             )}
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  const UserFieldRow = ({
+    req,
+    idField,
+    nameField,
+    label,
+    roleFilter,
+  }: {
+    req: Request;
+    idField: keyof Request;
+    nameField: keyof Request;
+    label: string;
+    roleFilter?: (u: UserProfile) => boolean;
+  }) => {
+    const currentId   = (req as any)[idField]   as string | undefined;
+    const currentName = (req as any)[nameField]  as string | undefined;
+    const isEditing   = edit?.requestId === req.id && edit.field === String(idField);
+
+    const filteredUsers = users
+      .filter(u => u.isActive && u.isApproved !== false)
+      .filter(u => u.assignedLocationIds?.includes(req.jobsiteId) ?? false)
+      .filter(u => roleFilter ? roleFilter(u) : true)
+      .sort((a, b) => (a.displayName || a.email).localeCompare(b.displayName || b.email));
+
+    const userName = (u: UserProfile) => u.displayName || u.email;
+
+    return (
+      <div className="flex items-start gap-2 py-1 border-b border-gray-50 last:border-0">
+        <div className="w-32 shrink-0">
+          <span className="text-[9px] font-black uppercase tracking-widest text-gray-400">{label}</span>
+        </div>
+        {isEditing ? (
+          <div className="flex-1 space-y-1.5">
+            <select
+              value={edit.value}
+              onChange={e => {
+                const u = users.find(u => u.uid === e.target.value);
+                setEdit(ev => ev ? { ...ev, value: e.target.value, nameValue: u ? userName(u) : '' } : null);
+              }}
+              className="w-full px-2 py-1.5 bg-gray-100 rounded-lg text-xs font-medium outline-none focus:ring-2 focus:ring-blue-500"
+            >
+              <option value="">— select user —</option>
+              {filteredUsers.map(u => (
+                <option key={u.uid} value={u.uid}>{userName(u)}</option>
+              ))}
+            </select>
+            {filteredUsers.length === 0 && (
+              <p className="text-[9px] text-amber-600 font-semibold">
+                No eligible users found for this jobsite.
+              </p>
+            )}
+            {edit.error && <p className="text-[9px] text-red-600 font-semibold">{edit.error}</p>}
+            <div className="flex gap-1.5">
+              <button
+                onClick={saveEdit}
+                disabled={edit.saving || !edit.value}
+                className="flex items-center gap-1 px-2.5 py-1 bg-gray-900 text-white rounded-lg text-[10px] font-bold active:scale-95 transition-transform disabled:opacity-50"
+              >
+                {edit.saving ? <Loader2 size={9} className="animate-spin" /> : <CheckCircle size={9} />}
+                Save
+              </button>
+              <button
+                onClick={cancelEdit}
+                className="px-2.5 py-1 bg-gray-100 text-gray-600 rounded-lg text-[10px] font-bold active:scale-95 transition-transform"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        ) : (
+          <div className="flex-1 flex items-start justify-between gap-2 min-w-0">
+            <span
+              className="text-xs font-medium text-gray-700 break-all"
+              title={currentId || ''}
+            >
+              {currentName || '—'}
+            </span>
+            <button
+              onClick={() => startEdit(req.id, String(idField), currentId || '', String(nameField), currentName || '')}
+              className="shrink-0 p-1 text-gray-300 hover:text-blue-500 transition-colors"
+            >
+              <Edit3 size={11} />
+            </button>
           </div>
         )}
       </div>
@@ -537,9 +634,26 @@ export const RequestsManager = () => {
                   {/* Fields */}
                   <div className="p-3 space-y-0">
                     <FieldRow req={req} field="status" label="Status" />
-                    <FieldRow req={req} field="requestorName" label="Requestor" />
-                    <FieldRow req={req} field="approverName" label="Approver" />
-                    <FieldRow req={req} field="warehousemanName" label="Warehouseman" />
+                    <UserFieldRow
+                      req={req}
+                      idField="requestorId"
+                      nameField="requestorName"
+                      label="Requestor"
+                    />
+                    <UserFieldRow
+                      req={req}
+                      idField="approverId"
+                      nameField="approverName"
+                      label="Approver"
+                      roleFilter={u => ['engineer', 'manager', 'admin'].includes(u.role)}
+                    />
+                    <UserFieldRow
+                      req={req}
+                      idField="warehousemanId"
+                      nameField="warehousemanName"
+                      label="Warehouseman"
+                      roleFilter={u => ['warehouseman', 'manager', 'admin'].includes(u.role)}
+                    />
                     <FieldRow req={req} field="batchId" label="Batch / DR" />
                     <FieldRow req={req} field="workerNote" label="Worker Note" />
                     <FieldRow req={req} field="engineerNote" label="Eng. Note" />

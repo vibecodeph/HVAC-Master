@@ -22,7 +22,7 @@ export const ClearLocationInventoryView = () => {
   );
 
   const mainWarehouse = useMemo(
-    () => locations.find(l => l.type === 'warehouse'),
+    () => locations.find(l => l.type === 'warehouse' && !l.parentId),
     [locations]
   );
 

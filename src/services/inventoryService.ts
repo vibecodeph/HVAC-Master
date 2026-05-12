@@ -3182,6 +3182,100 @@ export const consumeInventory = async (
   }
 };
 
+export const clearLocationInventory = async (
+  locationId: string,
+  locationName: string,
+  mainWarehouseId: string,
+  userId: string,
+  userName: string
+): Promise<{ itemsCleared: number; boqCleared: number }> => {
+  const [invSnap, boqSnap] = await Promise.all([
+    getDocs(query(collection(db, 'inventory'), where('locationId', '==', locationId))),
+    getDocs(query(collection(db, 'boq'), where('jobsiteId', '==', locationId))),
+  ]);
+
+  if (invSnap.empty && boqSnap.empty) {
+    return { itemsCleared: 0, boqCleared: 0 };
+  }
+
+  let itemsCleared = 0;
+
+  await runTransaction(db, async (tx) => {
+    // READS PHASE 1: current jobsite inventory docs
+    const invDocs = await Promise.all(invSnap.docs.map(d => tx.get(d.ref)));
+
+    // Build entries and warehouse refs from live data
+    type Entry = { jobsiteRef: ReturnType<typeof doc>; data: Inventory; qty: number; whRef: ReturnType<typeof doc> };
+    const entries: Entry[] = [];
+    for (let i = 0; i < invSnap.docs.length; i++) {
+      const invDoc = invDocs[i];
+      if (!invDoc.exists()) continue;
+      const data = invDoc.data() as Inventory;
+      const qty = data.quantity || 0;
+      const whRef = getInventoryRef(
+        data.itemId, mainWarehouseId,
+        data.variant, data.serialNumber, data.propertyNumber, data.customSpec
+      );
+      entries.push({ jobsiteRef: invSnap.docs[i].ref, data, qty, whRef });
+    }
+
+    // READS PHASE 2: warehouse counterpart docs
+    const whDocs = await Promise.all(entries.map(e => tx.get(e.whRef)));
+
+    // WRITES
+    itemsCleared = 0;
+    const now = serverTimestamp();
+    for (let i = 0; i < entries.length; i++) {
+      const { jobsiteRef, data, qty, whRef } = entries[i];
+      const whDoc = whDocs[i];
+
+      if (qty > 0) {
+        itemsCleared++;
+        if (whDoc.exists()) {
+          tx.update(whRef, {
+            quantity: (whDoc.data().quantity || 0) + qty,
+            lastEditedBy: userId,
+            lastEditedAt: now,
+          });
+        } else {
+          const newInv: Record<string, any> = {
+            itemId: data.itemId,
+            locationId: mainWarehouseId,
+            quantity: qty,
+            lastEditedBy: userId,
+            lastEditedAt: now,
+          };
+          if (data.variant && Object.keys(data.variant).length > 0) newInv.variant = data.variant;
+          if (data.customSpec) newInv.customSpec = data.customSpec;
+          if (data.serialNumber) newInv.serialNumber = data.serialNumber;
+          if (data.propertyNumber) newInv.propertyNumber = data.propertyNumber;
+          if (data.unitPrice) newInv.unitPrice = data.unitPrice;
+          tx.set(whRef, newInv);
+        }
+      }
+      tx.delete(jobsiteRef);
+    }
+
+    for (const d of boqSnap.docs) {
+      tx.delete(d.ref);
+    }
+  });
+
+  await addDoc(collection(db, 'audit_logs'), {
+    action: 'clear_location_inventory',
+    locationId,
+    locationName,
+    mainWarehouseId,
+    itemsCleared,
+    boqCleared: boqSnap.docs.length,
+    performedBy: userId,
+    performedByName: userName,
+    timestamp: serverTimestamp(),
+  });
+
+  return { itemsCleared, boqCleared: boqSnap.docs.length };
+};
+
 export const subscribeToPurchaseOrders = (callback: (data: PurchaseOrder[]) => void) => {
   return onSnapshot(query(collection(db, 'purchase_orders'), orderBy('poNumber', 'desc')), (snapshot) => {
     const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as PurchaseOrder));

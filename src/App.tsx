@@ -39,6 +39,7 @@ const SupplierPricingView = lazy(() => import('./components/views/Admin/Supplier
 const ArchivedRequestsView = lazy(() => import('./components/views/Admin/ArchivedRequests').then(m => ({ default: m.ArchivedRequestsView })));
 const RequestsManager = lazy(() => import('./components/views/Admin/RequestsManager').then(m => ({ default: m.RequestsManager })));
 const TransactionsManager = lazy(() => import('./components/views/Admin/TransactionsManager').then(m => ({ default: m.TransactionsManager })));
+const ClearLocationInventoryView = lazy(() => import('./components/views/Admin/ClearLocationInventory').then(m => ({ default: m.ClearLocationInventoryView })));
 const POPrintView = lazy(() => import('./components/views/POPrintView').then(m => ({ default: m.POPrintView })));
 
 const PurchaseOrderView = () => {
@@ -631,6 +632,14 @@ const App = () => {
                     <ProtectedRoute requireAdmin>
                       <Layout>
                         <TransactionsManager />
+                      </Layout>
+                    </ProtectedRoute>
+                  } />
+
+                  <Route path="/settings/manage/clear-location" element={
+                    <ProtectedRoute requireAdmin>
+                      <Layout>
+                        <ClearLocationInventoryView />
                       </Layout>
                     </ProtectedRoute>
                   } />

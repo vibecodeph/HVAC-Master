@@ -656,6 +656,12 @@ service cloud.firestore {
       allow write: if false; // Cloud Functions only
     }
 
+    match /audit_logs/{logId} {
+      allow read: if isAdmin();
+      allow create: if isAdmin();
+      allow update, delete: if false;
+    }
+
     // ─── Payroll Master Collections ──────────────────────────────────────────
     // These collections are owned exclusively by the Payroll Master app.
     // Rules use the same helper functions defined above (isManager, isAdmin).

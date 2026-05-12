@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ChevronRight, Package, Filter, MapPin, Box, Users, Shield, Trash2, AlertCircle, Loader2, Check, LogOut, Hammer, UserCheck, Tag, Archive, Database } from 'lucide-react';
+import { ChevronRight, Package, Filter, MapPin, Box, Users, Shield, Trash2, AlertCircle, Loader2, Check, LogOut, Hammer, UserCheck, Tag, Archive, Database, RotateCcw } from 'lucide-react';
 import { useAuth, useData } from '../../App';
 import { clearInventoryData, updateSystemConfig } from '../../services/inventoryService';
 import { cn } from '../../lib/utils';
@@ -228,7 +228,14 @@ export const SettingsView = () => {
                   <span>{statusMessage.text}</span>
                 </div>
               )}
-              <button 
+              <button
+                onClick={() => navigate('/settings/manage/clear-location')}
+                className="w-full py-3 bg-orange-600 text-white rounded-xl font-bold flex items-center justify-center space-x-2 active:scale-95 transition-transform mb-2"
+              >
+                <RotateCcw size={18} />
+                <span>Clear Location Inventory</span>
+              </button>
+              <button
                 disabled={isClearingData}
                 onClick={() => setIsConfirmModalOpen(true)}
                 className={cn(

@@ -3113,6 +3113,75 @@ export const manualEditInventory = async (
   });
 };
 
+export const consumeInventory = async (
+  itemId: string,
+  locationId: string,
+  variant: Record<string, string> | undefined,
+  customSpec: string | undefined,
+  quantity: number,
+  uomId: string,
+  conversionFactor: number,
+  floor: string,
+  room: string,
+  userName?: string
+) => {
+  const userId = auth.currentUser?.uid;
+  if (!userId) throw new Error('User not authenticated');
+
+  const baseQuantity = quantity * conversionFactor;
+
+  const transactionData: any = {
+    itemId,
+    quantity,
+    uomId,
+    conversionFactor,
+    baseQuantity,
+    type: 'consumption',
+    userId,
+    userName: userName || '',
+    fromLocationId: locationId,
+    floor,
+    room,
+    timestamp: Timestamp.now(),
+  };
+  if (variant && Object.keys(variant).length > 0) transactionData.variant = variant;
+  if (customSpec) transactionData.customSpec = customSpec;
+
+  try {
+    await runTransaction(db, async (dbTransaction) => {
+      const invRef = getInventoryRef(itemId, locationId, variant, undefined, undefined, customSpec);
+      const invDoc = await dbTransaction.get(invRef);
+      if (!invDoc.exists()) throw new Error('No inventory record found for this item at this location');
+
+      const itemRef = doc(db, 'items', itemId);
+      const itemDoc = await dbTransaction.get(itemRef);
+      if (!itemDoc.exists()) throw new Error('Item not found');
+      const itemData = itemDoc.data() as Item;
+
+      const currentQty = invDoc.data()?.quantity || 0;
+
+      dbTransaction.set(invRef, {
+        itemId,
+        locationId,
+        variant: variant && Object.keys(variant).length > 0 ? variant : null,
+        customSpec: customSpec || null,
+        quantity: currentQty - baseQuantity,
+      }, { merge: true });
+
+      const newTotalQty = (itemData.totalQuantity || 0) - baseQuantity;
+      dbTransaction.update(itemRef, {
+        totalQuantity: isNaN(newTotalQty) ? (itemData.totalQuantity || 0) : newTotalQty,
+      });
+
+      const transactionRef = doc(collection(db, 'transactions'));
+      dbTransaction.set(transactionRef, transactionData);
+    });
+  } catch (error) {
+    handleFirestoreError(error, OperationType.WRITE, 'transactions/inventory');
+    throw error;
+  }
+};
+
 export const subscribeToPurchaseOrders = (callback: (data: PurchaseOrder[]) => void) => {
   return onSnapshot(query(collection(db, 'purchase_orders'), orderBy('poNumber', 'desc')), (snapshot) => {
     const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as PurchaseOrder));

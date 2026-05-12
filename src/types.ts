@@ -136,7 +136,9 @@ export interface Transaction {
   uomId: string; // UOM used for this transaction
   conversionFactor: number; // Factor used to convert to base UOM
   baseQuantity: number; // Quantity in base UOM (quantity * conversionFactor)
-  type: 'delivery' | 'usage' | 'return' | 'adjustment' | 'pick';
+  type: 'delivery' | 'usage' | 'return' | 'adjustment' | 'pick' | 'consumption';
+  floor?: string;
+  room?: string;
   totalPrice?: number; // Total price for this transaction
   unitPrice?: number; // Unit price (totalPrice / quantity) in the transaction UOM
   timestamp: Timestamp;

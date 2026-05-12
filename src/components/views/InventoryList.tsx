@@ -8,6 +8,7 @@ import { Header } from '../common/Header';
 import { Card } from '../common/Card';
 import { Modal } from '../common/Modal';
 import { InventoryEditModal } from '../common/InventoryEditModal';
+import { ConsumeModal } from '../common/ConsumeModal';
 import { RequestForm, ItemForm } from '../Forms';
 import { Item, Location, Transaction, Inventory } from '../../types';
 import { Pagination } from '../common/Pagination';
@@ -27,16 +28,25 @@ const ItemCard = ({
   setRequestingItem,
   setViewingTransactions,
   setEditingInventory,
-  setFilter
+  setFilter,
+  showRequestButton,
+  setConsumingItem,
 }: any) => {
   const [isExpanded, setIsExpanded] = useState(false);
+  const canConsume = !!selectedJobsiteId && selectedJobsiteId !== 'all';
 
   return (
     <Card className="bg-white overflow-hidden border-gray-100 shadow-sm">
       {/* Item Header */}
-      <div 
-        className="p-4 flex items-center justify-between bg-white cursor-pointer active:bg-gray-50 transition-colors"
-        onClick={() => setIsExpanded(!isExpanded)}
+      <div
+        className={cn(
+          "p-4 flex items-center justify-between bg-white transition-colors",
+          canConsume ? "cursor-pointer active:bg-gray-50" : "cursor-default"
+        )}
+        onClick={() => {
+          if (canConsume) setConsumingItem({ item, entries });
+        }}
+        title={!canConsume ? "Select a single jobsite to consume items" : undefined}
       >
         <div className="flex items-center space-x-3 overflow-hidden">
           <div className={cn(
@@ -51,15 +61,18 @@ const ItemCard = ({
               {item.components && item.components.length > 0 && (
                 <span className="text-[8px] px-1.5 py-0.5 bg-purple-100 text-purple-600 rounded-full font-black uppercase tracking-widest">Kit</span>
               )}
-              <motion.div
-                animate={{ rotate: isExpanded ? 180 : 0 }}
-                transition={{ duration: 0.3 }}
-                className="text-gray-400"
+              <button
+                onClick={(e) => { e.stopPropagation(); setIsExpanded(!isExpanded); }}
+                className="text-gray-400 p-0.5 rounded hover:text-gray-600 transition-colors"
               >
-                <ChevronDown size={14} />
-              </motion.div>
+                <motion.div
+                  animate={{ rotate: isExpanded ? 180 : 0 }}
+                  transition={{ duration: 0.3 }}
+                >
+                  <ChevronDown size={14} />
+                </motion.div>
+              </button>
             </div>
-
           </div>
         </div>
 
@@ -74,25 +87,26 @@ const ItemCard = ({
               </span>
             </div>
           )}
-          <button 
-            onClick={(e) => {
-              e.stopPropagation();
-              setFilter(item.isTool ? 'Tools' : 'Materials');
-              // If multiple variants, expand. If one, request.
-              if (entries.length > 1 && !isExpanded) {
-                setIsExpanded(true);
-              } else {
-                setRequestingItem({ 
-                  item, 
-                  variant: entries[0]?.boq?.variant || entries[0]?.inv?.variant,
-                  customSpec: entries[0]?.inv?.customSpec
-                });
-              }
-            }}
-            className="px-4 py-2 bg-gray-900 text-white text-[10px] font-black uppercase tracking-widest rounded-xl hover:bg-gray-800 active:scale-95 transition-all shadow-sm"
-          >
-            Request
-          </button>
+          {showRequestButton && (
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                setFilter(item.isTool ? 'Tools' : 'Materials');
+                if (entries.length > 1 && !isExpanded) {
+                  setIsExpanded(true);
+                } else {
+                  setRequestingItem({
+                    item,
+                    variant: entries[0]?.boq?.variant || entries[0]?.inv?.variant,
+                    customSpec: entries[0]?.inv?.customSpec
+                  });
+                }
+              }}
+              className="px-4 py-2 bg-gray-900 text-white text-[10px] font-black uppercase tracking-widest rounded-xl hover:bg-gray-800 active:scale-95 transition-all shadow-sm"
+            >
+              Request
+            </button>
+          )}
         </div>
       </div>
 
@@ -238,7 +252,7 @@ const ItemCard = ({
                           </div>
                         )}
 
-                        {entries.length > 1 && (
+                        {showRequestButton && entries.length > 1 && (
                           <button
                             onClick={(e) => {
                               e.stopPropagation();
@@ -319,12 +333,13 @@ export const InventoryList = () => {
     customSpec?: string; 
   } | null>(null);
   const [currentPage, setCurrentPage] = useState(1);
-  const [showZeroQty, setShowZeroQty] = useState(false);
+  const [showRequestButton, setShowRequestButton] = useState(false);
+  const [consumingItem, setConsumingItem] = useState<{ item: Item; entries: any[] } | null>(null);
 
   // Reset pagination when filters change
   useEffect(() => {
     setCurrentPage(1);
-  }, [debouncedSearchTerm, filter, selectedJobsiteId, showZeroQty]);
+  }, [debouncedSearchTerm, filter, selectedJobsiteId, showRequestButton]);
 
   const [viewingTransactions, setViewingTransactions] = useState<{ item: Item, variant?: Record<string, string> } | null>(null);
   const [editingInventory, setEditingInventory] = useState<{ inv: Inventory, item: Item, variant?: Record<string, string> } | null>(null);
@@ -485,9 +500,8 @@ export const InventoryList = () => {
 
       const entriesList = Object.values(variantEntries);
       if (entriesList.length > 0) {
-        // Apply showZeroQty toggle filter at the item total level if requested
         const totalStockValue = entriesList.reduce((sum: number, e: any) => sum + (e.totalQty || 0), 0);
-        if (showZeroQty ? totalStockValue <= 0 : true) {
+        if (showRequestButton ? true : totalStockValue > 0) {
           groupedResult[itemId] = { item, entries: entriesList };
         }
       }
@@ -507,7 +521,7 @@ export const InventoryList = () => {
       if (fullCatA !== fullCatB) return fullCatA.localeCompare(fullCatB);
       return (a.item?.name || '').localeCompare(b.item?.name || '');
     });
-  }, [selectedJobsiteId, debouncedSearchTerm, filter, items, inventory, boqs, showZeroQty, categories]);
+  }, [selectedJobsiteId, debouncedSearchTerm, filter, items, inventory, boqs, showRequestButton, categories]);
 
   const globalSearchItems = useMemo(() => {
     if (!selectedJobsiteId || !debouncedSearchTerm) return [];
@@ -599,19 +613,19 @@ export const InventoryList = () => {
 
         <div className="flex items-center justify-between px-1">
           <label className="flex items-center space-x-2 cursor-pointer">
-            <div 
-              onClick={() => setShowZeroQty(!showZeroQty)}
+            <div
+              onClick={() => setShowRequestButton(!showRequestButton)}
               className={cn(
                 "w-8 h-4 rounded-full transition-colors relative",
-                showZeroQty ? "bg-blue-600" : "bg-gray-300"
+                showRequestButton ? "bg-blue-600" : "bg-gray-300"
               )}
             >
               <div className={cn(
                 "absolute top-0.5 w-3 h-3 rounded-full bg-white transition-transform",
-                showZeroQty ? "translate-x-4" : "translate-x-0.5"
+                showRequestButton ? "translate-x-4" : "translate-x-0.5"
               )} />
             </div>
-            <span className="text-[10px] font-bold text-gray-500 uppercase tracking-wider">Show ONLY zero/negative stock</span>
+            <span className="text-[10px] font-bold text-gray-500 uppercase tracking-wider">Show Request Button</span>
           </label>
         </div>
 
@@ -684,6 +698,8 @@ export const InventoryList = () => {
                                     setViewingTransactions={setViewingTransactions}
                                     setEditingInventory={setEditingInventory}
                                     setFilter={setFilter}
+                                    showRequestButton={showRequestButton}
+                                    setConsumingItem={setConsumingItem}
                                   />
                                 </motion.div>
                               </React.Fragment>
@@ -728,16 +744,18 @@ export const InventoryList = () => {
                                       </p>
                                     </div>
                                   </div>
-                                  <button 
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      setFilter(item.isTool ? 'Tools' : 'Materials');
-                                      setRequestingItem({ item });
-                                    }}
-                                    className="px-4 h-10 bg-white text-blue-600 border border-blue-100 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-blue-600 hover:text-white transition-all shadow-sm"
-                                  >
-                                    Request
-                                  </button>
+                                  {showRequestButton && (
+                                    <button
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        setFilter(item.isTool ? 'Tools' : 'Materials');
+                                        setRequestingItem({ item });
+                                      }}
+                                      className="px-4 h-10 bg-white text-blue-600 border border-blue-100 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-blue-600 hover:text-white transition-all shadow-sm"
+                                    >
+                                      Request
+                                    </button>
+                                  )}
                                 </div>
                               </Card>
                             ))}
@@ -936,6 +954,24 @@ export const InventoryList = () => {
             profile={profile}
             locationName={locations.find(l => l.id === selectedJobsiteId)?.name || ''}
             onClose={() => setEditingInventory(null)}
+          />
+        )}
+      </Modal>
+
+      <Modal
+        isOpen={!!consumingItem}
+        onClose={() => setConsumingItem(null)}
+        title="Consume Item"
+      >
+        {consumingItem && (
+          <ConsumeModal
+            item={consumingItem.item}
+            entries={consumingItem.entries}
+            selectedJobsiteId={selectedJobsiteId}
+            uoms={uoms}
+            profile={profile}
+            onClose={() => setConsumingItem(null)}
+            onSuccess={() => setConsumingItem(null)}
           />
         )}
       </Modal>

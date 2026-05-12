@@ -243,10 +243,10 @@ service cloud.firestore {
 
     function isValidTransaction(data) {
       return hasRequiredFields(['itemId', 'quantity', 'type', 'timestamp', 'userId', 'uomId']) &&
-             hasOnlyAllowedFields(['itemId', 'quantity', 'type', 'timestamp', 'userId', 'uomId', 'conversionFactor', 'baseQuantity', 'notes', 'fromLocationId', 'toLocationId', 'variant', 'customSpec', 'serialNumber', 'propertyNumber', 'userName', 'totalPrice', 'unitPrice', 'poNumber', 'poId', 'supplierInvoice', 'supplierDR', 'batchId', 'requestIds', 'updatedAt', 'createdBy', 'updatedBy', 'createdAt', 'status']) &&
+             hasOnlyAllowedFields(['itemId', 'quantity', 'type', 'timestamp', 'userId', 'uomId', 'conversionFactor', 'baseQuantity', 'notes', 'fromLocationId', 'toLocationId', 'variant', 'customSpec', 'serialNumber', 'propertyNumber', 'userName', 'totalPrice', 'unitPrice', 'poNumber', 'poId', 'supplierInvoice', 'supplierDR', 'batchId', 'requestIds', 'updatedAt', 'createdBy', 'updatedBy', 'createdAt', 'status', 'floor', 'room']) &&
              data.itemId is string && data.itemId.size() <= 50 &&
              data.quantity is number &&
-             data.type in ['delivery', 'usage', 'return', 'adjustment', 'pick'] &&
+             data.type in ['delivery', 'usage', 'return', 'adjustment', 'pick', 'consumption'] &&
              data.timestamp is timestamp &&
              data.userId == request.auth.uid &&
              data.uomId is string && data.uomId.size() <= 50 &&
@@ -272,7 +272,9 @@ service cloud.firestore {
              (!('createdAt' in data) || data.createdAt is timestamp) &&
              (!('createdBy' in data) || data.createdBy is string) &&
              (!('updatedBy' in data) || data.updatedBy is string) &&
-             (!('status' in data) || data.status is string);
+             (!('status' in data) || data.status is string) &&
+             (!('floor' in data) || data.floor == null || (data.floor is string && data.floor.size() <= 100)) &&
+             (!('room' in data) || data.room == null || (data.room is string && data.room.size() <= 200));
     }
 
     function isValidUOM(data) {
@@ -466,7 +468,7 @@ service cloud.firestore {
     match /items/{itemId} {
       allow read: if isApproved();
       allow create: if isAdmin() && hasRequiredFields(['id', 'name', 'uomId', 'isTool', 'isActive', 'createdAt']) && isValidItem(request.resource.data);
-      allow update: if isAdmin() || (isApproved() && (isWarehouseman() || isEngineer()) && isValidItem(request.resource.data) && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['averageCost', 'averageCostPerVariant', 'totalQuantity', 'updatedAt', 'updatedBy']));
+      allow update: if isAdmin() || (isApproved() && (isWarehouseman() || isEngineer()) && isValidItem(request.resource.data) && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['averageCost', 'averageCostPerVariant', 'totalQuantity', 'updatedAt', 'updatedBy'])) || (isApproved() && request.auth.token.get('role', '') == 'worker' && isValidItem(request.resource.data) && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['totalQuantity']));
       allow delete: if isAdmin();
     }
 
@@ -504,12 +506,18 @@ service cloud.firestore {
                        && isValidInventory(request.resource.data)
                        && !request.resource.data.diff(resource.data).affectedKeys()
                             .hasAny(['unitPrice', 'lastEditedBy', 'lastEditedAt', 'editNotes']);
+      // Consumption by workers: quantity-only change at assigned locations
+      allow update: if isApproved() && request.auth.token.get('role', '') == 'worker'
+                       && isAssignedLocation(request.resource.data.locationId)
+                       && isValidInventory(request.resource.data)
+                       && !request.resource.data.diff(resource.data).affectedKeys()
+                            .hasAny(['unitPrice', 'lastEditedBy', 'lastEditedAt', 'editNotes']);
       allow delete: if isAdmin();
     }
 
     match /transactions/{transactionId} {
       allow read: if isApproved();
-      allow create: if (isAdmin() || isWarehouseman() || isEngineer()) && isValidTransaction(request.resource.data);
+      allow create: if isApproved() && isValidTransaction(request.resource.data);
       allow update, delete: if isAdmin();
     }
 

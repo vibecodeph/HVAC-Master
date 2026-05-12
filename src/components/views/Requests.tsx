@@ -3,8 +3,8 @@ import { useSearchParams } from 'react-router-dom';
 import { ChevronRight, ChevronDown, MapPin, Truck, Wrench, Package, ArrowLeftRight, History, Check, X, AlertTriangle, Search, Pencil, Trash2, RotateCcw } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { useAuth, useData } from '../../App';
-import { onSnapshot, collection, query, where, orderBy, limit, serverTimestamp } from 'firebase/firestore';
-import { subscribeToRequests, approveRequest, updateRequest, deleteRequest, recordBulkPick, recordBulkReceive, approveBulkRequests, updateDeliveryQuantity, cancelRequest, cancelApproval, unpickRequest } from '../../services/inventoryService';
+import { serverTimestamp } from 'firebase/firestore';
+import { approveRequest, updateRequest, deleteRequest, recordBulkPick, recordBulkReceive, approveBulkRequests, updateDeliveryQuantity, cancelRequest, cancelApproval, unpickRequest } from '../../services/inventoryService';
 import { cn } from '../../lib/utils';
 import { Header } from '../common/Header';
 import { Card } from '../common/Card';
@@ -14,7 +14,7 @@ import { Request } from '../../types';
 
 export const RequestsView = () => {
   const { profile } = useAuth();
-  const { items, locations, uoms, users, inventory } = useData();
+  const { items, locations, uoms, users, inventory, requests, loadMoreRequests, requestsHasMore } = useData();
   const [searchParams] = useSearchParams();
   const tabParam = searchParams.get('tab');
   const [filter, setFilter] = useState<'pending' | 'approved' | 'for delivery' | 'delivered' | 'rejected' | 'cancelled'>('pending');
@@ -123,24 +123,6 @@ export const RequestsView = () => {
     }
   }, [profile, locations, hasSetDefaultJobsite]);
   
-  // Pagination state
-  const [limitCount, setLimitCount] = useState(50);
-  const [localRequests, setLocalRequests] = useState<Request[]>([]);
-  const [hasMore, setHasMore] = useState(true);
-
-  useEffect(() => {
-    const assigned = profile?.role === 'admin' ? undefined : (profile?.assignedLocationIds || []);
-    const unsub = subscribeToRequests((data) => {
-      setLocalRequests(data);
-      if (data.length < limitCount) {
-        setHasMore(false);
-      } else {
-        setHasMore(true);
-      }
-    }, assigned, limitCount);
-    return () => unsub();
-  }, [profile, limitCount]);
-
   const formatDate = (timestamp: any) => {
     if (!timestamp) return '';
     const date = timestamp.toDate ? timestamp.toDate() : new Date(timestamp);
@@ -154,7 +136,7 @@ export const RequestsView = () => {
   );
 
   const { filteredRequests, groupedByJobsite, sortedJobsiteIds } = useMemo(() => {
-    const filtered = localRequests.filter(r => {
+    const filtered = requests.filter(r => {
       const matchesStatus = r.status === filter;
       const matchesJobsiteFilter = selectedJobsiteId === 'all' || r.jobsiteId === selectedJobsiteId;
       
@@ -185,7 +167,7 @@ export const RequestsView = () => {
     });
 
     return { filteredRequests: filtered, groupedByJobsite: grouped, sortedJobsiteIds: sortedKeys };
-  }, [localRequests, filter, selectedJobsiteId, locations, profile]);
+  }, [requests, filter, selectedJobsiteId, locations, profile]);
 
   const handleApprove = async (request: Request, approvedQty: number, note?: string) => {
     setIsProcessing(true);
@@ -277,10 +259,6 @@ export const RequestsView = () => {
     }
   };
 
-  const handleLoadMore = () => {
-    setLimitCount(prev => prev + 50);
-  };
-
   const canEditRequest = (r: Request) => {
     if (!profile) return false;
     if (profile.role === 'admin') return true;
@@ -343,12 +321,10 @@ export const RequestsView = () => {
     if (!deletingRequest) return;
     const deleted = deletingRequest;
     setDeletingRequest(null);
-    setLocalRequests(prev => prev.filter(r => r.id !== deleted.id));
-    setSuccessMsg('Request deleted.');
     try {
       await deleteRequest(deleted.id);
+      setSuccessMsg('Request deleted.');
     } catch (err: any) {
-      setLocalRequests(prev => [...prev, deleted]);
       setError(err.message || 'Failed to delete request');
     }
   };
@@ -739,9 +715,9 @@ export const RequestsView = () => {
             </div>
           )}
 
-          {hasMore && (
-            <button 
-              onClick={handleLoadMore}
+          {requestsHasMore && (
+            <button
+              onClick={loadMoreRequests}
               className="w-full py-4 text-sm font-bold text-blue-600 hover:bg-blue-50 rounded-2xl transition-colors"
             >
               Load More

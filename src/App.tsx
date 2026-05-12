@@ -137,6 +137,8 @@ interface DataContextType {
   systemConfig: SystemConfig | null | undefined;
   rbacConfig: Record<string, RBACRoleConfig>;
   loading: boolean;
+  requestsHasMore: boolean;
+  loadMoreRequests: () => void;
 }
 
 const DataContext = createContext<DataContextType>({
@@ -146,7 +148,9 @@ const DataContext = createContext<DataContextType>({
   tags: [],
   systemConfig: undefined,
   rbacConfig: {},
-  loading: true
+  loading: true,
+  requestsHasMore: false,
+  loadMoreRequests: () => {},
 });
 export const useData = () => useContext(DataContext);
 
@@ -279,7 +283,7 @@ const AuthProvider = ({ children }: { children: React.ReactNode }) => {
 };
 
 const DataProvider = ({ children }: { children: React.ReactNode }) => {
-  const [data, setData] = useState<Omit<DataContextType, 'loading'>>({
+  const [data, setData] = useState<Omit<DataContextType, 'loading' | 'requestsHasMore' | 'loadMoreRequests'>>({
     items: [], categories: [], uoms: [], locations: [], inventory: [],
     transactions: [], requests: [], users: [], assets: [], boqs: [], unplanned: [],
     purchaseOrders: [],
@@ -288,6 +292,8 @@ const DataProvider = ({ children }: { children: React.ReactNode }) => {
     rbacConfig: {}
   });
   const [loading, setLoading] = useState(true);
+  const [requestsLimitCount, setRequestsLimitCount] = useState(50);
+  const loadMoreRequests = useCallback(() => setRequestsLimitCount(prev => prev + 50), []);
   const { user, profile } = useAuth();
 
   useEffect(() => {
@@ -295,8 +301,8 @@ const DataProvider = ({ children }: { children: React.ReactNode }) => {
     const collectionsToLoad = ['system_config'];
     if (user && profile?.isApproved) {
       collectionsToLoad.push(
-        'items', 'categories', 'uoms', 'locations', 'inventory', 
-        'transactions', 'requests', 'assets', 'boq', 'unplanned', 
+        'items', 'categories', 'uoms', 'locations', 'inventory',
+        'transactions', 'assets', 'boq', 'unplanned',
         'tags'
       );
       if (profile.role === 'admin' || profile.role === 'manager') {
@@ -364,7 +370,6 @@ const DataProvider = ({ children }: { children: React.ReactNode }) => {
       safeSubscribe('locations', subscribeToLocations, broadAssigned, includeSuppliers),
       safeSubscribe('inventory', subscribeToInventory, assigned),
       safeSubscribe('transactions', subscribeToTransactions, assigned),
-      safeSubscribe('requests', subscribeToRequests, assigned),
       (profile?.role === 'admin' || profile?.role === 'manager' || profile?.role === 'engineer') ? safeSubscribe('users', subscribeToUsers, profile.role) : () => {},
       safeSubscribe('assets', subscribeToAssets, assigned),
       safeSubscribe('boq', subscribeToBOQs, assigned),
@@ -380,8 +385,26 @@ const DataProvider = ({ children }: { children: React.ReactNode }) => {
     };
   }, [user?.uid, profile?.isApproved, profile?.role, JSON.stringify(profile?.assignedLocationIds)]);
 
+  // Separate subscription for requests — supports dynamic limit via loadMoreRequests
+  useEffect(() => {
+    if (!user || !profile?.isApproved) {
+      setData(prev => ({ ...prev, requests: [] }));
+      return;
+    }
+    const locationIds = profile.role === 'admin' ? undefined : (profile.assignedLocationIds || []);
+    const unsub = subscribeToRequests((incoming) => {
+      setData(prev => ({ ...prev, requests: incoming }));
+    }, locationIds, requestsLimitCount);
+    return () => unsub();
+  }, [user?.uid, profile?.isApproved, profile?.role, JSON.stringify(profile?.assignedLocationIds), requestsLimitCount]);
+
   return (
-    <DataContext.Provider value={{ ...data, loading }}>
+    <DataContext.Provider value={{
+      ...data,
+      loading,
+      requestsHasMore: data.requests.length >= requestsLimitCount,
+      loadMoreRequests,
+    }}>
       {children}
     </DataContext.Provider>
   );

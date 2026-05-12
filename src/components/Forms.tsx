@@ -1031,7 +1031,7 @@ export const ItemForm = ({ uoms, categories, locations, items, initialData, isDu
               };
             })
             .filter((vc): vc is any => vc !== null),
-          components: components.length > 0 ? components : undefined
+          components: components
         };
 
         let newItemId: string | undefined;

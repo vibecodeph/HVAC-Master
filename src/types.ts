@@ -174,6 +174,8 @@ export interface Request {
   timestamp: Timestamp;
   approvedAt?: Timestamp;
   deliveredAt?: Timestamp;
+  receiverId?: string;
+  receiverName?: string;
   backorderOf?: string; // Original request ID if this is a backorder
   batchId?: string; // Grouped delivery ID
   serialNumbers?: string[]; // Selected serial numbers for tools

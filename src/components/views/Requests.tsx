@@ -53,6 +53,7 @@ export const RequestsView = () => {
   const [editShowItemSearch, setEditShowItemSearch] = useState(false);
   const [deletingRequest, setDeletingRequest] = useState<Request | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
+  const [expandedDRs, setExpandedDRs] = useState<Set<string>>(new Set());
 
   const handleUpdateDeliveryQty = async (requestId: string, newQty: number, createBackorder: boolean) => {
     setIsProcessing(true);
@@ -157,7 +158,14 @@ export const RequestsView = () => {
       return acc;
     }, {} as Record<string, Request[]>);
 
+    const parseDrNum = (key: string) => {
+      const batch = key.split('|')[1] || '';
+      const m = batch.match(/DR#(\d+)-(\d+)/);
+      return m ? parseInt(m[1]) * 10000 + parseInt(m[2]) : 0;
+    };
+
     const sortedKeys = Object.keys(grouped).sort((a, b) => {
+      if (filter === 'delivered') return parseDrNum(b) - parseDrNum(a);
       const [siteA] = a.split('|');
       const [siteB] = b.split('|');
       const nameA = locations.find(l => l.id === siteA)?.name || '';
@@ -461,7 +469,7 @@ export const RequestsView = () => {
           ))}
         </div>
 
-        <div className="space-y-8">
+        <div className={filter === 'delivered' ? 'space-y-3' : 'space-y-8'}>
           {sortedJobsiteIds.map((groupKey) => {
             const [jobsiteId, batchId] = groupKey.split('|');
             const jobsite = locations.find(l => l.id === jobsiteId);
@@ -470,6 +478,88 @@ export const RequestsView = () => {
               const itemB = items.find(i => i.id === b.itemId)?.name || '';
               return itemA.localeCompare(itemB);
             });
+
+            if (filter === 'delivered') {
+              const receiverNames = [...new Set(
+                jobsiteRequests.map(r => r.receiverName).filter((n): n is string => Boolean(n))
+              )];
+              const receiverDisplay = receiverNames.length === 0
+                ? 'Pending receipt'
+                : receiverNames.length === 1
+                  ? `Received by ${receiverNames[0]}`
+                  : receiverNames.length === 2
+                    ? `Received by ${receiverNames.join(' & ')}`
+                    : 'Received by multiple';
+
+              const latestDeliveredAt = jobsiteRequests
+                .map(r => r.deliveredAt)
+                .filter(Boolean)
+                .sort((a, b) => {
+                  const aT = a?.toDate ? a.toDate().getTime() : 0;
+                  const bT = b?.toDate ? b.toDate().getTime() : 0;
+                  return bT - aT;
+                })[0];
+
+              const isExpanded = expandedDRs.has(groupKey);
+
+              return (
+                <Card
+                  key={groupKey}
+                  className="cursor-pointer active:scale-[0.99] transition-all duration-200 p-4"
+                  onClick={() => setExpandedDRs(prev => {
+                    const next = new Set(prev);
+                    if (next.has(groupKey)) next.delete(groupKey); else next.add(groupKey);
+                    return next;
+                  })}
+                >
+                  <div className="flex justify-between items-start">
+                    <div className="flex-1 min-w-0">
+                      <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest truncate">{jobsite?.name || 'Unknown Jobsite'}</p>
+                      <p className="text-base font-bold text-blue-600 uppercase tracking-widest mt-0.5">DR# {batchId?.replace('DR#', '') || 'Unassigned'}</p>
+                      <p className="text-xs font-semibold text-gray-700 mt-1">{receiverDisplay}</p>
+                      <p className="text-[10px] text-gray-400 mt-0.5">
+                        {jobsiteRequests.length} item{jobsiteRequests.length !== 1 ? 's' : ''}{latestDeliveredAt ? ` · ${formatDate(latestDeliveredAt)}` : ''}
+                      </p>
+                    </div>
+                    <div className="ml-3 text-gray-400 shrink-0 mt-1">
+                      {isExpanded ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
+                    </div>
+                  </div>
+
+                  {isExpanded && (
+                    <div className="mt-4 pt-4 border-t border-gray-100 space-y-3">
+                      {jobsiteRequests.map(r => {
+                        const item = items.find(i => i.id === r.itemId);
+                        const receiverLine = [
+                          r.receiverName ? `Received by ${r.receiverName}` : '',
+                          r.deliveredAt ? formatDate(r.deliveredAt) : ''
+                        ].filter(Boolean).join(' · ');
+                        return (
+                          <div key={r.id} className="flex justify-between items-start">
+                            <div className="flex-1 min-w-0 mr-3">
+                              <p className="text-sm font-bold text-gray-900 truncate">{item?.name}</p>
+                              {r.variant && Object.keys(r.variant).length > 0 && (
+                                <p className="text-[10px] text-gray-500 uppercase font-bold">{Object.values(r.variant).join(', ')}</p>
+                              )}
+                              {r.customSpec && (
+                                <p className="text-[10px] text-purple-600 uppercase font-bold">{r.customSpec}</p>
+                              )}
+                              {receiverLine && (
+                                <p className="text-[10px] text-gray-400 mt-0.5">{receiverLine}</p>
+                              )}
+                            </div>
+                            <div className="text-right shrink-0">
+                              <p className="text-base font-black text-blue-600">{r.deliveredQty ?? r.approvedQty}</p>
+                              <p className="text-[10px] font-bold text-gray-400 uppercase">{uoms.find(u => u.id === r.uomId || u.symbol === r.uomId)?.symbol || r.uomId}</p>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </Card>
+              );
+            }
 
             return (
               <div key={groupKey} className="space-y-3">

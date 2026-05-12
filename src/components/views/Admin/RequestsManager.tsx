@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { Navigate } from 'react-router-dom';
 import {
-  collection, query, orderBy, limit, getDocs, startAfter,
+  collection, query, orderBy, where, limit, getDocs, startAfter,
   doc, updateDoc, deleteDoc, serverTimestamp, QueryDocumentSnapshot, DocumentData,
 } from 'firebase/firestore';
 import {
@@ -52,6 +52,7 @@ const BULK_FIELDS: BulkFieldDef[] = [
     roleFilter: (u: UserProfile) => ['engineer', 'manager', 'admin'].includes(u.role) },
   { field: 'warehousemanId', label: 'Warehouseman', type: 'user',   nameField: 'warehousemanName',
     roleFilter: (u: UserProfile) => ['warehouseman', 'manager', 'admin'].includes(u.role) },
+  { field: 'receiverId',     label: 'Receiver',     type: 'user',   nameField: 'receiverName' },
   { field: 'workerNote',     label: 'Worker Note',  type: 'text' },
   { field: 'engineerNote',   label: 'Eng. Note',    type: 'text' },
 ];
@@ -93,6 +94,7 @@ export const RequestsManager = () => {
   const [page, setPage] = useState(0);
   const [cursors, setCursors] = useState<QueryDocumentSnapshot<DocumentData>[]>([]);
   const [hasMore, setHasMore] = useState(false);
+  const [isBatchFetch, setIsBatchFetch] = useState(false);
 
   const [sortField, setSortField] = useState<SortField>('timestamp');
   const [sortDir, setSortDir] = useState<SortDir>('desc');
@@ -165,15 +167,47 @@ export const RequestsManager = () => {
     }
   };
 
+  const fetchByBatch = async (batchId: string) => {
+    setLoading(true);
+    setIsBatchFetch(true);
+    try {
+      const q = query(
+        collection(db, 'requests'),
+        where('batchId', '==', batchId),
+        orderBy('timestamp', 'desc'),
+      );
+      const snap = await getDocs(q);
+      setRecords(snap.docs.map(d => ({ id: d.id, ...d.data() } as Request)));
+      setHasMore(false);
+      setPage(0);
+      setCursors([]);
+    } catch (err) {
+      handleFirestoreError(err, OperationType.LIST, 'requests', false);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   useEffect(() => {
     if (!isAdmin) return;
-    fetchPage(0);
-  }, [isAdmin]);
+    if (drFilter && drFilter !== '__none__') {
+      fetchByBatch(drFilter);
+    } else {
+      setIsBatchFetch(false);
+      setPage(0);
+      setCursors([]);
+      fetchPage(0);
+    }
+  }, [isAdmin, drFilter]);
 
   const handleRefresh = () => {
-    setPage(0);
-    setCursors([]);
-    fetchPage(0);
+    if (drFilter && drFilter !== '__none__') {
+      fetchByBatch(drFilter);
+    } else {
+      setPage(0);
+      setCursors([]);
+      fetchPage(0);
+    }
   };
 
   const handleNextPage = () => {
@@ -205,6 +239,7 @@ export const RequestsManager = () => {
         r.id.toLowerCase().includes(q) ||
         r.itemId.toLowerCase().includes(q) ||
         (r.requestorName || '').toLowerCase().includes(q) ||
+        (r.receiverName || '').toLowerCase().includes(q) ||
         (r.batchId || '').toLowerCase().includes(q) ||
         (itemMap.get(r.itemId)?.name || '').toLowerCase().includes(q)
       );
@@ -452,12 +487,14 @@ export const RequestsManager = () => {
     nameField,
     label,
     roleFilter,
+    emptyText = '—',
   }: {
     req: Request;
     idField: keyof Request;
     nameField: keyof Request;
     label: string;
     roleFilter?: (u: UserProfile) => boolean;
+    emptyText?: string;
   }) => {
     const currentId   = (req as any)[idField]   as string | undefined;
     const currentName = (req as any)[nameField]  as string | undefined;
@@ -520,7 +557,7 @@ export const RequestsManager = () => {
               className="text-xs font-medium text-gray-700 break-all"
               title={currentId || ''}
             >
-              {currentName || '—'}
+              {currentName || emptyText}
             </span>
             <button
               onClick={() => !isBulkEdit && startEdit(req.id, String(idField), currentId || '', String(nameField), currentName || '')}
@@ -656,25 +693,33 @@ export const RequestsManager = () => {
             </label>
           )}
           <div className="flex items-center justify-between text-[10px] text-gray-400 font-medium">
-            <span>
-              {displayed.length} of {records.length} on this page — Page {page + 1}
-            </span>
-            <div className="flex items-center gap-1">
-              <button
-                onClick={handlePrevPage}
-                disabled={page === 0 || loading}
-                className="p-1 rounded-lg hover:bg-gray-50 disabled:opacity-30 transition-colors"
-              >
-                <ChevronLeft size={14} />
-              </button>
-              <button
-                onClick={handleNextPage}
-                disabled={!hasMore || loading}
-                className="p-1 rounded-lg hover:bg-gray-50 disabled:opacity-30 transition-colors"
-              >
-                <ChevronRight size={14} />
-              </button>
-            </div>
+            {isBatchFetch ? (
+              <span className="text-emerald-600 font-bold">
+                All {displayed.length} item{displayed.length !== 1 ? 's' : ''} in {drFilter}
+              </span>
+            ) : (
+              <>
+                <span>
+                  {displayed.length} of {records.length} on this page — Page {page + 1}
+                </span>
+                <div className="flex items-center gap-1">
+                  <button
+                    onClick={handlePrevPage}
+                    disabled={page === 0 || loading}
+                    className="p-1 rounded-lg hover:bg-gray-50 disabled:opacity-30 transition-colors"
+                  >
+                    <ChevronLeft size={14} />
+                  </button>
+                  <button
+                    onClick={handleNextPage}
+                    disabled={!hasMore || loading}
+                    className="p-1 rounded-lg hover:bg-gray-50 disabled:opacity-30 transition-colors"
+                  >
+                    <ChevronRight size={14} />
+                  </button>
+                </div>
+              </>
+            )}
           </div>
         </Card>
 
@@ -799,13 +844,20 @@ export const RequestsManager = () => {
                   {/* Card header */}
                   <div className="flex items-start justify-between gap-2 p-3 pb-2 bg-gray-50 border-b border-gray-100">
                     <div className="min-w-0">
-                      <p className="text-sm font-bold text-gray-900 truncate">
+                      <p className="text-sm font-bold text-gray-900">
                         {itemName || req.itemId}
                       </p>
+                      {req.variant && Object.keys(req.variant).length > 0 && (
+                        <p className="text-[10px] font-bold text-gray-500 uppercase tracking-wide mt-0.5">
+                          {Object.values(req.variant).join(', ')}
+                        </p>
+                      )}
+                      {req.customSpec && (
+                        <p className="text-[10px] font-bold text-purple-500 uppercase tracking-wide mt-0.5">
+                          {req.customSpec}
+                        </p>
+                      )}
                       <div className="flex items-center gap-2 mt-0.5 flex-wrap">
-                        <span className="text-[9px] font-mono text-gray-400" title={req.id}>
-                          {truncateId(req.id)}
-                        </span>
                         {jobsiteName && (
                           <span className="text-[10px] font-medium text-gray-500">{jobsiteName}</span>
                         )}
@@ -848,6 +900,13 @@ export const RequestsManager = () => {
                       nameField="warehousemanName"
                       label="Warehouseman"
                       roleFilter={u => ['warehouseman', 'manager', 'admin'].includes(u.role)}
+                    />
+                    <UserFieldRow
+                      req={req}
+                      idField="receiverId"
+                      nameField="receiverName"
+                      label="Receiver"
+                      emptyText="Pending receipt"
                     />
                     <FieldRow req={req} field="batchId" label="Batch / DR" />
                     <FieldRow req={req} field="workerNote" label="Worker Note" />
@@ -943,7 +1002,7 @@ export const RequestsManager = () => {
         )}
 
         {/* Bottom pagination */}
-        {!loading && displayed.length > 0 && (
+        {!loading && displayed.length > 0 && !isBatchFetch && (
           <div className="flex items-center justify-between pt-2">
             <button
               onClick={handlePrevPage}

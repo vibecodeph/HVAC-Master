@@ -419,7 +419,7 @@ export const InventoryList = () => {
     const allSites = groupedJobsites.flatMap(g => g.locations);
     if (allSites.length > 0 && profile && !hasSetDefaultJobsite) {
       const saved = storageKey ? localStorage.getItem(storageKey) : null;
-      const isValid = allSites.some(j => j.id === saved) || saved === 'all';
+      const isValid = allSites.some(j => j.id === saved);
       
       if (saved && isValid) {
         setSelectedJobsiteId(saved);

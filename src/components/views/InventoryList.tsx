@@ -559,7 +559,7 @@ export const InventoryList = () => {
   const { exportRows, exportMainCategories } = useMemo(() => {
     if (!selectedJobsiteId || selectedJobsiteId === 'all') return { exportRows: [], exportMainCategories: [] };
 
-    const jobsiteInv = inventory.filter(inv => inv.locationId === selectedJobsiteId && inv.quantity > 0);
+    const jobsiteInv = inventory.filter(inv => inv.locationId === selectedJobsiteId && inv.quantity !== 0);
 
     type ExportRow = { itemName: string; variant: string; avgCost: number; qty: number; uomSymbol: string; totalCost: number; mainCatId: string; mainCatName: string };
     const rows: ExportRow[] = [];

@@ -1435,7 +1435,7 @@ export const ItemForm = ({ uoms, categories, locations, items, initialData, isDu
           </div>
           <div className="space-y-1">
             <label className="text-xs font-bold text-gray-400 uppercase tracking-wider pl-1">Avg. Cost</label>
-            <input name="averageCost" type="number" step="0.01" defaultValue={initialData?.averageCost} className="w-full p-4 bg-gray-100 rounded-2xl text-sm font-medium outline-none focus:ring-2 focus:ring-blue-500" />
+            <input name="averageCost" type="number" step="any" min="0" defaultValue={initialData?.averageCost} className="w-full p-4 bg-gray-100 rounded-2xl text-sm font-medium outline-none focus:ring-2 focus:ring-blue-500" />
           </div>
         </div>
 

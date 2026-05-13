@@ -53,6 +53,7 @@ export const RequestsView = () => {
   const [deletingRequest, setDeletingRequest] = useState<Request | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
   const [expandedDRs, setExpandedDRs] = useState<Set<string>>(new Set());
+  const [expandedJobsites, setExpandedJobsites] = useState<Set<string>>(new Set());
 
   const handleUpdateDeliveryQty = async (requestId: string, newQty: number, createBackorder: boolean) => {
     setIsProcessing(true);
@@ -175,6 +176,23 @@ export const RequestsView = () => {
 
     return { filteredRequests: filtered, groupedByJobsite: grouped, sortedJobsiteIds: sortedKeys };
   }, [requests, filter, selectedJobsiteId, locations, profile]);
+
+  // For "all jobsites" mode: outer grouping by jobsite so each can collapse
+  const { jobsiteGroupMap, sortedJobsiteKeys } = useMemo(() => {
+    if (selectedJobsiteId !== 'all') return { jobsiteGroupMap: {} as Record<string, string[]>, sortedJobsiteKeys: [] as string[] };
+    const map: Record<string, string[]> = {};
+    for (const key of sortedJobsiteIds) {
+      const jsId = key.split('|')[0];
+      if (!map[jsId]) map[jsId] = [];
+      map[jsId].push(key);
+    }
+    const sorted = Object.keys(map).sort((a, b) => {
+      const na = locations.find(l => l.id === a)?.name || '';
+      const nb = locations.find(l => l.id === b)?.name || '';
+      return na.localeCompare(nb);
+    });
+    return { jobsiteGroupMap: map, sortedJobsiteKeys: sorted };
+  }, [sortedJobsiteIds, selectedJobsiteId, locations]);
 
   const handleApprove = async (request: Request, approvedQty: number, note?: string) => {
     setIsProcessing(true);
@@ -454,11 +472,11 @@ export const RequestsView = () => {
           ))}
         </div>
 
-        <div className={filter === 'delivered' ? 'space-y-3' : 'space-y-8'}>
-          {sortedJobsiteIds.map((groupKey) => {
+        {(() => {
+          const renderGroup = (groupKey: string) => {
             const [jobsiteId, batchId] = groupKey.split('|');
             const jobsite = locations.find(l => l.id === jobsiteId);
-            const jobsiteRequests = groupedByJobsite[groupKey].sort((a, b) => {
+            const jobsiteRequests = (groupedByJobsite[groupKey] || []).slice().sort((a, b) => {
               const itemA = items.find(i => i.id === a.itemId)?.name || '';
               const itemB = items.find(i => i.id === b.itemId)?.name || '';
               return itemA.localeCompare(itemB);
@@ -485,7 +503,7 @@ export const RequestsView = () => {
                   return bT - aT;
                 })[0];
 
-              const isExpanded = expandedDRs.has(groupKey);
+              const isDRExpanded = expandedDRs.has(groupKey);
 
               return (
                 <Card
@@ -499,7 +517,9 @@ export const RequestsView = () => {
                 >
                   <div className="flex justify-between items-start">
                     <div className="flex-1 min-w-0">
-                      <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest truncate">{jobsite?.name || 'Unknown Jobsite'}</p>
+                      {selectedJobsiteId === 'all' && (
+                        <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest truncate">{jobsite?.name || 'Unknown Jobsite'}</p>
+                      )}
                       <p className="text-base font-bold text-blue-600 uppercase tracking-widest mt-0.5">DR# {batchId?.replace('DR#', '') || 'Unassigned'}</p>
                       <p className="text-xs font-semibold text-gray-700 mt-1">{receiverDisplay}</p>
                       <p className="text-[10px] text-gray-400 mt-0.5">
@@ -507,11 +527,11 @@ export const RequestsView = () => {
                       </p>
                     </div>
                     <div className="ml-3 text-gray-400 shrink-0 mt-1">
-                      {isExpanded ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
+                      {isDRExpanded ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
                     </div>
                   </div>
 
-                  {isExpanded && (
+                  {isDRExpanded && (
                     <div className="mt-4 pt-4 border-t border-gray-100 space-y-3">
                       {jobsiteRequests.map(r => {
                         const item = items.find(i => i.id === r.itemId);
@@ -550,7 +570,9 @@ export const RequestsView = () => {
               <div key={groupKey} className="space-y-3">
                 <div className="flex justify-between items-center px-2">
                   <div className="flex flex-col">
-                    <h3 className="text-xs font-black text-gray-400 uppercase tracking-widest">{jobsite?.name || jobsiteId || 'Unknown Jobsite'}</h3>
+                    {selectedJobsiteId !== 'all' && (
+                      <h3 className="text-xs font-black text-gray-400 uppercase tracking-widest">{jobsite?.name || jobsiteId || 'Unknown Jobsite'}</h3>
+                    )}
                     {batchId && (
                       <span className="text-[16px] leading-[16px] font-bold text-blue-600 uppercase tracking-widest mt-0.5">DR# {batchId.replace('DR#', '')}</span>
                     )}
@@ -592,17 +614,15 @@ export const RequestsView = () => {
                   const isWarehouseman = profile?.role === 'warehouseman' || profile?.role === 'admin';
                   const canReceive = filter === 'for delivery' && profile?.role !== 'warehouseman';
                   const isEditable = filter === 'for delivery' && isWarehouseman && !canReceive;
-                  
+
                   return (
-                    <Card 
-                      key={r.id} 
+                    <Card
+                      key={r.id}
                       className={cn(
                         "p-4 transition-all duration-200",
                         isEditable && "cursor-pointer hover:border-orange-200 hover:bg-orange-50/30 active:scale-[0.99] group"
                       )}
-                      onClick={() => {
-                        if (isEditable) setAdjustingRequest(r);
-                      }}
+                      onClick={() => { if (isEditable) setAdjustingRequest(r); }}
                     >
                       <div className="flex justify-between items-start mb-2">
                         <div className="flex-1 min-w-0">
@@ -615,14 +635,10 @@ export const RequestsView = () => {
                             )}
                           </div>
                           {r.variant && Object.keys(r.variant).length > 0 && (
-                            <p className="text-xs text-gray-500 uppercase font-bold">
-                              {Object.values(r.variant).join(', ')}
-                            </p>
+                            <p className="text-xs text-gray-500 uppercase font-bold">{Object.values(r.variant).join(', ')}</p>
                           )}
                           {r.customSpec && (
-                            <p className="text-[10px] text-purple-600 uppercase font-bold">
-                              {r.customSpec}
-                            </p>
+                            <p className="text-[10px] text-purple-600 uppercase font-bold">{r.customSpec}</p>
                           )}
                         </div>
                         <div className="text-right">
@@ -673,72 +689,44 @@ export const RequestsView = () => {
                         <div className="flex space-x-2 self-end shrink-0">
                           {filter === 'pending' && (profile?.role === 'admin' || profile?.role === 'manager' || profile?.role === 'warehouseman' || profile?.role === 'engineer') && (
                             <>
-                              <button 
-                                onClick={() => setRejectingRequest(r)}
-                                className="w-10 h-10 flex items-center justify-center text-red-600 bg-red-50 rounded-xl active:scale-95 transition-transform"
-                              >
+                              <button onClick={() => setRejectingRequest(r)} className="w-10 h-10 flex items-center justify-center text-red-600 bg-red-50 rounded-xl active:scale-95 transition-transform">
                                 <X size={16} />
                               </button>
-                              <button 
-                                onClick={() => setEditingRequest(r)}
-                                className="w-10 h-10 flex items-center justify-center text-blue-600 bg-blue-50 rounded-xl active:scale-95 transition-transform"
-                              >
+                              <button onClick={() => setEditingRequest(r)} className="w-10 h-10 flex items-center justify-center text-blue-600 bg-blue-50 rounded-xl active:scale-95 transition-transform">
                                 <Check size={16} />
                               </button>
                             </>
                           )}
                           {filter === 'approved' && (profile?.role === 'warehouseman' || profile?.role === 'admin') && (
                             <button
-                              onClick={() => {
-                                setPickingRequests([r]);
-                                setIsPickingModalOpen(true);
-                              }}
+                              onClick={() => { setPickingRequests([r]); setIsPickingModalOpen(true); }}
                               className="px-4 h-10 bg-blue-600 text-white rounded-xl text-xs font-black uppercase tracking-widest active:scale-95 transition-transform"
                             >
                               Pick
                             </button>
                           )}
                           {canCancelApproval(r) && (
-                            <button
-                              onClick={() => handleCancelApproval(r.id)}
-                              title="Cancel Approval"
-                              className="w-9 h-9 flex items-center justify-center text-gray-400 bg-gray-50 rounded-xl active:scale-95 transition-transform hover:text-amber-500 hover:bg-amber-50"
-                            >
+                            <button onClick={() => handleCancelApproval(r.id)} title="Cancel Approval" className="w-9 h-9 flex items-center justify-center text-gray-400 bg-gray-50 rounded-xl active:scale-95 transition-transform hover:text-amber-500 hover:bg-amber-50">
                               <RotateCcw size={14} />
                             </button>
                           )}
                           {filter === 'for delivery' && profile?.role !== 'warehouseman' && (
-                            <button
-                              onClick={() => handleReceive([r.id])}
-                              className="px-4 h-10 bg-blue-600 text-white rounded-xl text-xs font-black uppercase tracking-widest active:scale-95 transition-transform"
-                            >
+                            <button onClick={() => handleReceive([r.id])} className="px-4 h-10 bg-blue-600 text-white rounded-xl text-xs font-black uppercase tracking-widest active:scale-95 transition-transform">
                               Receive
                             </button>
                           )}
                           {canUnpick(r) && (
-                            <button
-                              onClick={() => handleUnpick(r.id)}
-                              title="Unpick"
-                              className="w-9 h-9 flex items-center justify-center text-gray-400 bg-gray-50 rounded-xl active:scale-95 transition-transform hover:text-amber-500 hover:bg-amber-50"
-                            >
+                            <button onClick={() => handleUnpick(r.id)} title="Unpick" className="w-9 h-9 flex items-center justify-center text-gray-400 bg-gray-50 rounded-xl active:scale-95 transition-transform hover:text-amber-500 hover:bg-amber-50">
                               <RotateCcw size={14} />
                             </button>
                           )}
                           {canEditRequest(r) && (
-                            <button
-                              onClick={() => openEditModal(r)}
-                              title="Edit request"
-                              className="w-9 h-9 flex items-center justify-center text-gray-400 bg-gray-50 rounded-xl active:scale-95 transition-transform hover:text-blue-500 hover:bg-blue-50"
-                            >
+                            <button onClick={() => openEditModal(r)} title="Edit request" className="w-9 h-9 flex items-center justify-center text-gray-400 bg-gray-50 rounded-xl active:scale-95 transition-transform hover:text-blue-500 hover:bg-blue-50">
                               <Pencil size={14} />
                             </button>
                           )}
                           {canDeleteRequest(r) && (
-                            <button
-                              onClick={() => setDeletingRequest(r)}
-                              title="Delete request"
-                              className="w-9 h-9 flex items-center justify-center text-gray-400 bg-gray-50 rounded-xl active:scale-95 transition-transform hover:text-red-500 hover:bg-red-50"
-                            >
+                            <button onClick={() => setDeletingRequest(r)} title="Delete request" className="w-9 h-9 flex items-center justify-center text-gray-400 bg-gray-50 rounded-xl active:scale-95 transition-transform hover:text-red-500 hover:bg-red-50">
                               <Trash2 size={14} />
                             </button>
                           )}
@@ -749,29 +737,73 @@ export const RequestsView = () => {
                 })}
               </div>
             );
-          })}
+          };
 
-          {sortedJobsiteIds.length === 0 && (
-            <div className="flex flex-col items-center justify-center py-20 text-center space-y-4">
-              <div className="w-16 h-16 bg-gray-50 rounded-full flex items-center justify-center text-gray-300">
-                <Search size={32} />
-              </div>
-              <div>
-                <h3 className="text-sm font-bold text-gray-900">No {filter === 'for_pull_out' ? 'pull-out' : filter} requests</h3>
-                <p className="text-xs text-gray-500 mt-1">Everything is up to date!</p>
-              </div>
-            </div>
-          )}
+          const isEmpty = selectedJobsiteId === 'all' ? sortedJobsiteKeys.length === 0 : sortedJobsiteIds.length === 0;
 
-          {requestsHasMore && (
-            <button
-              onClick={loadMoreRequests}
-              className="w-full py-4 text-sm font-bold text-blue-600 hover:bg-blue-50 rounded-2xl transition-colors"
-            >
-              Load More
-            </button>
-          )}
-        </div>
+          return (
+            <>
+              {selectedJobsiteId === 'all' ? (
+                <div className="space-y-3">
+                  {sortedJobsiteKeys.map(jsId => {
+                    const jobsite = locations.find(l => l.id === jsId);
+                    const groupKeys = jobsiteGroupMap[jsId] || [];
+                    const totalCount = groupKeys.reduce((sum, k) => sum + (groupedByJobsite[k]?.length || 0), 0);
+                    const isJsExpanded = expandedJobsites.has(jsId);
+
+                    return (
+                      <div key={jsId} className="rounded-2xl border border-gray-100 bg-white shadow-sm overflow-hidden">
+                        <button
+                          className="w-full flex items-center justify-between px-4 py-3.5 cursor-pointer active:bg-gray-50 transition-colors"
+                          onClick={() => setExpandedJobsites(prev => {
+                            const next = new Set(prev);
+                            if (next.has(jsId)) next.delete(jsId); else next.add(jsId);
+                            return next;
+                          })}
+                        >
+                          <div className="flex items-center space-x-2 min-w-0">
+                            <MapPin size={14} className="text-gray-400 shrink-0" />
+                            <span className="text-sm font-black text-gray-900 truncate">{jobsite?.name || 'Unknown Jobsite'}</span>
+                            <span className="text-xs font-bold text-gray-400">({totalCount})</span>
+                          </div>
+                          {isJsExpanded ? <ChevronDown size={16} className="text-gray-400 shrink-0" /> : <ChevronRight size={16} className="text-gray-400 shrink-0" />}
+                        </button>
+
+                        {isJsExpanded && (
+                          <div className={cn("px-4 pb-4 border-t border-gray-100", filter === 'delivered' ? 'space-y-3 pt-3' : 'space-y-8 pt-4')}>
+                            {groupKeys.map(renderGroup)}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : (
+                <div className={filter === 'delivered' ? 'space-y-3' : 'space-y-8'}>
+                  {sortedJobsiteIds.map(renderGroup)}
+                </div>
+              )}
+
+              {isEmpty && (
+                <div className="flex flex-col items-center justify-center py-20 text-center space-y-4">
+                  <div className="w-16 h-16 bg-gray-50 rounded-full flex items-center justify-center text-gray-300">
+                    <Search size={32} />
+                  </div>
+                  <div>
+                    <h3 className="text-sm font-bold text-gray-900">No {filter === 'for_pull_out' ? 'pull-out' : filter} requests</h3>
+                    <p className="text-xs text-gray-500 mt-1">Everything is up to date!</p>
+                  </div>
+                </div>
+              )}
+
+              {requestsHasMore && (
+                <button onClick={loadMoreRequests} className="w-full py-4 text-sm font-bold text-blue-600 hover:bg-blue-50 rounded-2xl transition-colors">
+                  Load More
+                </button>
+              )}
+            </>
+          );
+        })()}
       </div>
 
       <Modal isOpen={!!rejectingRequest} onClose={() => setRejectingRequest(null)} title="Reject Request">

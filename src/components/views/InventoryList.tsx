@@ -574,7 +574,13 @@ export const InventoryList = () => {
       const mainCatName = mainCat?.name || 'Uncategorized';
       mainCatSet.set(mainCatId, mainCatName);
       const variantLabel = inv.variant ? Object.values(inv.variant).join(', ') : '';
-      const avgCost = item.averageCost || 0;
+      let avgCost = item.averageCost || 0;
+      if (inv.variant) {
+        const variantConfig = item.variantConfigs?.find(
+          vc => normalizeVariant(vc.variant) === normalizeVariant(inv.variant)
+        );
+        if (variantConfig?.averageCost !== undefined) avgCost = variantConfig.averageCost;
+      }
       const uomSymbol = uoms.find(u => u.id === item.uomId || u.symbol === item.uomId)?.symbol || item.uomId;
       rows.push({ itemName: item.name, variant: variantLabel, avgCost, qty: inv.quantity, uomSymbol, totalCost: inv.quantity * avgCost, mainCatId, mainCatName });
     });

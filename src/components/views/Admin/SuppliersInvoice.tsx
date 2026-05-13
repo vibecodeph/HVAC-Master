@@ -152,18 +152,13 @@ export const SuppliersInvoiceView = () => {
     [locations]
   );
 
-  // Unique suppliers derived from POs
-  const supplierOptions = useMemo(() => {
-    const map = new Map<string, string>();
-    purchaseOrders.forEach(po => {
-      if (po.supplierId && !map.has(po.supplierId)) {
-        map.set(po.supplierId, po.supplierName || po.supplierId);
-      }
-    });
-    return [...map.entries()]
-      .map(([id, name]) => ({ id, name }))
-      .sort((a, b) => a.name.localeCompare(b.name));
-  }, [purchaseOrders]);
+  const supplierOptions = useMemo(() =>
+    locations
+      .filter(l => l.type === 'supplier' && l.isActive)
+      .map(l => ({ id: l.id, name: l.name }))
+      .sort((a, b) => a.name.localeCompare(b.name)),
+    [locations]
+  );
 
   const filteredSupplierOptions = useMemo(() => {
     const q = supplierSearch.toLowerCase();

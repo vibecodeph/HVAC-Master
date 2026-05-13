@@ -13,7 +13,7 @@ import { RequestForm, ItemForm } from '../Forms';
 import { Item, Location, Transaction, Inventory } from '../../types';
 import { Pagination } from '../common/Pagination';
 import { useDebounce } from '../../hooks/useDebounce';
-import { subscribeToTransactions } from '../../services/inventoryService';
+import { subscribeToTransactions, addInventoryToJobsite } from '../../services/inventoryService';
 
 const ITEMS_PER_PAGE = 10;
 
@@ -325,7 +325,16 @@ export const InventoryList = () => {
     window.addEventListener('storage', handleStorageChange);
     return () => window.removeEventListener('storage', handleStorageChange);
   }, [storageKey]);
-  const [isAddModalOpen, setIsAddModalOpen] = useState(false);
+  const [isAddInventoryOpen, setIsAddInventoryOpen] = useState(false);
+  const [addInvItemId, setAddInvItemId] = useState('');
+  const [addInvItemSearch, setAddInvItemSearch] = useState('');
+  const [addInvShowSearch, setAddInvShowSearch] = useState(false);
+  const [addInvVariant, setAddInvVariant] = useState<Record<string, string>>({});
+  const [addInvQty, setAddInvQty] = useState('1');
+  const [addInvPrice, setAddInvPrice] = useState('');
+  const [addInvSubmitting, setAddInvSubmitting] = useState(false);
+  const [addInvError, setAddInvError] = useState<string | null>(null);
+  const [addInvSuccess, setAddInvSuccess] = useState<string | null>(null);
   const [editingItem, setEditingItem] = useState<Item | null>(null);
   const [requestingItem, setRequestingItem] = useState<{ 
     item: Item; 
@@ -780,14 +789,21 @@ export const InventoryList = () => {
         </div>
       </div>
       
-      {profile?.role === 'admin' && (
-        <button 
-          onClick={() => setIsAddModalOpen(true)}
-          className="fixed bottom-20 right-4 w-14 h-14 bg-blue-600 text-white rounded-full shadow-lg flex items-center justify-center active:scale-90 transition-transform z-50"
-        >
-          <Plus size={28} />
-        </button>
-      )}
+      {profile?.role === 'admin' && (() => {
+        const canAdd = !!selectedJobsiteId && selectedJobsiteId !== 'all';
+        return (
+          <button
+            onClick={() => canAdd && setIsAddInventoryOpen(true)}
+            title={!canAdd ? 'Select a single jobsite to add inventory' : 'Add to Inventory'}
+            className={cn(
+              "fixed bottom-20 right-4 w-14 h-14 rounded-full shadow-lg flex items-center justify-center transition-all z-50",
+              canAdd ? "bg-blue-600 text-white active:scale-90 cursor-pointer" : "bg-gray-300 text-gray-100 cursor-not-allowed"
+            )}
+          >
+            <Plus size={28} />
+          </button>
+        );
+      })()}
 
       <Modal isOpen={!!requestingItem} onClose={() => setRequestingItem(null)} title="Request Item">
         {requestingItem && (
@@ -808,17 +824,184 @@ export const InventoryList = () => {
         )}
       </Modal>
 
-      <Modal isOpen={isAddModalOpen} onClose={() => setIsAddModalOpen(false)} title="New Inventory Item">
-        <ItemForm 
-          uoms={uoms} 
-          categories={categories} 
-          locations={locations}
-          items={items}
-          onComplete={() => {
-            setIsAddModalOpen(false);
-            setCurrentPage(1);
-          }} 
-        />
+      <Modal
+        isOpen={isAddInventoryOpen}
+        onClose={() => {
+          setIsAddInventoryOpen(false);
+          setAddInvItemId('');
+          setAddInvItemSearch('');
+          setAddInvVariant({});
+          setAddInvQty('1');
+          setAddInvPrice('');
+          setAddInvError(null);
+          setAddInvSuccess(null);
+        }}
+        title="Add to Inventory"
+      >
+        {(() => {
+          const addInvItem = items.find(i => i.id === addInvItemId);
+          const baseUom = uoms.find(u => u.id === addInvItem?.uomId || u.symbol === addInvItem?.uomId);
+          const matchingItems = addInvItemSearch
+            ? items.filter(i => i.isActive && i.name.toLowerCase().includes(addInvItemSearch.toLowerCase())).slice(0, 8)
+            : [];
+          const jobsite = locations.find(l => l.id === selectedJobsiteId);
+
+          const handleSubmit = async () => {
+            if (!addInvItemId) { setAddInvError('Please select an item'); return; }
+            const qty = parseFloat(addInvQty);
+            if (!addInvQty || isNaN(qty) || qty <= 0) { setAddInvError('Quantity must be greater than 0'); return; }
+            if (addInvItem?.requireVariant && (!addInvItem.variantAttributes?.length || Object.keys(addInvVariant).length === 0)) {
+              setAddInvError('Please select a variant'); return;
+            }
+            const price = addInvPrice !== '' ? parseFloat(addInvPrice) : undefined;
+            if (addInvPrice !== '' && (isNaN(price!) || price! < 0)) { setAddInvError('Invalid price'); return; }
+
+            setAddInvSubmitting(true);
+            setAddInvError(null);
+            try {
+              await addInventoryToJobsite(
+                addInvItemId,
+                selectedJobsiteId,
+                Object.keys(addInvVariant).length > 0 ? addInvVariant : undefined,
+                qty,
+                price
+              );
+              setAddInvSuccess(`Added ${qty} ${baseUom?.symbol || ''} of ${addInvItem?.name} to ${jobsite?.name}`);
+              setAddInvItemId('');
+              setAddInvItemSearch('');
+              setAddInvVariant({});
+              setAddInvQty('1');
+              setAddInvPrice('');
+            } catch (e: any) {
+              setAddInvError(e.message || 'Failed to add inventory');
+            } finally {
+              setAddInvSubmitting(false);
+            }
+          };
+
+          return (
+            <div className="space-y-4">
+              {addInvSuccess && (
+                <div className="bg-green-50 border border-green-100 p-3 rounded-xl flex items-center justify-between">
+                  <p className="text-xs font-bold text-green-700">{addInvSuccess}</p>
+                  <button onClick={() => setAddInvSuccess(null)} className="text-green-400 hover:text-green-600 ml-2"><X size={14} /></button>
+                </div>
+              )}
+              {addInvError && (
+                <div className="bg-red-50 border border-red-100 p-3 rounded-xl flex items-center justify-between">
+                  <p className="text-xs font-bold text-red-700">{addInvError}</p>
+                  <button onClick={() => setAddInvError(null)} className="text-red-400 hover:text-red-600 ml-2"><X size={14} /></button>
+                </div>
+              )}
+
+              <div className="space-y-1.5">
+                <label className="text-xs font-bold text-gray-400 uppercase tracking-wider">Item</label>
+                {addInvItem && (
+                  <div className="p-2.5 bg-blue-50 rounded-xl border border-blue-100 flex items-center justify-between">
+                    <p className="text-sm font-bold text-gray-900">{addInvItem.name}</p>
+                    <button onClick={() => { setAddInvItemId(''); setAddInvVariant({}); }} className="text-gray-400 hover:text-red-500 ml-2"><X size={14} /></button>
+                  </div>
+                )}
+                <div className="relative">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={14} />
+                  <input
+                    value={addInvItemSearch}
+                    onChange={e => { setAddInvItemSearch(e.target.value); setAddInvShowSearch(true); }}
+                    onFocus={() => setAddInvShowSearch(true)}
+                    onBlur={() => setTimeout(() => setAddInvShowSearch(false), 150)}
+                    placeholder="Search item..."
+                    className="w-full pl-8 pr-4 py-2 bg-gray-100 rounded-xl text-sm outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                  {addInvShowSearch && matchingItems.length > 0 && (
+                    <div className="absolute top-full left-0 right-0 bg-white shadow-xl rounded-xl border border-gray-100 z-10 max-h-48 overflow-y-auto mt-1">
+                      {matchingItems.map(i => (
+                        <button
+                          key={i.id}
+                          onMouseDown={() => {
+                            setAddInvItemId(i.id);
+                            setAddInvVariant({});
+                            setAddInvItemSearch('');
+                            setAddInvShowSearch(false);
+                          }}
+                          className="w-full p-3 text-left text-sm font-medium hover:bg-gray-50 transition-colors"
+                        >
+                          {i.name}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {addInvItem?.variantAttributes && addInvItem.variantAttributes.length > 0 && (
+                <div className="space-y-1.5">
+                  <label className="text-xs font-bold text-gray-400 uppercase tracking-wider">Variant</label>
+                  <div className="grid grid-cols-2 gap-2">
+                    {addInvItem.variantAttributes.map(attr => (
+                      <div key={attr.name} className="space-y-1">
+                        <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">{attr.name}</label>
+                        <select
+                          value={addInvVariant[attr.name] || ''}
+                          onChange={e => setAddInvVariant(prev => ({ ...prev, [attr.name]: e.target.value }))}
+                          className="w-full p-2 bg-gray-100 rounded-xl text-xs outline-none focus:ring-2 focus:ring-blue-500"
+                        >
+                          <option value="">Select...</option>
+                          {attr.values.map(v => <option key={v} value={v}>{v}</option>)}
+                        </select>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {addInvItem && (
+                <div className="space-y-1.5">
+                  <label className="text-xs font-bold text-gray-400 uppercase tracking-wider">Base UOM</label>
+                  <div className="px-3 py-2 bg-gray-50 rounded-xl text-sm text-gray-500 font-medium">
+                    {baseUom?.name || addInvItem.uomId}
+                  </div>
+                </div>
+              )}
+
+              <div className="space-y-1.5">
+                <label className="text-xs font-bold text-gray-400 uppercase tracking-wider">
+                  Quantity{baseUom ? ` (${baseUom.symbol})` : ''}
+                </label>
+                <input
+                  type="number"
+                  min="0.001"
+                  step="any"
+                  value={addInvQty}
+                  onChange={e => setAddInvQty(e.target.value)}
+                  className="w-full p-2.5 bg-gray-100 rounded-xl text-sm outline-none focus:ring-2 focus:ring-blue-500"
+                />
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-xs font-bold text-gray-400 uppercase tracking-wider">Unit Price (optional)</label>
+                <input
+                  type="number"
+                  min="0"
+                  step="any"
+                  value={addInvPrice}
+                  onChange={e => setAddInvPrice(e.target.value)}
+                  placeholder="Leave blank to keep existing"
+                  className="w-full p-2.5 bg-gray-100 rounded-xl text-sm outline-none focus:ring-2 focus:ring-blue-500"
+                />
+              </div>
+
+              <div className="flex space-x-3 pt-1">
+                <button
+                  onClick={handleSubmit}
+                  disabled={addInvSubmitting || !addInvItemId}
+                  className="flex-1 py-3.5 bg-blue-600 text-white rounded-2xl font-bold uppercase tracking-widest text-xs active:scale-95 transition-transform disabled:opacity-50 flex items-center justify-center gap-2"
+                >
+                  {addInvSubmitting ? <Loader2 className="animate-spin" size={16} /> : 'Add to Inventory'}
+                </button>
+              </div>
+            </div>
+          );
+        })()}
       </Modal>
 
       <Modal isOpen={!!editingItem} onClose={() => setEditingItem(null)} title="Edit Item">

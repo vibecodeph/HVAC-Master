@@ -3213,6 +3213,59 @@ export const consumeInventory = async (
   }
 };
 
+export const addInventoryToJobsite = async (
+  itemId: string,
+  locationId: string,
+  variant: Record<string, string> | undefined,
+  quantity: number,
+  unitPrice?: number
+) => {
+  const userId = auth.currentUser?.uid;
+  if (!userId) throw new Error('User not authenticated');
+
+  try {
+    await runTransaction(db, async (txn) => {
+      const invRef = getInventoryRef(itemId, locationId, variant, undefined, undefined, undefined);
+      const itemRef = doc(db, 'items', itemId);
+
+      const [invDoc, itemDoc] = await Promise.all([txn.get(invRef), txn.get(itemRef)]);
+      if (!itemDoc.exists()) throw new Error('Item not found');
+      const itemData = itemDoc.data() as Item;
+
+      const existingQty = invDoc.exists() ? (invDoc.data()?.quantity || 0) : 0;
+      const newQty = existingQty + quantity;
+
+      if (invDoc.exists()) {
+        txn.update(invRef, { quantity: newQty });
+      } else {
+        txn.set(invRef, {
+          itemId,
+          locationId,
+          variant: variant && Object.keys(variant).length > 0 ? variant : null,
+          quantity: newQty,
+        });
+      }
+
+      const newTotalQty = (itemData.totalQuantity || 0) + quantity;
+      const itemUpdate: any = {
+        totalQuantity: isNaN(newTotalQty) ? (itemData.totalQuantity || 0) : newTotalQty,
+      };
+
+      if (unitPrice !== undefined && unitPrice > 0) {
+        const currentAvgCost = itemData.averageCost || 0;
+        const currentTotal = itemData.totalQuantity || 0;
+        const weighted = ((currentTotal * currentAvgCost) + (quantity * unitPrice)) / (currentTotal + quantity);
+        itemUpdate.averageCost = isNaN(weighted) ? unitPrice : weighted;
+      }
+
+      txn.update(itemRef, itemUpdate);
+    });
+  } catch (error) {
+    handleFirestoreError(error, OperationType.WRITE, 'inventory');
+    throw error;
+  }
+};
+
 export const clearLocationInventory = async (
   locationId: string,
   locationName: string,

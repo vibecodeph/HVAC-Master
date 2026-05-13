@@ -246,7 +246,7 @@ service cloud.firestore {
              hasOnlyAllowedFields(['itemId', 'quantity', 'type', 'timestamp', 'userId', 'uomId', 'conversionFactor', 'baseQuantity', 'notes', 'fromLocationId', 'toLocationId', 'variant', 'customSpec', 'serialNumber', 'propertyNumber', 'userName', 'totalPrice', 'unitPrice', 'poNumber', 'poId', 'supplierInvoice', 'supplierDR', 'batchId', 'requestIds', 'updatedAt', 'createdBy', 'updatedBy', 'createdAt', 'status', 'floor', 'room']) &&
              data.itemId is string && data.itemId.size() <= 50 &&
              data.quantity is number &&
-             data.type in ['delivery', 'usage', 'return', 'adjustment', 'pick', 'consumption'] &&
+             data.type in ['delivery', 'usage', 'return', 'adjustment', 'pick', 'consumption', 'supplier_invoice'] &&
              data.timestamp is timestamp &&
              data.userId == request.auth.uid &&
              data.uomId is string && data.uomId.size() <= 50 &&
@@ -638,6 +638,10 @@ service cloud.firestore {
     }
 
     match /supplier_pricing/{docId} {
+      allow read, write: if isAdmin();
+    }
+
+    match /suppliers_invoices/{invoiceId} {
       allow read, write: if isAdmin();
     }
 

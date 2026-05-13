@@ -136,7 +136,7 @@ export interface Transaction {
   uomId: string; // UOM used for this transaction
   conversionFactor: number; // Factor used to convert to base UOM
   baseQuantity: number; // Quantity in base UOM (quantity * conversionFactor)
-  type: 'delivery' | 'usage' | 'return' | 'adjustment' | 'pick' | 'consumption';
+  type: 'delivery' | 'usage' | 'return' | 'adjustment' | 'pick' | 'consumption' | 'supplier_invoice';
   floor?: string;
   room?: string;
   totalPrice?: number; // Total price for this transaction
@@ -316,6 +316,33 @@ export interface SupplierPricingRecord {
   conversionFactor: number;
   poId: string;
   poNumber: string;
+}
+
+export interface SuppliersInvoiceItem {
+  itemId: string;
+  itemName: string;
+  variant?: Record<string, string>;
+  quantity: number;
+  unitPrice: number;
+  uomId: string;
+  uomSymbol: string;
+  totalPrice: number;
+}
+
+export interface SuppliersInvoice {
+  id: string;
+  supplierName: string;
+  billNumber: string;
+  purchaseDate: Timestamp;
+  items: SuppliersInvoiceItem[];
+  locationId: string;
+  locationName: string;
+  totalAmount: number;
+  notes?: string;
+  createdBy: string;
+  createdAt: Timestamp;
+  updatedBy?: string;
+  updatedAt?: Timestamp;
 }
 
 export interface RBACRoleConfig {

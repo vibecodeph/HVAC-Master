@@ -1,8 +1,8 @@
 import React from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
-import { 
-  LayoutDashboard, Package, ArrowLeftRight, History, 
-  Settings, LogOut, X, Shield, Wrench, FileText 
+import {
+  LayoutDashboard, Package, ArrowLeftRight, History,
+  Settings, LogOut, X, Shield, Wrench, FileText, Receipt
 } from 'lucide-react';
 import { useAuth } from '../../App';
 import { cn } from '../../lib/utils';
@@ -21,6 +21,7 @@ export const Sidebar = () => {
     { label: 'Transactions', icon: History, path: '/transactions', adminOnly: true },
     { label: 'Team', icon: Shield, path: '/settings/manage/users', engineerAccess: true },
     { label: 'Purchase Orders', icon: FileText, path: '/purchase-orders', adminOnly: true },
+    { label: 'Supplier Invoices', icon: Receipt, path: '/supplier-invoices', adminOnly: true },
     { label: 'Settings', icon: Settings, path: '/settings', adminOnly: true },
   ].filter(item => {
     if (item.adminOnly) return profile?.role === 'admin';

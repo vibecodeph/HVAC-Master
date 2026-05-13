@@ -61,7 +61,7 @@ const cleanData = (data: any): any => {
   return clean;
 };
 
-const getInventoryRef = (
+export const getInventoryRef = (
   itemId: string,
   locationId: string,
   variant?: Record<string, string>,

@@ -9,6 +9,18 @@ import { getInventoryRef } from './inventoryService';
 
 export type InvoiceFormData = Omit<SuppliersInvoice, 'id' | 'createdAt' | 'createdBy' | 'updatedAt' | 'updatedBy'>;
 
+const cleanData = (data: any): any => {
+  if (data === null || data === undefined || typeof data !== 'object') return data;
+  if (Array.isArray(data)) return data.map(cleanData);
+  const proto = Object.getPrototypeOf(data);
+  if (proto !== Object.prototype && proto !== null) return data;
+  return Object.fromEntries(
+    Object.entries(data)
+      .filter(([, v]) => v !== undefined)
+      .map(([k, v]) => [k, cleanData(v)])
+  );
+};
+
 const cleanItem = (item: SuppliersInvoiceItem): SuppliersInvoiceItem => ({
   itemId: item.itemId,
   itemName: item.itemName,
@@ -63,14 +75,14 @@ export const createSuppliersInvoice = async (data: InvoiceFormData): Promise<str
       ]);
 
       // Write invoice doc
-      txn.set(invoiceRef, {
+      txn.set(invoiceRef, cleanData({
         ...data,
         items: data.items.map(cleanItem),
         id: invoiceRef.id,
         invoiceStatus: data.payment ? 'paid' : 'unpaid',
         createdBy: userId,
         createdAt: serverTimestamp(),
-      });
+      }));
 
       // Process each item
       for (const item of data.items) {

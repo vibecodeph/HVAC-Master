@@ -105,7 +105,7 @@ export const MetadataAdminView = () => {
       case 'locations': 
         const sortedLocations = [...locations]
           .filter(l => {
-            const matchesActivity = showInactive || l.isActive;
+            const matchesActivity = showInactive ? !l.isActive : l.isActive;
             const matchesType = filterType === 'all' || l.type === filterType;
             return matchesActivity && matchesType;
           })

@@ -849,7 +849,7 @@ export const InventoryList = () => {
           const handleSubmit = async () => {
             if (!addInvItemId) { setAddInvError('Please select an item'); return; }
             const qty = parseFloat(addInvQty);
-            if (!addInvQty || isNaN(qty) || qty <= 0) { setAddInvError('Quantity must be greater than 0'); return; }
+            if (!addInvQty || isNaN(qty) || qty === 0) { setAddInvError('Quantity cannot be zero'); return; }
             if (addInvItem?.requireVariant && (!addInvItem.variantAttributes?.length || Object.keys(addInvVariant).length === 0)) {
               setAddInvError('Please select a variant'); return;
             }
@@ -965,11 +965,10 @@ export const InventoryList = () => {
 
               <div className="space-y-1.5">
                 <label className="text-xs font-bold text-gray-400 uppercase tracking-wider">
-                  Quantity{baseUom ? ` (${baseUom.symbol})` : ''}
+                  Quantity{baseUom ? ` (${baseUom.symbol})` : ''} — negative to reduce
                 </label>
                 <input
                   type="number"
-                  min="0.001"
                   step="any"
                   value={addInvQty}
                   onChange={e => setAddInvQty(e.target.value)}

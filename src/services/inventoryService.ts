@@ -3234,6 +3234,7 @@ export const addInventoryToJobsite = async (
 
       const existingQty = invDoc.exists() ? (invDoc.data()?.quantity || 0) : 0;
       const newQty = existingQty + quantity;
+      if (newQty < 0) throw new Error(`Cannot reduce inventory below 0. Current quantity: ${existingQty}, you entered: ${quantity}`);
 
       if (invDoc.exists()) {
         txn.update(invRef, { quantity: newQty });

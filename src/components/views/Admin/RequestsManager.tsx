@@ -28,11 +28,11 @@ const STATUS_COLORS: Record<string, string> = {
   'for delivery': 'bg-purple-100 text-purple-700',
   delivered: 'bg-emerald-100 text-emerald-700',
   rejected: 'bg-red-100 text-red-700',
-  cancelled: 'bg-gray-100 text-gray-500',
+  for_pull_out: 'bg-orange-100 text-orange-700',
 };
 
 const SENSITIVE_FIELDS = ['status', 'batchId'];
-const ALL_STATUSES = ['pending', 'approved', 'for delivery', 'delivered', 'rejected', 'cancelled'] as const;
+const ALL_STATUSES = ['pending', 'approved', 'for delivery', 'delivered', 'rejected', 'for_pull_out'] as const;
 
 type BulkFieldType = 'status' | 'text' | 'user';
 interface BulkFieldDef {
@@ -839,7 +839,7 @@ export const RequestsManager = () => {
                   req.status === 'for delivery' && "border-l-2 border-l-purple-400",
                   req.status === 'delivered' && "border-l-2 border-l-emerald-400",
                   req.status === 'rejected' && "border-l-2 border-l-red-400",
-                  req.status === 'cancelled' && "border-l-2 border-l-gray-300",
+                  req.status === 'for_pull_out' && "border-l-2 border-l-orange-400",
                 )}>
                   {/* Card header */}
                   <div className="flex items-start justify-between gap-2 p-3 pb-2 bg-gray-50 border-b border-gray-100">

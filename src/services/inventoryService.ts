@@ -3158,6 +3158,22 @@ export const consumeInventory = async (
       if (!itemDoc.exists()) throw new Error('Item not found');
       const itemData = itemDoc.data() as Item;
 
+      // Read BOM component items to find tools
+      const toolComponents: Array<{ itemId: string; uomId: string; pullQty: number }> = [];
+      if (itemData.components && itemData.components.length > 0) {
+        for (const component of itemData.components) {
+          const compRef = doc(db, 'items', component.itemId);
+          const compDoc = await dbTransaction.get(compRef);
+          if (compDoc.exists() && (compDoc.data() as Item).isTool) {
+            toolComponents.push({
+              itemId: component.itemId,
+              uomId: (compDoc.data() as Item).uomId,
+              pullQty: component.quantity * baseQuantity,
+            });
+          }
+        }
+      }
+
       const currentQty = invDoc.data()?.quantity || 0;
 
       dbTransaction.set(invRef, {
@@ -3175,6 +3191,21 @@ export const consumeInventory = async (
 
       const transactionRef = doc(collection(db, 'transactions'));
       dbTransaction.set(transactionRef, transactionData);
+
+      for (const tool of toolComponents) {
+        const requestRef = doc(collection(db, 'requests'));
+        dbTransaction.set(requestRef, {
+          itemId: tool.itemId,
+          requestedQty: tool.pullQty,
+          uomId: tool.uomId,
+          jobsiteId: locationId,
+          status: 'for_pull_out',
+          requestorId: userId,
+          requestorName: userName || '',
+          timestamp: Timestamp.now(),
+          linkedConsumptionId: transactionRef.id,
+        });
+      }
     });
   } catch (error) {
     handleFirestoreError(error, OperationType.WRITE, 'transactions/inventory');

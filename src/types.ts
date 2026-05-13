@@ -164,7 +164,7 @@ export interface Request {
   uomId: string;
   jobsiteId: string;
   sourceLocationId?: string;
-  status: 'pending' | 'approved' | 'for delivery' | 'delivered' | 'rejected' | 'cancelled';
+  status: 'pending' | 'approved' | 'for delivery' | 'delivered' | 'rejected' | 'for_pull_out';
   requestorId: string;
   requestorName?: string;
   approverId?: string;
@@ -178,9 +178,10 @@ export interface Request {
   deliveredAt?: Timestamp;
   receiverId?: string;
   receiverName?: string;
-  backorderOf?: string; // Original request ID if this is a backorder
-  batchId?: string; // Grouped delivery ID
-  serialNumbers?: string[]; // Selected serial numbers for tools
+  backorderOf?: string;
+  batchId?: string;
+  serialNumbers?: string[];
+  linkedConsumptionId?: string;
   adjustmentHistory?: {
     oldQty: number;
     newQty: number;

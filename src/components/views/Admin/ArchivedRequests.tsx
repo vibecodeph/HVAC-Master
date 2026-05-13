@@ -165,7 +165,7 @@ export const ArchivedRequestsView = () => {
               <option value="">All Statuses</option>
               <option value="delivered">Delivered</option>
               <option value="rejected">Rejected</option>
-              <option value="cancelled">Cancelled</option>
+              <option value="for_pull_out">Pull-Out</option>
             </select>
             <input
               type="date"

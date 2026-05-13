@@ -4,7 +4,7 @@ import { ChevronRight, ChevronDown, MapPin, Truck, Wrench, Package, ArrowLeftRig
 import { motion, AnimatePresence } from 'motion/react';
 import { useAuth, useData } from '../../App';
 import { serverTimestamp } from 'firebase/firestore';
-import { approveRequest, updateRequest, deleteRequest, recordBulkPick, recordBulkReceive, approveBulkRequests, updateDeliveryQuantity, cancelRequest, cancelApproval, unpickRequest } from '../../services/inventoryService';
+import { approveRequest, updateRequest, deleteRequest, recordBulkPick, recordBulkReceive, approveBulkRequests, updateDeliveryQuantity, cancelApproval, unpickRequest } from '../../services/inventoryService';
 import { cn } from '../../lib/utils';
 import { Header } from '../common/Header';
 import { Card } from '../common/Card';
@@ -17,7 +17,7 @@ export const RequestsView = () => {
   const { items, locations, uoms, users, inventory, requests, loadMoreRequests, requestsHasMore } = useData();
   const [searchParams] = useSearchParams();
   const tabParam = searchParams.get('tab');
-  const [filter, setFilter] = useState<'pending' | 'approved' | 'for delivery' | 'delivered' | 'rejected' | 'cancelled'>('pending');
+  const [filter, setFilter] = useState<'pending' | 'approved' | 'for delivery' | 'delivered' | 'rejected' | 'for_pull_out'>('pending');
   const [hasSetDefaultFilter, setHasSetDefaultFilter] = useState(false);
 
   useEffect(() => {
@@ -41,7 +41,6 @@ export const RequestsView = () => {
   const [isPickingModalOpen, setIsPickingModalOpen] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [requestToCancel, setRequestToCancel] = useState<string | null>(null);
   const [editRequestForm, setEditRequestForm] = useState<Request | null>(null);
   const [editItemId, setEditItemId] = useState('');
   const [editVariant, setEditVariant] = useState<Record<string, string>>({});
@@ -205,20 +204,6 @@ export const RequestsView = () => {
     } catch (error: any) {
       console.error(error);
       setError(error.message || 'Failed to reject request');
-    } finally {
-      setIsProcessing(false);
-    }
-  };
-
-  const handleCancel = async (requestId: string) => {
-    setIsProcessing(true);
-    setError(null);
-    try {
-      await cancelRequest(requestId);
-      setRequestToCancel(null);
-    } catch (error) {
-      console.error(error);
-      setError('Failed to cancel request');
     } finally {
       setIsProcessing(false);
     }
@@ -455,7 +440,7 @@ export const RequestsView = () => {
         </div>
 
         <div className="flex bg-gray-100 p-1 rounded-2xl mb-6 overflow-x-auto no-scrollbar">
-          {(['pending', 'approved', 'for delivery', 'delivered', 'rejected', 'cancelled'] as const).map((s) => (
+          {(['pending', 'approved', 'for delivery', 'delivered', 'rejected', 'for_pull_out'] as const).map((s) => (
             <button
               key={s}
               onClick={() => setFilter(s)}
@@ -464,7 +449,7 @@ export const RequestsView = () => {
                 filter === s ? "bg-white text-blue-600 shadow-sm" : "text-gray-500"
               )}
             >
-              {s}
+              {s === 'for_pull_out' ? 'Pull-Out' : s}
             </button>
           ))}
         </div>
@@ -686,33 +671,6 @@ export const RequestsView = () => {
                           )}
                         </div>
                         <div className="flex space-x-2 self-end shrink-0">
-                          {filter === 'pending' && r.requestorId === profile?.uid && (
-                            requestToCancel === r.id ? (
-                              <div className="flex items-center space-x-2 bg-red-50 p-1 rounded-xl border border-red-100 ml-2">
-                                <span className="text-[10px] font-black text-red-600 uppercase tracking-tighter ml-1">Cancel?</span>
-                                <button 
-                                  onClick={() => handleCancel(r.id)}
-                                  className="px-3 h-8 bg-red-600 text-white rounded-lg text-[10px] font-black uppercase tracking-widest active:scale-95 transition-transform"
-                                >
-                                  Yes
-                                </button>
-                                <button 
-                                  onClick={() => setRequestToCancel(null)}
-                                  className="px-3 h-8 bg-gray-100 text-gray-500 rounded-lg text-[10px] font-black uppercase tracking-widest active:scale-95 transition-transform"
-                                >
-                                  No
-                                </button>
-                              </div>
-                            ) : (
-                              <button 
-                                onClick={() => setRequestToCancel(r.id)}
-                                className="w-10 h-10 flex items-center justify-center text-gray-400 bg-gray-50 rounded-xl active:scale-95 transition-transform hover:text-red-500"
-                                title="Cancel Request"
-                              >
-                                <X size={16} />
-                              </button>
-                            )
-                          )}
                           {filter === 'pending' && (profile?.role === 'admin' || profile?.role === 'manager' || profile?.role === 'warehouseman' || profile?.role === 'engineer') && (
                             <>
                               <button 
@@ -799,7 +757,7 @@ export const RequestsView = () => {
                 <Search size={32} />
               </div>
               <div>
-                <h3 className="text-sm font-bold text-gray-900">No {filter} requests</h3>
+                <h3 className="text-sm font-bold text-gray-900">No {filter === 'for_pull_out' ? 'pull-out' : filter} requests</h3>
                 <p className="text-xs text-gray-500 mt-1">Everything is up to date!</p>
               </div>
             </div>

@@ -33,7 +33,7 @@ const ItemCard = ({
   setConsumingItem,
 }: any) => {
   const [isExpanded, setIsExpanded] = useState(false);
-  const canConsume = !!selectedJobsiteId && selectedJobsiteId !== 'all';
+  const canConsume = !!selectedJobsiteId && selectedJobsiteId !== 'all' && !showRequestButton;
 
   return (
     <Card className="bg-white overflow-hidden border-gray-100 shadow-sm">
@@ -46,7 +46,7 @@ const ItemCard = ({
         onClick={() => {
           if (canConsume) setConsumingItem({ item, entries });
         }}
-        title={!canConsume ? "Select a single jobsite to consume items" : undefined}
+        title={showRequestButton ? "Disable request mode to consume items" : (!canConsume ? "Select a single jobsite to consume items" : undefined)}
       >
         <div className="flex items-center space-x-3 overflow-hidden">
           <div className={cn(

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { Search, MapPin, Wrench, Box, Truck, Target, AlertTriangle, Plus, X, ChevronDown, History, ArrowLeftRight, Package, Loader2, Pencil } from 'lucide-react';
+import { Search, MapPin, Wrench, Box, Truck, Target, AlertTriangle, Plus, X, ChevronDown, History, ArrowLeftRight, Package, Loader2, Pencil, FileDown, Printer } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { useAuth, useData } from '../../App';
 import { useIsMobile } from '../../hooks/useApp';
@@ -344,6 +344,8 @@ export const InventoryList = () => {
   const [currentPage, setCurrentPage] = useState(1);
   const [showRequestButton, setShowRequestButton] = useState(false);
   const [consumingItem, setConsumingItem] = useState<{ item: Item; entries: any[] } | null>(null);
+  const [isExportModalOpen, setIsExportModalOpen] = useState(false);
+  const [exportCategoryId, setExportCategoryId] = useState<string>('all');
 
   // Reset pagination when filters change
   useEffect(() => {
@@ -553,6 +555,120 @@ export const InventoryList = () => {
   const totalPages = Math.ceil(allDisplayItems.length / ITEMS_PER_PAGE);
   const paginatedItems = allDisplayItems.slice((currentPage - 1) * ITEMS_PER_PAGE, currentPage * ITEMS_PER_PAGE);
 
+  // Export data: all non-zero inventory at current jobsite
+  const { exportRows, exportMainCategories } = useMemo(() => {
+    if (!selectedJobsiteId || selectedJobsiteId === 'all') return { exportRows: [], exportMainCategories: [] };
+
+    const jobsiteInv = inventory.filter(inv => inv.locationId === selectedJobsiteId && inv.quantity > 0);
+
+    type ExportRow = { itemName: string; variant: string; avgCost: number; qty: number; uomSymbol: string; totalCost: number; mainCatId: string; mainCatName: string };
+    const rows: ExportRow[] = [];
+    const mainCatSet = new Map<string, string>();
+
+    jobsiteInv.forEach(inv => {
+      const item = items.find(i => i.id === inv.itemId && i.isActive);
+      if (!item) return;
+      const cat = categories.find(c => c.id === item.categoryId);
+      const mainCat = cat?.parentId ? categories.find(c => c.id === cat.parentId) : cat;
+      const mainCatId = mainCat?.id || 'uncategorized';
+      const mainCatName = mainCat?.name || 'Uncategorized';
+      mainCatSet.set(mainCatId, mainCatName);
+      const variantLabel = inv.variant ? Object.values(inv.variant).join(', ') : '';
+      const avgCost = item.averageCost || 0;
+      const uomSymbol = uoms.find(u => u.id === item.uomId || u.symbol === item.uomId)?.symbol || item.uomId;
+      rows.push({ itemName: item.name, variant: variantLabel, avgCost, qty: inv.quantity, uomSymbol, totalCost: inv.quantity * avgCost, mainCatId, mainCatName });
+    });
+
+    rows.sort((a, b) => a.mainCatName.localeCompare(b.mainCatName) || a.itemName.localeCompare(b.itemName));
+    const exportMainCategories = [...mainCatSet.entries()].map(([id, name]) => ({ id, name })).sort((a, b) => a.name.localeCompare(b.name));
+    return { exportRows: rows, exportMainCategories };
+  }, [selectedJobsiteId, inventory, items, categories, uoms]);
+
+  const filteredExportRows = exportCategoryId === 'all'
+    ? exportRows
+    : exportRows.filter(r => r.mainCatId === exportCategoryId);
+
+  const handleExportCSV = () => {
+    const jobsite = locations.find(l => l.id === selectedJobsiteId);
+    const catLabel = exportCategoryId === 'all' ? 'All' : (exportMainCategories.find(c => c.id === exportCategoryId)?.name || 'All');
+    const date = new Date().toISOString().slice(0, 10);
+    const filename = `Inventory_${jobsite?.name || 'Site'}_${catLabel}_${date}.csv`.replace(/\s+/g, '_');
+    const header = ['Item', 'Variant', 'Avg Cost (₱)', 'Qty', 'UOM', 'Total Cost (₱)'];
+    const csvRows = [header, ...filteredExportRows.map(r => [
+      `"${r.itemName.replace(/"/g, '""')}"`,
+      `"${r.variant.replace(/"/g, '""')}"`,
+      r.avgCost.toFixed(2),
+      r.qty,
+      r.uomSymbol,
+      r.totalCost.toFixed(2),
+    ])];
+    const blob = new Blob([csvRows.map(r => r.join(',')).join('\n')], { type: 'text/csv' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = filename; a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const handlePrint = () => {
+    const jobsite = locations.find(l => l.id === selectedJobsiteId);
+    const catLabel = exportCategoryId === 'all' ? 'All Categories' : (exportMainCategories.find(c => c.id === exportCategoryId)?.name || 'All Categories');
+    const date = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
+    const totalQty = filteredExportRows.reduce((s, r) => s + r.qty, 0);
+    const totalCost = filteredExportRows.reduce((s, r) => s + r.totalCost, 0);
+
+    // Group rows by category for print
+    const grouped: Record<string, typeof filteredExportRows> = {};
+    filteredExportRows.forEach(r => {
+      if (!grouped[r.mainCatName]) grouped[r.mainCatName] = [];
+      grouped[r.mainCatName].push(r);
+    });
+
+    const tableRows = Object.entries(grouped).map(([catName, rows]) => `
+      <tr class="cat-header"><td colspan="5">${catName}</td></tr>
+      ${rows.map(r => `<tr>
+        <td>${r.itemName}</td>
+        <td>${r.variant || '—'}</td>
+        <td style="text-align:right">₱${r.avgCost.toFixed(2)}</td>
+        <td style="text-align:right">${r.qty} ${r.uomSymbol}</td>
+        <td style="text-align:right">₱${r.totalCost.toFixed(2)}</td>
+      </tr>`).join('')}
+    `).join('');
+
+    const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Inventory – ${jobsite?.name}</title>
+    <style>
+      body { font-family: Arial, sans-serif; font-size: 11px; margin: 24px; }
+      h2 { margin: 0 0 4px; font-size: 16px; }
+      .meta { color: #666; margin-bottom: 16px; font-size: 11px; }
+      table { width: 100%; border-collapse: collapse; }
+      th { background: #111; color: #fff; padding: 6px 8px; text-align: left; font-size: 10px; text-transform: uppercase; letter-spacing: .05em; }
+      th:nth-child(3), th:nth-child(4), th:nth-child(5) { text-align: right; }
+      td { padding: 5px 8px; border-bottom: 1px solid #eee; }
+      tr.cat-header td { background: #f3f4f6; font-weight: bold; font-size: 10px; text-transform: uppercase; letter-spacing: .08em; padding: 6px 8px; border-bottom: none; }
+      .footer { margin-top: 16px; font-size: 11px; color: #444; }
+      .footer strong { font-size: 13px; color: #111; }
+    </style></head><body>
+    <h2>${jobsite?.name || 'Inventory'}</h2>
+    <div class="meta">${catLabel} · ${date}</div>
+    <table>
+      <thead><tr>
+        <th>Item</th><th>Variant</th>
+        <th style="text-align:right">Avg Cost</th>
+        <th style="text-align:right">Qty</th>
+        <th style="text-align:right">Total Cost</th>
+      </tr></thead>
+      <tbody>${tableRows}</tbody>
+    </table>
+    <div class="footer">
+      ${filteredExportRows.length} item${filteredExportRows.length !== 1 ? 's' : ''} &nbsp;·&nbsp;
+      Total value: <strong>₱${totalCost.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong>
+    </div>
+    <script>window.onload = () => { window.print(); }<\/script>
+    </body></html>`;
+
+    const w = window.open('', '_blank');
+    if (w) { w.document.write(html); w.document.close(); }
+  };
+
   return (
     <div className="pb-20">
       <Header title="Inventory" />
@@ -569,7 +685,7 @@ export const InventoryList = () => {
               className="w-full pl-10 pr-10 py-3 bg-gray-100 border-none rounded-2xl text-sm font-medium focus:ring-2 focus:ring-blue-500 outline-none"
             />
             {searchTerm && (
-              <button 
+              <button
                 onClick={() => setSearchTerm('')}
                 className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 p-1"
               >
@@ -577,6 +693,21 @@ export const InventoryList = () => {
               </button>
             )}
           </div>
+          {(['admin', 'manager', 'engineer'] as const).includes(profile?.role as any) && (() => {
+            const canExport = !!selectedJobsiteId && selectedJobsiteId !== 'all';
+            return (
+              <button
+                onClick={() => canExport && setIsExportModalOpen(true)}
+                title={!canExport ? 'Select a single jobsite to export' : 'Export / Print'}
+                className={cn(
+                  "w-12 h-12 rounded-2xl flex items-center justify-center flex-shrink-0 transition-all",
+                  canExport ? "bg-gray-900 text-white active:scale-90" : "bg-gray-100 text-gray-300 cursor-not-allowed"
+                )}
+              >
+                <FileDown size={18} />
+              </button>
+            );
+          })()}
         </div>
         
         <div className="flex space-x-2">
@@ -1001,6 +1132,57 @@ export const InventoryList = () => {
             </div>
           );
         })()}
+      </Modal>
+
+      <Modal
+        isOpen={isExportModalOpen}
+        onClose={() => { setIsExportModalOpen(false); setExportCategoryId('all'); }}
+        title="Export / Print Inventory"
+      >
+        <div className="space-y-4">
+          <div className="space-y-1.5">
+            <label className="text-xs font-bold text-gray-400 uppercase tracking-wider">Category</label>
+            <select
+              value={exportCategoryId}
+              onChange={e => setExportCategoryId(e.target.value)}
+              className="w-full p-2.5 bg-gray-100 rounded-xl text-sm outline-none focus:ring-2 focus:ring-blue-500"
+            >
+              <option value="all">All Categories</option>
+              {exportMainCategories.map(c => (
+                <option key={c.id} value={c.id}>{c.name}</option>
+              ))}
+            </select>
+          </div>
+
+          {filteredExportRows.length === 0 ? (
+            <div className="py-8 text-center">
+              <p className="text-xs font-bold text-gray-400 uppercase tracking-widest">No items to export</p>
+            </div>
+          ) : (
+            <div className="py-2 px-3 bg-gray-50 rounded-xl">
+              <p className="text-xs text-gray-500 font-medium">{filteredExportRows.length} item{filteredExportRows.length !== 1 ? 's' : ''} · Total value: <span className="font-bold text-gray-900">₱{filteredExportRows.reduce((s, r) => s + r.totalCost, 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span></p>
+            </div>
+          )}
+
+          <div className="flex space-x-3 pt-1">
+            <button
+              onClick={handleExportCSV}
+              disabled={filteredExportRows.length === 0}
+              className="flex-1 py-3.5 bg-gray-900 text-white rounded-2xl font-bold uppercase tracking-widest text-xs active:scale-95 transition-transform disabled:opacity-30 flex items-center justify-center gap-2"
+            >
+              <FileDown size={14} />
+              Export CSV
+            </button>
+            <button
+              onClick={handlePrint}
+              disabled={filteredExportRows.length === 0}
+              className="flex-1 py-3.5 bg-blue-600 text-white rounded-2xl font-bold uppercase tracking-widest text-xs active:scale-95 transition-transform disabled:opacity-30 flex items-center justify-center gap-2"
+            >
+              <Printer size={14} />
+              Print
+            </button>
+          </div>
+        </div>
       </Modal>
 
       <Modal isOpen={!!editingItem} onClose={() => setEditingItem(null)} title="Edit Item">

@@ -283,7 +283,8 @@ export interface PurchaseOrder {
   terms?: string;
   deliverTo?: string;
   status: 'draft' | 'sent' | 'partially_received' | 'received' | 'cancelled';
-  paymentStatus?: 'unpaid' | 'processing' | 'prepared' | 'paid';
+  paymentStatus?: 'unpaid' | 'processing' | 'prepared' | 'paid' | 'partially_paid' | 'fully_paid';
+  amountPaid?: number;
   items?: PurchaseOrderItem[];
   discount?: number; // Added PO-level discount
   discountType?: 'amount' | 'percentage'; // Added PO-level discount type
@@ -329,9 +330,30 @@ export interface SuppliersInvoiceItem {
   totalPrice: number;
 }
 
+export interface LinkedPO {
+  poId: string;
+  poNumber: string;
+  amount: number;
+}
+
+export interface InvoicePayment {
+  method: 'cash' | 'check' | 'bank_transfer' | 'credit_card';
+  amount: number;
+  netAmount: number;
+  deductions: {
+    tax: number;
+    other: Array<{ type: string; amount: number }>;
+  };
+  paymentDate: Timestamp;
+  chequeNumber?: string;
+  bankName?: string;
+  status: 'recorded';
+}
+
 export interface SuppliersInvoice {
   id: string;
   supplierName: string;
+  supplierId?: string;
   billNumber: string;
   purchaseDate: Timestamp;
   items: SuppliersInvoiceItem[];
@@ -339,6 +361,9 @@ export interface SuppliersInvoice {
   locationName: string;
   totalAmount: number;
   notes?: string;
+  linkedPOs?: LinkedPO[];
+  payment?: InvoicePayment;
+  invoiceStatus?: 'unpaid' | 'paid';
   createdBy: string;
   createdAt: Timestamp;
   updatedBy?: string;

@@ -38,6 +38,7 @@ export const createSuppliersInvoice = async (data: InvoiceFormData): Promise<str
 
   try {
     const invoiceRef = doc(collection(db, 'suppliers_invoices'));
+    const linkedPOs = data.linkedPOs || [];
 
     await runTransaction(db, async txn => {
       // Collect all unique refs
@@ -48,13 +49,17 @@ export const createSuppliersInvoice = async (data: InvoiceFormData): Promise<str
         invRefMap.set(r.path, r);
         itemDocRefMap.set(item.itemId, doc(db, 'items', item.itemId));
       });
+      const poRefMap = new Map<string, DocumentReference>();
+      linkedPOs.forEach(lp => poRefMap.set(lp.poId, doc(db, 'purchase_orders', lp.poId)));
 
       // Read all
       const invSnaps = new Map<string, any>();
       const itemDocSnaps = new Map<string, any>();
+      const poSnaps = new Map<string, any>();
       await Promise.all([
         ...[...invRefMap.entries()].map(async ([k, r]) => invSnaps.set(k, await txn.get(r))),
         ...[...itemDocRefMap.entries()].map(async ([k, r]) => itemDocSnaps.set(k, await txn.get(r))),
+        ...[...poRefMap.entries()].map(async ([k, r]) => poSnaps.set(k, await txn.get(r))),
       ]);
 
       // Write invoice doc
@@ -62,6 +67,7 @@ export const createSuppliersInvoice = async (data: InvoiceFormData): Promise<str
         ...data,
         items: data.items.map(cleanItem),
         id: invoiceRef.id,
+        invoiceStatus: data.payment ? 'paid' : 'unpaid',
         createdBy: userId,
         createdAt: serverTimestamp(),
       });
@@ -138,6 +144,31 @@ export const createSuppliersInvoice = async (data: InvoiceFormData): Promise<str
           userId,
           userName,
         });
+      }
+
+      // Update linked PO payment status if payment recorded
+      if (data.payment && linkedPOs.length > 0) {
+        const totalLinkedAmt = linkedPOs.reduce((s, lp) => {
+          const snap = poSnaps.get(lp.poId);
+          return s + (snap?.exists() ? (snap.data()?.totalAmount || 0) : 0);
+        }, 0);
+
+        for (const linkedPO of linkedPOs) {
+          const snap = poSnaps.get(linkedPO.poId);
+          if (!snap?.exists()) continue;
+          const poData = snap.data();
+          const poTotal = poData.totalAmount || 0;
+          const proportion = totalLinkedAmt > 0 ? poTotal / totalLinkedAmt : 1;
+          const allocated = data.payment.amount * proportion;
+          const newPaid = (poData.amountPaid || 0) + allocated;
+          const newStatus = newPaid >= poTotal ? 'fully_paid' : newPaid > 0 ? 'partially_paid' : 'unpaid';
+          txn.update(poRefMap.get(linkedPO.poId)!, {
+            amountPaid: newPaid,
+            paymentStatus: newStatus,
+            updatedAt: serverTimestamp(),
+            updatedBy: userId,
+          });
+        }
       }
     });
 

@@ -9,6 +9,14 @@ import { getInventoryRef } from './inventoryService';
 
 export type InvoiceFormData = Omit<SuppliersInvoice, 'id' | 'createdAt' | 'createdBy' | 'updatedAt' | 'updatedBy'>;
 
+const getConvFactor = (itemSnap: any, uomId: string): number => {
+  if (!itemSnap?.exists()) return 1;
+  const d = itemSnap.data();
+  if (!d || d.uomId === uomId) return 1;
+  const conv = (d.uomConversions || []).find((c: any) => c.uomId === uomId);
+  return conv?.factor > 0 ? conv.factor : 1;
+};
+
 const cleanData = (data: any): any => {
   if (data === null || data === undefined || typeof data !== 'object') return data;
   if (Array.isArray(data)) return data.map(cleanData);
@@ -79,7 +87,7 @@ export const createSuppliersInvoice = async (data: InvoiceFormData): Promise<str
         ...data,
         items: data.items.map(cleanItem),
         id: invoiceRef.id,
-        invoiceStatus: data.payment ? 'paid' : 'unpaid',
+        invoiceStatus: data.invoiceStatus || 'for_processing',
         createdBy: userId,
         createdAt: serverTimestamp(),
       }));
@@ -91,8 +99,10 @@ export const createSuppliersInvoice = async (data: InvoiceFormData): Promise<str
       const itemCostToAdd = new Map<string, number>();
       for (const item of data.items) {
         const path = getInventoryRef(item.itemId, data.locationId, item.variant).path;
-        invNetDelta.set(path, (invNetDelta.get(path) || 0) + item.quantity);
-        itemQtyToAdd.set(item.itemId, (itemQtyToAdd.get(item.itemId) || 0) + item.quantity);
+        const convFactor = getConvFactor(itemDocSnaps.get(item.itemId), item.uomId);
+        const baseQty = item.quantity * convFactor;
+        invNetDelta.set(path, (invNetDelta.get(path) || 0) + baseQty);
+        itemQtyToAdd.set(item.itemId, (itemQtyToAdd.get(item.itemId) || 0) + baseQty);
         itemCostToAdd.set(item.itemId, (itemCostToAdd.get(item.itemId) || 0) + item.quantity * item.unitPrice);
       }
 
@@ -173,6 +183,7 @@ export const createSuppliersInvoice = async (data: InvoiceFormData): Promise<str
           unitPrice: item.unitPrice,
           totalPrice: item.totalPrice,
           supplierInvoice: data.billNumber,
+          invoiceId: invoiceRef.id,
           notes: `Supplier: ${data.supplierName} — Bill#: ${data.billNumber}`,
           timestamp: serverTimestamp(),
           userId,
@@ -246,15 +257,17 @@ export const updateSuppliersInvoice = async (
         ...[...itemDocRefMap.entries()].map(async ([k, r]) => itemDocSnaps.set(k, await txn.get(r))),
       ]);
 
-      // Compute net inventory delta per ref (new - old)
+      // Compute net inventory delta per ref (new - old), quantities in base UOM
       const invNetDelta = new Map<string, number>();
       invoice.items.forEach(item => {
         const path = getInventoryRef(item.itemId, invoice.locationId, item.variant).path;
-        invNetDelta.set(path, (invNetDelta.get(path) || 0) - item.quantity);
+        const convFactor = getConvFactor(itemDocSnaps.get(item.itemId), item.uomId);
+        invNetDelta.set(path, (invNetDelta.get(path) || 0) - item.quantity * convFactor);
       });
       newData.items.forEach(item => {
         const path = getInventoryRef(item.itemId, newData.locationId, item.variant).path;
-        invNetDelta.set(path, (invNetDelta.get(path) || 0) + item.quantity);
+        const convFactor = getConvFactor(itemDocSnaps.get(item.itemId), item.uomId);
+        invNetDelta.set(path, (invNetDelta.get(path) || 0) + item.quantity * convFactor);
       });
 
       // Apply inventory changes + create transaction records
@@ -300,6 +313,7 @@ export const updateSuppliersInvoice = async (
             unitPrice: sourceItem.unitPrice,
             totalPrice: Math.abs(delta) * sourceItem.unitPrice,
             supplierInvoice: newData.billNumber,
+            invoiceId: invoice.id,
             notes: `Edit — Supplier: ${newData.supplierName} — Bill#: ${newData.billNumber}`,
             timestamp: serverTimestamp(),
             userId,
@@ -308,10 +322,16 @@ export const updateSuppliersInvoice = async (
         }
       }
 
-      // Compute net totalQuantity delta per itemId + averageCost
+      // Compute net totalQuantity delta per itemId + averageCost (all quantities in base UOM)
       const itemQtyDelta = new Map<string, number>();
-      invoice.items.forEach(i => itemQtyDelta.set(i.itemId, (itemQtyDelta.get(i.itemId) || 0) - i.quantity));
-      newData.items.forEach(i => itemQtyDelta.set(i.itemId, (itemQtyDelta.get(i.itemId) || 0) + i.quantity));
+      invoice.items.forEach(i => {
+        const convFactor = getConvFactor(itemDocSnaps.get(i.itemId), i.uomId);
+        itemQtyDelta.set(i.itemId, (itemQtyDelta.get(i.itemId) || 0) - i.quantity * convFactor);
+      });
+      newData.items.forEach(i => {
+        const convFactor = getConvFactor(itemDocSnaps.get(i.itemId), i.uomId);
+        itemQtyDelta.set(i.itemId, (itemQtyDelta.get(i.itemId) || 0) + i.quantity * convFactor);
+      });
 
       for (const [itemId, delta] of itemQtyDelta) {
         if (delta === 0) continue;
@@ -325,13 +345,15 @@ export const updateSuppliersInvoice = async (
 
         if (delta > 0) {
           const addedItems = newData.items.filter(i => i.itemId === itemId);
-          const removedQty = invoice.items.filter(i => i.itemId === itemId).reduce((s, i) => s + i.quantity, 0);
-          const baseQty = Math.max(0, currentTotal - removedQty);
-          const addedQty = addedItems.reduce((s, i) => s + i.quantity, 0);
+          const removedBaseQty = invoice.items
+            .filter(i => i.itemId === itemId)
+            .reduce((s, i) => s + i.quantity * getConvFactor(itemDocSnaps.get(i.itemId), i.uomId), 0);
+          const qtyBefore = Math.max(0, currentTotal - removedBaseQty);
+          const addedBaseQty = addedItems.reduce((s, i) => s + i.quantity * getConvFactor(itemDocSnaps.get(i.itemId), i.uomId), 0);
           const addedCost = addedItems.reduce((s, i) => s + i.quantity * i.unitPrice, 0);
-          const totalForAvg = baseQty + addedQty;
+          const totalForAvg = qtyBefore + addedBaseQty;
           if (totalForAvg > 0) {
-            const newAvg = ((baseQty * currentAvg) + addedCost) / totalForAvg;
+            const newAvg = ((qtyBefore * currentAvg) + addedCost) / totalForAvg;
             update.averageCost = isNaN(newAvg) ? currentAvg : newAvg;
           }
         }
@@ -349,6 +371,7 @@ export const updateSuppliersInvoice = async (
         locationName: newData.locationName,
         totalAmount: newData.totalAmount,
         notes: newData.notes || null,
+        invoiceStatus: newData.invoiceStatus || 'for_processing',
         updatedBy: userId,
         updatedAt: serverTimestamp(),
       });
@@ -389,11 +412,12 @@ export const deleteSuppliersInvoice = async (invoice: SuppliersInvoice): Promise
         ...[...poRefMap.entries()].map(async ([k, r]) => poSnaps.set(k, await txn.get(r))),
       ]);
 
-      // Accumulate inventory qty to remove per ref
+      // Accumulate inventory qty to remove per ref (in base UOM)
       const invQtyToRemove = new Map<string, number>();
       invoice.items.forEach(item => {
         const path = getInventoryRef(item.itemId, invoice.locationId, item.variant).path;
-        invQtyToRemove.set(path, (invQtyToRemove.get(path) || 0) + item.quantity);
+        const convFactor = getConvFactor(itemDocSnaps.get(item.itemId), item.uomId);
+        invQtyToRemove.set(path, (invQtyToRemove.get(path) || 0) + item.quantity * convFactor);
       });
 
       for (const [path, qty] of invQtyToRemove) {
@@ -404,9 +428,12 @@ export const deleteSuppliersInvoice = async (invoice: SuppliersInvoice): Promise
         }
       }
 
-      // Accumulate totalQuantity to remove per itemId
+      // Accumulate totalQuantity to remove per itemId (in base UOM)
       const itemQtyToRemove = new Map<string, number>();
-      invoice.items.forEach(i => itemQtyToRemove.set(i.itemId, (itemQtyToRemove.get(i.itemId) || 0) + i.quantity));
+      invoice.items.forEach(i => {
+        const convFactor = getConvFactor(itemDocSnaps.get(i.itemId), i.uomId);
+        itemQtyToRemove.set(i.itemId, (itemQtyToRemove.get(i.itemId) || 0) + i.quantity * convFactor);
+      });
 
       for (const [itemId, qty] of itemQtyToRemove) {
         const snap = itemDocSnaps.get(itemId);
@@ -450,6 +477,18 @@ export const deleteSuppliersInvoice = async (invoice: SuppliersInvoice): Promise
       }
     } catch {
       // Non-blocking — pricing records may be left as historical data
+    }
+
+    // Best-effort cleanup of transaction records linked to this invoice
+    try {
+      const txSnap = await getDocs(query(collection(db, 'transactions'), where('invoiceId', '==', invoice.id)));
+      if (!txSnap.empty) {
+        const batch = writeBatch(db);
+        txSnap.docs.forEach(d => batch.delete(d.ref));
+        await batch.commit();
+      }
+    } catch {
+      // Non-blocking — transaction records may be left as historical data
     }
   } catch (error) {
     handleFirestoreError(error, OperationType.DELETE, `suppliers_invoices/${invoice.id}`);

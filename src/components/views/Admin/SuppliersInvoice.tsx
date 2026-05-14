@@ -97,7 +97,11 @@ export const SuppliersInvoiceView = () => {
   const [paymentAmount, setPaymentAmount] = useState('');
   const [paymentDate, setPaymentDate] = useState(todayStr());
   const [chequeNumber, setChequeNumber] = useState('');
-  const [bankName, setBankName] = useState('');
+  const [chequeDate, setChequeDate] = useState(todayStr());
+  const [bank, setBank] = useState('BDO');
+  const [depositReference, setDepositReference] = useState('');
+  const [depositDate, setDepositDate] = useState(todayStr());
+  const [invoiceStatus, setInvoiceStatus] = useState<'for_processing' | 'with_cheque' | 'paid'>('for_processing');
   const [taxAmount, setTaxAmount] = useState('');
   const [otherDeductions, setOtherDeductions] = useState<OtherDeduction[]>([]);
 
@@ -214,7 +218,11 @@ export const SuppliersInvoiceView = () => {
     setPaymentAmount('');
     setPaymentDate(todayStr());
     setChequeNumber('');
-    setBankName('');
+    setChequeDate(todayStr());
+    setBank('BDO');
+    setDepositReference('');
+    setDepositDate(todayStr());
+    setInvoiceStatus('for_processing');
     setTaxAmount('');
     setOtherDeductions([]);
     setFormError(null);
@@ -248,7 +256,12 @@ export const SuppliersInvoiceView = () => {
     setPaymentAmount('');
     setPaymentDate(todayStr());
     setChequeNumber('');
-    setBankName('');
+    setChequeDate(todayStr());
+    setBank('BDO');
+    setDepositReference('');
+    setDepositDate(todayStr());
+    const existing = invoice.invoiceStatus;
+    setInvoiceStatus(existing === 'paid' ? 'paid' : existing === 'with_cheque' ? 'with_cheque' : 'for_processing');
     setTaxAmount('');
     setOtherDeductions([]);
     setFormError(null);
@@ -337,7 +350,17 @@ export const SuppliersInvoiceView = () => {
     if (enablePayment) {
       const amt = parseFloat(paymentAmount);
       if (!amt || amt <= 0) { setFormError('Payment amount must be greater than 0'); return; }
-      if (!paymentDate) { setFormError('Payment date is required'); return; }
+      if (paymentMethod === 'check') {
+        if (!bank) { setFormError('Bank is required for cheque payment'); return; }
+        if (!chequeNumber.trim()) { setFormError('Cheque number is required'); return; }
+        if (!chequeDate) { setFormError('Cheque date is required'); return; }
+      } else if (paymentMethod === 'bank_transfer') {
+        if (!bank) { setFormError('Bank is required for bank transfer'); return; }
+        if (!depositReference.trim()) { setFormError('Deposit reference is required'); return; }
+        if (!depositDate) { setFormError('Deposit date is required'); return; }
+      } else {
+        if (!paymentDate) { setFormError('Payment date is required'); return; }
+      }
       const tax = parseFloat(taxAmount) || 0;
       const others = otherDeductions.reduce((s, d) => s + (parseFloat(d.amount) || 0), 0);
       if (tax + others >= amt) { setFormError('Deductions cannot exceed payment amount'); return; }
@@ -372,6 +395,9 @@ export const SuppliersInvoiceView = () => {
       const amt = parseFloat(paymentAmount);
       const tax = parseFloat(taxAmount) || 0;
       const others = otherDeductions.reduce((s, d) => s + (parseFloat(d.amount) || 0), 0);
+      const effectiveDate = paymentMethod === 'check' ? chequeDate
+        : paymentMethod === 'bank_transfer' ? depositDate
+        : paymentDate;
       paymentData = {
         method: paymentMethod,
         amount: amt,
@@ -382,9 +408,17 @@ export const SuppliersInvoiceView = () => {
             .filter(d => d.type.trim() && parseFloat(d.amount) > 0)
             .map(d => ({ type: d.type.trim(), amount: parseFloat(d.amount) })),
         },
-        paymentDate: Timestamp.fromDate(new Date(paymentDate + 'T00:00:00')),
-        ...(paymentMethod === 'check' && chequeNumber.trim() ? { chequeNumber: chequeNumber.trim() } : {}),
-        ...(paymentMethod === 'bank_transfer' && bankName.trim() ? { bankName: bankName.trim() } : {}),
+        paymentDate: Timestamp.fromDate(new Date(effectiveDate + 'T00:00:00')),
+        ...(paymentMethod === 'check' ? {
+          bank,
+          chequeNumber: chequeNumber.trim(),
+          chequeDate: Timestamp.fromDate(new Date(chequeDate + 'T00:00:00')),
+        } : {}),
+        ...(paymentMethod === 'bank_transfer' ? {
+          bank,
+          depositReference: depositReference.trim(),
+          depositDate: Timestamp.fromDate(new Date(depositDate + 'T00:00:00')),
+        } : {}),
         status: 'recorded',
       };
     }
@@ -401,7 +435,7 @@ export const SuppliersInvoiceView = () => {
       notes: formNotes.trim() || undefined,
       linkedPOs: linkedPOsData.length > 0 ? linkedPOsData : undefined,
       payment: paymentData,
-      invoiceStatus: paymentData ? ('paid' as const) : ('unpaid' as const),
+      invoiceStatus,
     };
 
     setFormSubmitting(true);
@@ -803,34 +837,53 @@ export const SuppliersInvoiceView = () => {
                     </select>
                   </div>
 
-                  {/* Conditional fields */}
-                  {paymentMethod === 'check' && (
-                    <div className="space-y-1.5">
-                      <label className="text-xs font-bold text-gray-400 uppercase tracking-wider">Cheque Number</label>
-                      <input
-                        type="text"
-                        value={chequeNumber}
-                        onChange={e => setChequeNumber(e.target.value)}
-                        placeholder="e.g. 00012345"
-                        className="w-full p-2.5 bg-gray-100 rounded-xl text-sm outline-none focus:ring-2 focus:ring-blue-500"
-                      />
-                    </div>
-                  )}
-                  {paymentMethod === 'bank_transfer' && (
-                    <div className="space-y-1.5">
-                      <label className="text-xs font-bold text-gray-400 uppercase tracking-wider">Bank Name</label>
-                      <input
-                        type="text"
-                        value={bankName}
-                        onChange={e => setBankName(e.target.value)}
-                        placeholder="e.g. BDO"
-                        className="w-full p-2.5 bg-gray-100 rounded-xl text-sm outline-none focus:ring-2 focus:ring-blue-500"
-                      />
+                  {/* Conditional fields — Bank / Cheque or Reference / Date */}
+                  {(paymentMethod === 'check' || paymentMethod === 'bank_transfer') && (
+                    <div className="grid grid-cols-3 gap-3">
+                      <div className="space-y-1.5">
+                        <label className="text-xs font-bold text-gray-400 uppercase tracking-wider">Bank *</label>
+                        <select
+                          value={bank}
+                          onChange={e => setBank(e.target.value)}
+                          className="w-full p-2.5 bg-gray-100 rounded-xl text-sm outline-none focus:ring-2 focus:ring-blue-500"
+                        >
+                          <option value="BDO">BDO</option>
+                          <option value="UB">UB</option>
+                          <option value="MB">MB</option>
+                        </select>
+                      </div>
+                      <div className="space-y-1.5">
+                        <label className="text-xs font-bold text-gray-400 uppercase tracking-wider">
+                          {paymentMethod === 'check' ? 'Cheque # *' : 'Reference # *'}
+                        </label>
+                        <input
+                          type="text"
+                          value={paymentMethod === 'check' ? chequeNumber : depositReference}
+                          onChange={e => paymentMethod === 'check'
+                            ? setChequeNumber(e.target.value)
+                            : setDepositReference(e.target.value)}
+                          placeholder={paymentMethod === 'check' ? 'e.g. 00012345' : 'e.g. TXN-001'}
+                          className="w-full p-2.5 bg-gray-100 rounded-xl text-sm outline-none focus:ring-2 focus:ring-blue-500"
+                        />
+                      </div>
+                      <div className="space-y-1.5">
+                        <label className="text-xs font-bold text-gray-400 uppercase tracking-wider">
+                          {paymentMethod === 'check' ? 'Cheque Date *' : 'Deposit Date *'}
+                        </label>
+                        <input
+                          type="date"
+                          value={paymentMethod === 'check' ? chequeDate : depositDate}
+                          onChange={e => paymentMethod === 'check'
+                            ? setChequeDate(e.target.value)
+                            : setDepositDate(e.target.value)}
+                          className="w-full p-2.5 bg-gray-100 rounded-xl text-sm outline-none focus:ring-2 focus:ring-blue-500"
+                        />
+                      </div>
                     </div>
                   )}
 
-                  {/* Amount + Date */}
-                  <div className="grid grid-cols-2 gap-3">
+                  {/* Amount + Date (date only shown for Cash/CC) */}
+                  <div className={`grid gap-3 ${paymentMethod === 'cash' || paymentMethod === 'credit_card' ? 'grid-cols-2' : 'grid-cols-1'}`}>
                     <div className="space-y-1.5">
                       <label className="text-xs font-bold text-gray-400 uppercase tracking-wider">Amount *</label>
                       <input
@@ -848,15 +901,31 @@ export const SuppliersInvoiceView = () => {
                         </p>
                       )}
                     </div>
-                    <div className="space-y-1.5">
-                      <label className="text-xs font-bold text-gray-400 uppercase tracking-wider">Payment Date *</label>
-                      <input
-                        type="date"
-                        value={paymentDate}
-                        onChange={e => setPaymentDate(e.target.value)}
-                        className="w-full p-2.5 bg-gray-100 rounded-xl text-sm outline-none focus:ring-2 focus:ring-blue-500"
-                      />
-                    </div>
+                    {(paymentMethod === 'cash' || paymentMethod === 'credit_card') && (
+                      <div className="space-y-1.5">
+                        <label className="text-xs font-bold text-gray-400 uppercase tracking-wider">Payment Date *</label>
+                        <input
+                          type="date"
+                          value={paymentDate}
+                          onChange={e => setPaymentDate(e.target.value)}
+                          className="w-full p-2.5 bg-gray-100 rounded-xl text-sm outline-none focus:ring-2 focus:ring-blue-500"
+                        />
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Invoice Status */}
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-bold text-gray-400 uppercase tracking-wider">Invoice Status</label>
+                    <select
+                      value={invoiceStatus}
+                      onChange={e => setInvoiceStatus(e.target.value as typeof invoiceStatus)}
+                      className="w-full p-2.5 bg-gray-100 rounded-xl text-sm outline-none focus:ring-2 focus:ring-blue-500"
+                    >
+                      <option value="for_processing">For Processing</option>
+                      <option value="with_cheque">With Cheque</option>
+                      <option value="paid">Paid</option>
+                    </select>
                   </div>
 
                   {/* Deductions */}
@@ -926,6 +995,22 @@ export const SuppliersInvoiceView = () => {
             </Card>
           )}
 
+          {/* Invoice Status (edit mode) */}
+          {editingInvoice && (
+            <Card className="p-4 space-y-3">
+              <h3 className="text-[10px] font-black text-gray-400 uppercase tracking-[0.2em]">Invoice Status</h3>
+              <select
+                value={invoiceStatus}
+                onChange={e => setInvoiceStatus(e.target.value as typeof invoiceStatus)}
+                className="w-full p-2.5 bg-gray-100 rounded-xl text-sm outline-none focus:ring-2 focus:ring-blue-500"
+              >
+                <option value="for_processing">For Processing</option>
+                <option value="with_cheque">With Cheque</option>
+                <option value="paid">Paid</option>
+              </select>
+            </Card>
+          )}
+
           {/* Existing payment info in edit mode */}
           {editingInvoice?.payment && (
             <Card className="p-4 space-y-2">
@@ -936,6 +1021,15 @@ export const SuppliersInvoiceView = () => {
                   ₱{editingInvoice.payment.amount.toLocaleString('en-US', { minimumFractionDigits: 2 })}
                 </span>
               </div>
+              {editingInvoice.payment.bank && (
+                <p className="text-[10px] text-gray-400">Bank: {editingInvoice.payment.bank}</p>
+              )}
+              {editingInvoice.payment.chequeNumber && (
+                <p className="text-[10px] text-gray-400">Cheque #: {editingInvoice.payment.chequeNumber}</p>
+              )}
+              {editingInvoice.payment.depositReference && (
+                <p className="text-[10px] text-gray-400">Reference #: {editingInvoice.payment.depositReference}</p>
+              )}
               <p className="text-[10px] text-gray-400">
                 Net: ₱{editingInvoice.payment.netAmount.toLocaleString('en-US', { minimumFractionDigits: 2 })}
               </p>
@@ -1058,6 +1152,16 @@ export const SuppliersInvoiceView = () => {
                         {inv.invoiceStatus === 'paid' && (
                           <span className="text-[9px] px-2 py-0.5 bg-green-100 text-green-700 rounded-full font-bold uppercase tracking-wider">
                             Paid
+                          </span>
+                        )}
+                        {inv.invoiceStatus === 'with_cheque' && (
+                          <span className="text-[9px] px-2 py-0.5 bg-blue-100 text-blue-700 rounded-full font-bold uppercase tracking-wider">
+                            With Cheque
+                          </span>
+                        )}
+                        {(!inv.invoiceStatus || inv.invoiceStatus === 'for_processing') && (
+                          <span className="text-[9px] px-2 py-0.5 bg-orange-100 text-orange-700 rounded-full font-bold uppercase tracking-wider">
+                            For Processing
                           </span>
                         )}
                       </div>

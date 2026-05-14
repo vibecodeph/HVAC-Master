@@ -115,6 +115,7 @@ export interface Inventory {
   serialNumber?: string;
   propertyNumber?: string;
   quantity: number;
+  uomId?: string;
   unitPrice?: number;
   lastEditedBy?: string;
   lastEditedAt?: Timestamp;
@@ -151,6 +152,7 @@ export interface Transaction {
   poId?: string;
   supplierInvoice?: string;
   supplierDR?: string;
+  invoiceId?: string;
 }
 
 export interface Request {
@@ -346,7 +348,10 @@ export interface InvoicePayment {
   };
   paymentDate: Timestamp;
   chequeNumber?: string;
-  bankName?: string;
+  chequeDate?: Timestamp;
+  bank?: string;
+  depositReference?: string;
+  depositDate?: Timestamp;
   status: 'recorded';
 }
 
@@ -363,7 +368,7 @@ export interface SuppliersInvoice {
   notes?: string;
   linkedPOs?: LinkedPO[];
   payment?: InvoicePayment;
-  invoiceStatus?: 'unpaid' | 'paid';
+  invoiceStatus?: 'for_processing' | 'with_cheque' | 'paid';
   createdBy: string;
   createdAt: Timestamp;
   updatedBy?: string;

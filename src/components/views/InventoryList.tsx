@@ -386,8 +386,10 @@ export const InventoryList = () => {
       const isJobsiteOrWarehouse = l.type === 'jobsite' || l.type === 'warehouse';
       if (!isJobsiteOrWarehouse) return false;
       
-      if (profile?.role === 'admin') return true;
-      
+      if (profile?.role === 'admin' || profile?.role === 'manager' ||
+          profile?.role === 'warehouseman' || profile?.role === 'engineer' ||
+          profile?.role === 'worker') return l.isActive;
+
       return l.isActive && profile?.assignedLocationIds?.includes(l.id);
     });
 

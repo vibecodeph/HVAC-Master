@@ -5,7 +5,7 @@ import {
   recordTransaction, updateTransaction,
   addRequest, recordBulkPullout,
   recordBulkReceivePO,
-  addPOPayment, updatePOPayment, deletePOPayment, subscribeToPOPayments,
+  addPOPayment,
   getExistingDRForJobsite
 } from '../services/inventoryService';
 import { createPurchaseOrder, updatePurchaseOrder as updatePO } from '../services/purchaseOrderService';
@@ -19,8 +19,7 @@ import {
 import { useData } from '../App';
 import { Timestamp, serverTimestamp } from 'firebase/firestore';
 import { format } from 'date-fns';
-import { CreditCard, Receipt, Trash2, AlertCircle, DollarSign, MinusCircle, Pencil } from 'lucide-react';
-import { POPaymentEditModal } from './common/POPaymentEditModal';
+import { DollarSign, MinusCircle } from 'lucide-react';
 
 interface RequestFormProps {
   item: Item;
@@ -2756,23 +2755,10 @@ export const PurchaseOrderForm = ({ items, locations, uoms, profile, initialData
   const [discount, setDiscount] = useState(initialData?.discount || 0);
   const [discountType, setDiscountType] = useState<'amount' | 'percentage'>(initialData?.discountType || 'amount');
   const [vatEnabled, setVatEnabled] = useState(initialData?.vatEnabled !== false);
-  const [deletingPaymentId, setDeletingPaymentId] = useState<string | null>(null);
-  const [editingPayment, setEditingPayment] = useState<POPayment | null>(null);
   const [poItems, setPoItems] = useState<PurchaseOrderItem[]>(initialData?.items || []);
-  
+
   const [itemSearch, setItemSearch] = useState('');
   const [showItemSearch, setShowItemSearch] = useState(false);
-
-  // Payment State
-  const [payments, setPayments] = useState<POPayment[]>([]);
-  const [showPaymentForm, setShowPaymentForm] = useState(false);
-  const isAdminOrManager = profile?.role === 'admin' || profile?.role === 'manager';
-
-  useEffect(() => {
-    if (initialData?.id && isAdminOrManager) {
-      return subscribeToPOPayments(initialData.id, setPayments);
-    }
-  }, [initialData?.id, isAdminOrManager]);
 
   const subtotal = useMemo(() => {
     return poItems.reduce((sum, item) => sum + item.totalPrice, 0);
@@ -2793,8 +2779,6 @@ export const PurchaseOrderForm = ({ items, locations, uoms, profile, initialData
     if (!vatEnabled) return 0;
     return totalAmount / 1.12 * 0.12;
   }, [totalAmount, vatEnabled]);
-
-  const totalPaid = useMemo(() => payments.reduce((acc, p) => acc + p.amount, 0), [payments]);
 
   const suppliers = useMemo(() => {
     return locations.filter(l => l.type === 'supplier' && l.isActive);
@@ -3431,135 +3415,6 @@ export const PurchaseOrderForm = ({ items, locations, uoms, profile, initialData
           />
         </Modal>
 
-        {initialData && isAdminOrManager && (
-          <div className="space-y-4 pt-4 border-t border-gray-100">
-            <div className="flex items-center justify-between">
-              <div>
-                <h4 className="text-sm font-black text-gray-900">Payments</h4>
-                <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">
-                  Paid: ₱ {totalPaid.toLocaleString()} / ₱ {totalAmount.toLocaleString()}
-                </p>
-              </div>
-              <button 
-                type="button"
-                onClick={() => setShowPaymentForm(true)}
-                className="px-3 py-2 bg-blue-50 text-blue-600 rounded-xl text-[10px] font-black uppercase tracking-widest flex items-center space-x-1"
-              >
-                <Plus size={14} />
-                <span>Add Payment</span>
-              </button>
-            </div>
-
-            {showPaymentForm && (
-              <div className="p-6 bg-white border-2 border-blue-100 rounded-[2rem] shadow-xl">
-                <div className="flex items-center space-x-2 mb-4">
-                  <CreditCard className="text-blue-600" size={20} />
-                  <h5 className="font-black text-gray-900">New Payment Record</h5>
-                </div>
-                <POPaymentForm 
-                  po={initialData} 
-                  onComplete={() => setShowPaymentForm(false)}
-                  onCancel={() => setShowPaymentForm(false)}
-                />
-              </div>
-            )}
-
-            <div className="space-y-3">
-              {payments.map(payment => (
-                <div key={payment.id} className="p-4 bg-gray-50 rounded-2xl border border-gray-100 group">
-                  <div className="flex items-start justify-between mb-2">
-                    <div className="flex items-center space-x-3">
-                      <div className="w-8 h-8 bg-white rounded-lg flex items-center justify-center text-gray-400 shadow-sm">
-                        <Receipt size={16} />
-                      </div>
-                      <div>
-                        <p className="text-xs font-black text-gray-900">CV: {payment.cvNumber}</p>
-                        <p className="text-[10px] font-bold text-gray-400">
-                          {format(payment.date.toDate(), 'MMM dd, yyyy')}
-                        </p>
-                      </div>
-                    </div>
-                    <div className={cn(
-                      "px-2 py-0.5 rounded-full text-[8px] font-black uppercase tracking-widest",
-                      payment.status === 'collected' ? "bg-green-100 text-green-600" :
-                      payment.status === 'bank_deposit' ? "bg-teal-100 text-teal-600" :
-                      payment.status === 'prepared' ? "bg-blue-100 text-blue-600" : "bg-orange-100 text-orange-600"
-                    )}>
-                      {payment.status === 'collected' ? 'Collected' :
-                       payment.status === 'bank_deposit' ? 'Bank Deposit' :
-                       payment.status === 'prepared' ? 'Cheque Prepared' : 'For Processing'}
-                    </div>
-                  </div>
-                  
-                    <div className="flex items-center justify-between mt-2 pt-2 border-t border-gray-200/50">
-                      <div className="flex items-center space-x-4">
-                        <div>
-                          <p className="text-[8px] font-black text-gray-400 uppercase tracking-widest">Net Amount</p>
-                          <p className="text-xs font-black text-gray-900">₱ {payment.amount.toLocaleString()}</p>
-                        </div>
-                        {payment.deductions.length > 0 && (
-                          <div>
-                            <p className="text-[8px] font-black text-gray-400 uppercase tracking-widest">Deductions</p>
-                            <p className="text-xs font-black text-red-500">
-                              -₱ {(payment.grossAmount - payment.amount).toLocaleString()}
-                            </p>
-                          </div>
-                        )}
-                      </div>
-                      
-                      {deletingPaymentId === payment.id ? (
-                        <div className="flex items-center space-x-1">
-                          <button
-                            type="button"
-                            onClick={async () => {
-                              await deletePOPayment(initialData.id, payment.id);
-                              setDeletingPaymentId(null);
-                            }}
-                            className="px-2 py-1 bg-red-600 text-white text-[8px] font-black rounded-lg uppercase tracking-widest"
-                          >
-                            Confirm
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => setDeletingPaymentId(null)}
-                            className="px-2 py-1 bg-gray-200 text-gray-600 text-[8px] font-black rounded-lg uppercase tracking-widest"
-                          >
-                            No
-                          </button>
-                        </div>
-                      ) : (
-                        <div className="flex items-center space-x-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
-                          {profile?.role === 'admin' && (
-                            <button
-                              type="button"
-                              onClick={() => setEditingPayment(payment)}
-                              className="p-2 text-gray-300 hover:text-blue-500 transition-colors"
-                              title="Edit payment"
-                            >
-                              <Pencil size={14} />
-                            </button>
-                          )}
-                          <button
-                            type="button"
-                            onClick={() => setDeletingPaymentId(payment.id)}
-                            className="p-2 text-gray-300 hover:text-red-500 transition-colors"
-                          >
-                            <Trash2 size={14} />
-                          </button>
-                        </div>
-                      )}
-                    </div>
-                </div>
-              ))}
-              {payments.length === 0 && (
-                <div className="p-8 text-center bg-gray-50/50 rounded-2xl border-2 border-dashed border-gray-100">
-                  <CreditCard className="mx-auto text-gray-200 mb-2" size={32} />
-                  <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">No payments recorded yet</p>
-                </div>
-              )}
-            </div>
-          </div>
-        )}
       </div>
 
       <div className="fixed bottom-16 left-0 right-0 p-4 bg-white/80 backdrop-blur-xl border-t border-gray-100 lg:bottom-0 lg:left-72 z-40">
@@ -3584,20 +3439,6 @@ export const PurchaseOrderForm = ({ items, locations, uoms, profile, initialData
         </div>
       </div>
 
-      <Modal
-        isOpen={!!editingPayment}
-        onClose={() => setEditingPayment(null)}
-        title="Edit Payment"
-      >
-        {editingPayment && profile && (
-          <POPaymentEditModal
-            payment={editingPayment}
-            po={initialData}
-            profile={profile}
-            onClose={() => setEditingPayment(null)}
-          />
-        )}
-      </Modal>
     </div>
   );
 };

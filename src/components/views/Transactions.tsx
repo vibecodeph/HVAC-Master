@@ -3,7 +3,7 @@ import { Truck, Wrench, ArrowLeftRight, History, Package, ChevronRight, Loader2,
 import { motion, AnimatePresence } from 'motion/react';
 import { useAuth, useData } from '../../App';
 import { deleteTransaction, subscribeToTransactions } from '../../services/inventoryService';
-import { cn } from '../../lib/utils';
+import { cn, normalizeVariant } from '../../lib/utils';
 import { Header } from '../common/Header';
 import { Card } from '../common/Card';
 import { Swipeable } from '../common/Swipeable';
@@ -104,7 +104,7 @@ export const Transactions = () => {
       const consolidatedTransactions = Object.values(batchTransactions.reduce((acc, t) => {
         // Group by Item + Variant + RequestID to follow the lifecycle of a specific request
         const reqId = t.requestIds?.[0] || 'no-req';
-        const key = `${t.itemId}_${JSON.stringify(t.variant)}_${t.customSpec || ''}_${reqId}_${t.serialNumber || ''}`;
+        const key = `${t.itemId}_${normalizeVariant(t.variant)}_${t.customSpec || ''}_${reqId}_${t.serialNumber || ''}`;
         
         if (!acc[key]) {
           acc[key] = t;

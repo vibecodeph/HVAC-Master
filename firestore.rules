@@ -618,9 +618,9 @@ service cloud.firestore {
 
     match /system/{configId} {
       allow read: if isAuthenticated() || configId == 'config';
-      allow create: if isAuthenticated() && !exists(/databases/$(database)/documents/system/config) && isValidSystemConfig(request.resource.data);
+      allow create: if isAdmin() || (isAuthenticated() && !exists(/databases/$(database)/documents/system/config) && isValidSystemConfig(request.resource.data));
       allow update: if isAdmin() && isValidSystemConfig(request.resource.data);
-      allow delete: if false;
+      allow delete: if isAdmin();
     }
 
     match /purchase_orders/{poId} {

@@ -1,4 +1,4 @@
-import { Timestamp, collection, getDocs, getDoc, doc, writeBatch } from 'firebase/firestore';
+import { Timestamp, collection, getDocs, doc, writeBatch } from 'firebase/firestore';
 import { db } from '../firebase';
 
 export interface BackupData {
@@ -64,11 +64,12 @@ async function fetchCollection(colPath: string): Promise<any[]> {
   return snap.docs.map(d => serialize({ id: d.id, ...d.data() }));
 }
 
-async function deleteCollection(colPath: string): Promise<void> {
+async function deleteCollection(colPath: string, exceptId?: string): Promise<void> {
   const snap = await getDocs(collection(db, colPath));
-  for (let i = 0; i < snap.docs.length; i += BATCH_SIZE) {
+  const targets = exceptId ? snap.docs.filter(d => d.id !== exceptId) : snap.docs;
+  for (let i = 0; i < targets.length; i += BATCH_SIZE) {
     const batch = writeBatch(db);
-    snap.docs.slice(i, i + BATCH_SIZE).forEach(d => batch.delete(d.ref));
+    targets.slice(i, i + BATCH_SIZE).forEach(d => batch.delete(d.ref));
     await batch.commit();
   }
 }
@@ -167,12 +168,8 @@ export const restoreFromBackup = async (
   const total = ALL_COLLECTIONS.length * 2; // delete pass + write pass
   let step = 0;
 
-  // Snapshot the restoring admin's user doc BEFORE any changes, so we can put it back
-  let adminSnapshot: Record<string, unknown> | null = null;
-  if (preserveAdminUid) {
-    const snap = await getDoc(doc(db, 'users', preserveAdminUid));
-    if (snap.exists()) adminSnapshot = { id: snap.id, ...snap.data() };
-  }
+  // The restoring admin's user doc is never deleted or overwritten — skip it in both passes
+  // so there is no moment where it is absent and the app loses their session.
 
   // --- Delete pass ---
   for (const name of ALL_COLLECTIONS) {
@@ -188,7 +185,7 @@ export const restoreFromBackup = async (
       }
     }
 
-    await deleteCollection(name);
+    await deleteCollection(name, name === 'users' ? preserveAdminUid : undefined);
   }
 
   // --- Write pass ---
@@ -206,16 +203,10 @@ export const restoreFromBackup = async (
         if (_payments.length > 0) await writeCollection(`purchase_orders/${poId}/payments`, _payments);
       }
     } else {
-      await writeCollection(name, docs);
+      const filteredDocs = (name === 'users' && preserveAdminUid)
+        ? docs.filter((d: any) => String(d.id) !== preserveAdminUid)
+        : docs;
+      await writeCollection(name, filteredDocs);
     }
-  }
-
-  // Write the admin's user doc back so they keep their role/approval after restore
-  if (preserveAdminUid && adminSnapshot) {
-    onProgress('Preserving admin account…', total, total);
-    const { id, ...data } = adminSnapshot as any;
-    const batch = writeBatch(db);
-    batch.set(doc(db, 'users', preserveAdminUid), { id, ...data });
-    await batch.commit();
   }
 };

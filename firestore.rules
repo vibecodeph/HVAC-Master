@@ -651,7 +651,8 @@ service cloud.firestore {
 
     match /po_templates/{templateId} {
       allow read: if isApproved();
-      allow create, update, delete: if isAdmin() && isValidPOTemplate(request.resource.data);
+      allow create, update: if isAdmin() && isValidPOTemplate(request.resource.data);
+      allow delete: if isAdmin();
     }
 
     match /rbac_config/{roleId} {

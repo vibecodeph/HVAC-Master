@@ -45,6 +45,7 @@ export interface VariantConfig {
   reorderLevel?: number;
   averageCost?: number;
   isRequired?: boolean; // per-combination override; undefined/true = required, false = optional
+  dimensionRequirements?: { [key: string]: boolean }; // per-dimension; undefined/true = required, false = optional
 }
 
 export interface ItemComponent {

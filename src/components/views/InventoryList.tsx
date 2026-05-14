@@ -163,22 +163,39 @@ const ItemCard = ({
                     <div className="flex items-start justify-between">
                       <div className="flex-1 min-w-0">
                         {variantToMatch && Object.keys(variantToMatch).length > 0 && (
-                          <div className="flex flex-wrap gap-1 mb-2">
-                            {Object.entries(variantToMatch).map(([k, v]) => (
-                              <span key={k} className="text-xs px-2 py-1 bg-blue-50 text-blue-600 rounded-lg font-bold uppercase tracking-tight">
-                                {String(v)}
-                              </span>
-                            ))}
+                          <div className="flex flex-wrap gap-1.5 mb-2 items-start">
                             {(() => {
+                              const dimReqs = item.variantConfigs?.[0]?.dimensionRequirements;
+                              const hasOptional = dimReqs && Object.values(dimReqs).some(v => v === false);
                               const vc = item.variantConfigs?.find((c: any) => normalizeVariant(c.variant) === normalizeVariant(variantToMatch));
-                              const isReq = !vc || vc.isRequired !== false;
+                              const combinationIsReq = !vc || vc.isRequired !== false;
                               return (
-                                <span className={cn(
-                                  "text-[8px] px-1.5 py-0.5 rounded-full font-black uppercase tracking-widest self-center",
-                                  isReq ? "bg-blue-100 text-blue-500" : "bg-gray-100 text-gray-400"
-                                )}>
-                                  {isReq ? "Required" : "Optional"}
-                                </span>
+                                <>
+                                  {Object.entries(variantToMatch).map(([k, v]) => {
+                                    const dimIsOptional = dimReqs && dimReqs[k] === false;
+                                    return (
+                                      <div key={k} className="flex flex-col items-center gap-0.5">
+                                        <span className="text-xs px-2 py-1 bg-blue-50 text-blue-600 rounded-lg font-bold uppercase tracking-tight">
+                                          {String(v)}
+                                        </span>
+                                        {hasOptional && (
+                                          <span className={cn(
+                                            "text-[7px] font-black uppercase tracking-widest",
+                                            dimIsOptional ? "text-gray-400" : "text-blue-500"
+                                          )}>
+                                            {dimIsOptional ? "opt" : "req"}
+                                          </span>
+                                        )}
+                                      </div>
+                                    );
+                                  })}
+                                  <span className={cn(
+                                    "text-[8px] px-1.5 py-0.5 rounded-full font-black uppercase tracking-widest self-center",
+                                    combinationIsReq ? "bg-blue-100 text-blue-500" : "bg-gray-100 text-gray-400"
+                                  )}>
+                                    {combinationIsReq ? "Required" : "Optional"}
+                                  </span>
+                                </>
                               );
                             })()}
                           </div>

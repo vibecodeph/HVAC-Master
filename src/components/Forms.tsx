@@ -54,7 +54,11 @@ export const RequestForm = ({
 
   const isVariantComplete = useMemo(() => {
     if (!item.requireVariant || !item.variantAttributes || item.variantAttributes.length === 0) return true;
-    return item.variantAttributes.every(attr => selectedVariant[attr.name]);
+    const dimReqs = item.variantConfigs?.[0]?.dimensionRequirements;
+    return item.variantAttributes.every(attr => {
+      const isRequired = !dimReqs || dimReqs[attr.name] !== false;
+      return !isRequired || !!selectedVariant[attr.name];
+    });
   }, [item, selectedVariant]);
 
   const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
@@ -128,20 +132,24 @@ export const RequestForm = ({
 
         {item.variantAttributes && item.variantAttributes.length > 0 && (
           <div className="grid grid-cols-2 gap-4">
-            {item.variantAttributes.map(attr => (
-              <div key={attr.name} className="space-y-1">
-                <label className="text-xs font-bold text-gray-400 uppercase tracking-wider pl-1">{attr.name}</label>
-                <select 
-                  required={item.requireVariant}
-                  value={selectedVariant[attr.name] || ''}
-                  onChange={e => setSelectedVariant({...selectedVariant, [attr.name]: e.target.value})}
-                  className="w-full p-4 bg-gray-100 rounded-2xl text-sm font-medium outline-none focus:ring-2 focus:ring-blue-500 appearance-none"
-                >
-                  <option value="">{item.requireVariant ? 'Select...' : 'Optional...'}</option>
-                  {attr.values.map(v => <option key={v} value={v}>{v}</option>)}
-                </select>
-              </div>
-            ))}
+            {item.variantAttributes.map(attr => {
+              const dimReqs = item.variantConfigs?.[0]?.dimensionRequirements;
+              const dimRequired = item.requireVariant && (!dimReqs || dimReqs[attr.name] !== false);
+              return (
+                <div key={attr.name} className="space-y-1">
+                  <label className="text-xs font-bold text-gray-400 uppercase tracking-wider pl-1">{attr.name}</label>
+                  <select
+                    required={dimRequired}
+                    value={selectedVariant[attr.name] || ''}
+                    onChange={e => setSelectedVariant({...selectedVariant, [attr.name]: e.target.value})}
+                    className="w-full p-4 bg-gray-100 rounded-2xl text-sm font-medium outline-none focus:ring-2 focus:ring-blue-500 appearance-none"
+                  >
+                    <option value="">{dimRequired ? 'Select...' : 'Optional...'}</option>
+                    {attr.values.map(v => <option key={v} value={v}>{v}</option>)}
+                  </select>
+                </div>
+              );
+            })}
           </div>
         )}
 
@@ -567,23 +575,27 @@ export const WorkerRequestForm = ({ items, locations, uoms, inventory, profile, 
           <>
             {selectedItem?.variantAttributes && selectedItem.variantAttributes.length > 0 && (
               <div className="grid grid-cols-2 gap-4">
-                {selectedItem.variantAttributes.map(attr => (
-                  <div key={attr.name} className="space-y-1">
-                    <label className="text-xs font-bold text-gray-400 uppercase tracking-wider pl-1">{attr.name}</label>
-                    <div className="relative">
-                      <select 
-                        required={selectedItem.requireVariant}
-                        value={selectedVariant[attr.name] || ''}
-                        onChange={e => setSelectedVariant({...selectedVariant, [attr.name]: e.target.value})}
-                        className="w-full p-4 bg-gray-100 rounded-2xl text-sm font-bold text-gray-900 outline-none focus:ring-2 focus:ring-blue-500 appearance-none pr-10"
-                      >
-                        <option value="">{selectedItem.requireVariant ? 'Select...' : 'Optional...'}</option>
-                        {attr.values.map(v => <option key={v} value={v}>{v}</option>)}
-                      </select>
-                      <ChevronDown className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" size={16} />
+                {selectedItem.variantAttributes.map(attr => {
+                  const dimReqs = selectedItem.variantConfigs?.[0]?.dimensionRequirements;
+                  const dimRequired = selectedItem.requireVariant && (!dimReqs || dimReqs[attr.name] !== false);
+                  return (
+                    <div key={attr.name} className="space-y-1">
+                      <label className="text-xs font-bold text-gray-400 uppercase tracking-wider pl-1">{attr.name}</label>
+                      <div className="relative">
+                        <select
+                          required={dimRequired}
+                          value={selectedVariant[attr.name] || ''}
+                          onChange={e => setSelectedVariant({...selectedVariant, [attr.name]: e.target.value})}
+                          className="w-full p-4 bg-gray-100 rounded-2xl text-sm font-bold text-gray-900 outline-none focus:ring-2 focus:ring-blue-500 appearance-none pr-10"
+                        >
+                          <option value="">{dimRequired ? 'Select...' : 'Optional...'}</option>
+                          {attr.values.map(v => <option key={v} value={v}>{v}</option>)}
+                        </select>
+                        <ChevronDown className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" size={16} />
+                      </div>
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             )}
 
@@ -948,6 +960,9 @@ export const ItemForm = ({ uoms, categories, locations, items, initialData, isDu
     });
     return initial;
   });
+  const [dimensionRequirements, setDimensionRequirements] = useState<Record<string, boolean>>(
+    () => initialData?.variantConfigs?.[0]?.dimensionRequirements ?? {}
+  );
   const [showVariantConfigs, setShowVariantConfigs] = useState(false);
 
   // Components (BOM) state
@@ -1017,20 +1032,24 @@ export const ItemForm = ({ uoms, categories, locations, items, initialData, isDu
           tags: (formData.get('tags') as string || '').split(',').map(t => t.trim()).filter(Boolean),
           reorderLevel: Number(formData.get('reorderLevel')) || 0,
           averageCost: Number(formData.get('averageCost')) || 0,
-          variantConfigs: combinations
-            .map(variant => {
-              const key = normalizeVariant(variant);
-              const config = variantConfigs[key] || {};
-              const hasData = config.reorderLevel !== undefined || config.averageCost !== undefined || config.isRequired === false;
-              if (!hasData) return null;
-              return {
-                variant,
-                ...(config.reorderLevel !== undefined ? { reorderLevel: config.reorderLevel } : {}),
-                ...(config.averageCost !== undefined ? { averageCost: config.averageCost } : {}),
-                ...(config.isRequired === false ? { isRequired: false } : {}),
-              };
-            })
-            .filter((vc): vc is any => vc !== null),
+          variantConfigs: (() => {
+            const hasDimOverrides = Object.values(dimensionRequirements).some(v => !v);
+            return combinations
+              .map(variant => {
+                const key = normalizeVariant(variant);
+                const config = variantConfigs[key] || {};
+                const hasData = config.reorderLevel !== undefined || config.averageCost !== undefined || config.isRequired === false || hasDimOverrides;
+                if (!hasData) return null;
+                return {
+                  variant,
+                  ...(config.reorderLevel !== undefined ? { reorderLevel: config.reorderLevel } : {}),
+                  ...(config.averageCost !== undefined ? { averageCost: config.averageCost } : {}),
+                  ...(config.isRequired === false ? { isRequired: false } : {}),
+                  ...(hasDimOverrides ? { dimensionRequirements } : {}),
+                };
+              })
+              .filter((vc): vc is any => vc !== null);
+          })(),
           components: components
         };
 
@@ -1276,6 +1295,32 @@ export const ItemForm = ({ uoms, categories, locations, items, initialData, isDu
                 requireVariant ? "left-7" : "left-1"
               )} />
             </button>
+          </div>
+        )}
+
+        {attributes.length > 0 && requireVariant && (
+          <div className="space-y-2">
+            <label className="text-xs font-bold text-gray-400 uppercase tracking-wider pl-1">Dimension Settings</label>
+            {attributes.map(attr => {
+              const isReq = dimensionRequirements[attr.name] !== false;
+              return (
+                <div key={attr.name} className="flex items-center justify-between px-3 py-2.5 bg-blue-50 rounded-xl border border-blue-100">
+                  <span className="text-xs font-bold text-blue-900">{attr.name}</span>
+                  <div className="flex items-center space-x-2">
+                    <span className={cn("text-[9px] font-black uppercase tracking-widest", isReq ? "text-blue-600" : "text-gray-400")}>
+                      {isReq ? "Required" : "Optional"}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setDimensionRequirements(prev => ({ ...prev, [attr.name]: !isReq }))}
+                      className={cn("w-10 h-5 rounded-full transition-colors relative flex-shrink-0", isReq ? "bg-blue-600" : "bg-gray-300")}
+                    >
+                      <div className={cn("absolute top-0.5 w-4 h-4 bg-white rounded-full transition-all", isReq ? "left-5" : "left-0.5")} />
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
           </div>
         )}
 
@@ -2026,20 +2071,24 @@ export const TransactionForm = ({ items, locations, inventory, uoms, purchaseOrd
 
             {selectedItem?.variantAttributes && selectedItem.variantAttributes.length > 0 && (
               <div className="grid grid-cols-2 gap-4">
-                {selectedItem.variantAttributes.map(attr => (
-                  <div key={attr.name} className="space-y-1">
-                    <label className="text-xs font-bold text-gray-400 uppercase tracking-wider pl-1">{attr.name}</label>
-                    <select 
-                      required={selectedItem.requireVariant}
-                      value={selectedVariant[attr.name] || ''}
-                      onChange={e => setSelectedVariant({...selectedVariant, [attr.name]: e.target.value})}
-                      className="w-full p-4 bg-gray-100 rounded-2xl text-sm font-medium outline-none focus:ring-2 focus:ring-blue-500 appearance-none"
-                    >
-                      <option value="">{selectedItem.requireVariant ? 'Select...' : 'Optional...'}</option>
-                      {attr.values.map(v => <option key={v} value={v}>{v}</option>)}
-                    </select>
-                  </div>
-                ))}
+                {selectedItem.variantAttributes.map(attr => {
+                  const dimReqs = selectedItem.variantConfigs?.[0]?.dimensionRequirements;
+                  const dimRequired = selectedItem.requireVariant && (!dimReqs || dimReqs[attr.name] !== false);
+                  return (
+                    <div key={attr.name} className="space-y-1">
+                      <label className="text-xs font-bold text-gray-400 uppercase tracking-wider pl-1">{attr.name}</label>
+                      <select
+                        required={dimRequired}
+                        value={selectedVariant[attr.name] || ''}
+                        onChange={e => setSelectedVariant({...selectedVariant, [attr.name]: e.target.value})}
+                        className="w-full p-4 bg-gray-100 rounded-2xl text-sm font-medium outline-none focus:ring-2 focus:ring-blue-500 appearance-none"
+                      >
+                        <option value="">{dimRequired ? 'Select...' : 'Optional...'}</option>
+                        {attr.values.map(v => <option key={v} value={v}>{v}</option>)}
+                      </select>
+                    </div>
+                  );
+                })}
               </div>
             )}
 
@@ -2835,8 +2884,10 @@ export const PurchaseOrderForm = ({ items, locations, uoms, profile, initialData
     for (const poItem of poItems) {
       const item = items.find(i => i.id === poItem.itemId);
       if (item?.requireVariant && item.variantAttributes) {
+        const dimReqs = item.variantConfigs?.[0]?.dimensionRequirements;
         for (const attr of item.variantAttributes) {
-          if (!poItem.variant?.[attr.name]) {
+          const isRequired = !dimReqs || dimReqs[attr.name] !== false;
+          if (isRequired && !poItem.variant?.[attr.name]) {
             setErrorMsg(`Please select ${attr.name} for ${item.name}`);
             return;
           }
@@ -3213,23 +3264,27 @@ export const PurchaseOrderForm = ({ items, locations, uoms, profile, initialData
                         {/* Variant Selection if exists */}
                         {item?.variantAttributes && item.variantAttributes.length > 0 && (
                           <div className="grid grid-cols-2 gap-2 mt-2 px-1">
-                            {item.variantAttributes.map(attr => (
-                              <div key={attr.name} className="space-y-1">
-                                <label className="text-[8px] font-black text-gray-400 uppercase tracking-widest pl-1">{attr.name}</label>
-                                <select
-                                  required={item.requireVariant}
-                                  value={poItem.variant?.[attr.name] || ''}
-                                  onChange={e => {
-                                    const nextVariant = { ...(poItem.variant || {}), [attr.name]: e.target.value };
-                                    updatePOItem(idx, { variant: nextVariant });
-                                  }}
-                                  className="w-full p-2 bg-white border border-gray-200 rounded-xl text-[10px] font-bold outline-none"
-                                >
-                                  <option value="">{item.requireVariant ? 'Select...' : 'Optional...'}</option>
-                                  {attr.values.map(v => <option key={v} value={v}>{v}</option>)}
-                                </select>
-                              </div>
-                            ))}
+                            {item.variantAttributes.map(attr => {
+                              const dimReqs = item.variantConfigs?.[0]?.dimensionRequirements;
+                              const dimRequired = item.requireVariant && (!dimReqs || dimReqs[attr.name] !== false);
+                              return (
+                                <div key={attr.name} className="space-y-1">
+                                  <label className="text-[8px] font-black text-gray-400 uppercase tracking-widest pl-1">{attr.name}</label>
+                                  <select
+                                    required={dimRequired}
+                                    value={poItem.variant?.[attr.name] || ''}
+                                    onChange={e => {
+                                      const nextVariant = { ...(poItem.variant || {}), [attr.name]: e.target.value };
+                                      updatePOItem(idx, { variant: nextVariant });
+                                    }}
+                                    className="w-full p-2 bg-white border border-gray-200 rounded-xl text-[10px] font-bold outline-none"
+                                  >
+                                    <option value="">{dimRequired ? 'Select...' : 'Optional...'}</option>
+                                    {attr.values.map(v => <option key={v} value={v}>{v}</option>)}
+                                  </select>
+                                </div>
+                              );
+                            })}
                           </div>
                         )}
 

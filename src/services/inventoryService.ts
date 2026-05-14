@@ -1655,6 +1655,10 @@ export const recordBulkPick = async (
         if (!requestDoc.exists()) continue;
         const request = requestDoc.data() as Request;
 
+        if (sourceLocationId === request.jobsiteId) {
+          throw new Error(`Pick source and delivery destination cannot be the same location. Choose a different source warehouse.`);
+        }
+
         const { itemId, uomId, customSpec } = request;
         const effectiveVariant = variant || request.variant;
 

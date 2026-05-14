@@ -2286,11 +2286,11 @@ export const PickingModal = ({ requests, items, locations, inventory, uoms, onDe
   const [selections, setSelections] = useState<Record<string, { deliveredQty: number; sourceLocationId: string; serialNumbers?: string[]; backorder?: boolean }>>(() => {
     const initial: Record<string, { deliveredQty: number; sourceLocationId: string; serialNumbers?: string[]; backorder?: boolean }> = {};
     requests.forEach(r => {
-      initial[r.id] = { 
-        deliveredQty: r.approvedQty || r.requestedQty, 
+      initial[r.id] = {
+        deliveredQty: r.approvedQty || r.requestedQty,
         sourceLocationId: (
-          locations.find(l => l.isActive && l.name.toLowerCase() === 'main warehouse') ||
-          locations.find(l => l.type === 'warehouse' && l.isActive)
+          locations.find(l => l.isActive && l.id !== r.jobsiteId && l.name.toLowerCase() === 'main warehouse') ||
+          locations.find(l => l.type === 'warehouse' && l.isActive && l.id !== r.jobsiteId)
         )?.id || '',
         serialNumbers: [],
         backorder: true // Default to true as per common warehouse practice
@@ -2403,7 +2403,7 @@ export const PickingModal = ({ requests, items, locations, inventory, uoms, onDe
                       className="w-full p-2 bg-white border border-gray-200 rounded-xl text-[10px] font-bold outline-none focus:ring-2 focus:ring-blue-500 appearance-none pr-8"
                     >
                       <option value="">Select Source...</option>
-                      {groupLocations(locations.filter(l => (l.type === 'warehouse' || l.type === 'supplier') && l.isActive)).map(group => (
+                      {groupLocations(locations.filter(l => (l.type === 'warehouse' || l.type === 'supplier') && l.isActive && l.id !== req.jobsiteId)).map(group => (
                         <optgroup key={group.type} label={group.type.charAt(0).toUpperCase() + group.type.slice(1) + 's'}>
                           {group.locations.map(l => (
                             <option key={l.id} value={l.id}>{l.name}</option>

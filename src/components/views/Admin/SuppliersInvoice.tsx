@@ -29,6 +29,7 @@ interface FormItemState {
   variant: Record<string, string>;
   quantity: string;
   unitPrice: string;
+  uomId: string;
 }
 
 interface OtherDeduction {
@@ -45,6 +46,7 @@ const emptyFormItem = (): FormItemState => ({
   variant: {},
   quantity: '',
   unitPrice: '',
+  uomId: '',
 });
 
 const PAYMENT_METHOD_LABELS: Record<PaymentMethod, string> = {
@@ -238,6 +240,7 @@ export const SuppliersInvoiceView = () => {
       variant: item.variant || {},
       quantity: String(item.quantity),
       unitPrice: String(item.unitPrice),
+      uomId: item.uomId,
     })));
     setSelectedPOId(invoice.linkedPOs?.[0]?.poId || '');
     setEnablePayment(false);
@@ -262,11 +265,11 @@ export const SuppliersInvoiceView = () => {
 
   const selectItem = (idx: number, itemId: string) => {
     const item = items.find(i => i.id === itemId);
-    updateFormItem(idx, { itemId, itemSearch: '', showSearch: false, variant: {} });
+    updateFormItem(idx, { itemId, itemSearch: '', showSearch: false, variant: {}, uomId: item?.uomId || '' });
     if (item?.variantAttributes?.length) {
       const v: Record<string, string> = {};
       item.variantAttributes.forEach(attr => { v[attr.name] = ''; });
-      updateFormItem(idx, { itemId, itemSearch: '', showSearch: false, variant: v });
+      updateFormItem(idx, { itemId, itemSearch: '', showSearch: false, variant: v, uomId: item?.uomId || '' });
     }
   };
 
@@ -285,6 +288,7 @@ export const SuppliersInvoiceView = () => {
           variant: poi.variant || {},
           quantity: String(poi.quantity),
           unitPrice: String(poi.unitPrice),
+          uomId: poi.uomId,
         })));
       }
     } catch {
@@ -342,7 +346,8 @@ export const SuppliersInvoiceView = () => {
     const location = locations.find(l => l.id === formLocationId);
     const invoiceItems: SuppliersInvoiceItem[] = formItems.map(fi => {
       const itemDef = items.find(it => it.id === fi.itemId)!;
-      const uom = uoms.find(u => u.id === itemDef.uomId || u.symbol === itemDef.uomId);
+      const effectiveUomId = fi.uomId || itemDef.uomId;
+      const uom = uoms.find(u => u.id === effectiveUomId || u.symbol === effectiveUomId);
       const qty = parseFloat(fi.quantity);
       const price = parseFloat(fi.unitPrice);
       return {
@@ -352,8 +357,8 @@ export const SuppliersInvoiceView = () => {
           ? fi.variant : undefined,
         quantity: qty,
         unitPrice: price,
-        uomId: itemDef.uomId,
-        uomSymbol: uom?.symbol || itemDef.uomId,
+        uomId: effectiveUomId,
+        uomSymbol: uom?.symbol || effectiveUomId,
         totalPrice: qty * price,
       };
     });
@@ -617,7 +622,8 @@ export const SuppliersInvoiceView = () => {
             <div className="space-y-4">
               {formItems.map((fi, idx) => {
                 const itemDef = items.find(i => i.id === fi.itemId);
-                const uom = itemDef ? uoms.find(u => u.id === itemDef.uomId || u.symbol === itemDef.uomId) : null;
+                const effectiveUomId = fi.uomId || itemDef?.uomId || '';
+                const uom = effectiveUomId ? uoms.find(u => u.id === effectiveUomId || u.symbol === effectiveUomId) : null;
                 const lineTotal = (parseFloat(fi.quantity) || 0) * (parseFloat(fi.unitPrice) || 0);
                 const matchingItems = fi.itemSearch
                   ? items.filter(i => i.isActive && i.name.toLowerCase().includes(fi.itemSearch.toLowerCase())).slice(0, 8)
@@ -722,7 +728,7 @@ export const SuppliersInvoiceView = () => {
                       <div className="space-y-1">
                         <label className="text-[9px] font-bold text-gray-400 uppercase tracking-widest">UOM</label>
                         <div className="p-2 bg-gray-100 rounded-xl text-sm text-gray-500 font-medium">
-                          {uom?.symbol || (itemDef?.uomId ?? '—')}
+                          {uom?.symbol || effectiveUomId || '—'}
                         </div>
                       </div>
                     </div>

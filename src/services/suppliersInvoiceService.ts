@@ -84,39 +84,61 @@ export const createSuppliersInvoice = async (data: InvoiceFormData): Promise<str
         createdAt: serverTimestamp(),
       }));
 
-      // Process each item
+      // Pre-accumulate inventory deltas and item costs per unique path/itemId
+      // (avoids last-write-wins when multiple rows share the same inventory path or itemId)
+      const invNetDelta = new Map<string, number>();
+      const itemQtyToAdd = new Map<string, number>();
+      const itemCostToAdd = new Map<string, number>();
       for (const item of data.items) {
-        const invRef = getInventoryRef(item.itemId, data.locationId, item.variant);
-        const invSnap = invSnaps.get(invRef.path);
-        const itemDocSnap = itemDocSnaps.get(item.itemId);
-        if (!itemDocSnap?.exists()) continue;
+        const path = getInventoryRef(item.itemId, data.locationId, item.variant).path;
+        invNetDelta.set(path, (invNetDelta.get(path) || 0) + item.quantity);
+        itemQtyToAdd.set(item.itemId, (itemQtyToAdd.get(item.itemId) || 0) + item.quantity);
+        itemCostToAdd.set(item.itemId, (itemCostToAdd.get(item.itemId) || 0) + item.quantity * item.unitPrice);
+      }
 
-        // Update inventory
-        const existingQty = invSnap?.exists() ? (invSnap.data()?.quantity || 0) : 0;
-        const newQty = existingQty + item.quantity;
-        if (invSnap?.exists()) {
-          txn.update(invRef, { quantity: newQty });
+      // Write inventory — once per unique path
+      for (const [path, qty] of invNetDelta) {
+        const ref = invRefMap.get(path)!;
+        const snap = invSnaps.get(path);
+        const newQty = (snap?.exists() ? (snap.data()?.quantity || 0) : 0) + qty;
+        if (snap?.exists()) {
+          txn.update(ref, { quantity: newQty });
         } else {
-          txn.set(invRef, {
-            itemId: item.itemId,
-            locationId: data.locationId,
-            variant: item.variant && Object.keys(item.variant).length > 0 ? item.variant : null,
-            quantity: newQty,
-          });
+          const srcItem = data.items.find(i =>
+            getInventoryRef(i.itemId, data.locationId, i.variant).path === path
+          );
+          if (srcItem) {
+            txn.set(ref, {
+              itemId: srcItem.itemId,
+              locationId: data.locationId,
+              variant: srcItem.variant && Object.keys(srcItem.variant).length > 0 ? srcItem.variant : null,
+              quantity: newQty,
+            });
+          }
         }
+      }
 
-        // Update item totalQuantity + averageCost (weighted average)
-        const itemData = itemDocSnap.data();
+      // Write item totalQuantity + averageCost — once per unique itemId
+      for (const [itemId, addedQty] of itemQtyToAdd) {
+        const snap = itemDocSnaps.get(itemId);
+        if (!snap?.exists()) continue;
+        const itemData = snap.data();
         const currentAvg = itemData.averageCost || 0;
         const currentTotal = itemData.totalQuantity || 0;
-        const newTotal = currentTotal + item.quantity;
+        const addedCost = itemCostToAdd.get(itemId) || 0;
+        const newTotal = currentTotal + addedQty;
         const newAvg = newTotal > 0
-          ? ((currentTotal * currentAvg) + (item.quantity * item.unitPrice)) / newTotal
-          : item.unitPrice;
-        txn.update(doc(db, 'items', item.itemId), {
+          ? (currentTotal * currentAvg + addedCost) / newTotal
+          : addedQty > 0 ? addedCost / addedQty : 0;
+        txn.update(doc(db, 'items', itemId), {
           totalQuantity: isNaN(newTotal) ? currentTotal : newTotal,
           averageCost: isNaN(newAvg) ? currentAvg : newAvg,
         });
+      }
+
+      // Per-item records (supplier_pricing + transaction) — these always use new doc refs, no conflict
+      for (const item of data.items) {
+        if (!itemDocSnaps.get(item.itemId)?.exists()) continue;
 
         // Supplier pricing record
         const spRef = doc(collection(db, 'supplier_pricing'));
@@ -351,13 +373,20 @@ export const deleteSuppliersInvoice = async (invoice: SuppliersInvoice): Promise
         invRefMap.set(r.path, r);
         itemDocRefMap.set(item.itemId, doc(db, 'items', item.itemId));
       });
+      const linkedPOs = invoice.linkedPOs || [];
+      const poRefMap = new Map<string, DocumentReference>();
+      if (invoice.payment && linkedPOs.length > 0) {
+        linkedPOs.forEach(lp => poRefMap.set(lp.poId, doc(db, 'purchase_orders', lp.poId)));
+      }
 
       // Read all
       const invSnaps = new Map<string, any>();
       const itemDocSnaps = new Map<string, any>();
+      const poSnaps = new Map<string, any>();
       await Promise.all([
         ...[...invRefMap.entries()].map(async ([k, r]) => invSnaps.set(k, await txn.get(r))),
         ...[...itemDocRefMap.entries()].map(async ([k, r]) => itemDocSnaps.set(k, await txn.get(r))),
+        ...[...poRefMap.entries()].map(async ([k, r]) => poSnaps.set(k, await txn.get(r))),
       ]);
 
       // Accumulate inventory qty to remove per ref
@@ -388,6 +417,27 @@ export const deleteSuppliersInvoice = async (invoice: SuppliersInvoice): Promise
       }
 
       txn.delete(doc(db, 'suppliers_invoices', invoice.id));
+
+      // Revert PO payment if invoice had a recorded payment
+      if (invoice.payment && linkedPOs.length > 0) {
+        const totalLinkedAmt = linkedPOs.reduce((s, lp) => s + lp.amount, 0);
+        for (const lp of linkedPOs) {
+          const snap = poSnaps.get(lp.poId);
+          if (!snap?.exists()) continue;
+          const poData = snap.data();
+          const poTotal = poData.totalAmount || 0;
+          const proportion = totalLinkedAmt > 0 ? lp.amount / totalLinkedAmt : 1;
+          const allocated = invoice.payment.amount * proportion;
+          const newPaid = Math.max(0, (poData.amountPaid || 0) - allocated);
+          const newStatus = newPaid >= poTotal ? 'fully_paid' : newPaid > 0 ? 'partially_paid' : 'unpaid';
+          txn.update(poRefMap.get(lp.poId)!, {
+            amountPaid: newPaid,
+            paymentStatus: newStatus,
+            updatedAt: serverTimestamp(),
+            updatedBy: userId,
+          });
+        }
+      }
     });
 
     // Best-effort cleanup of supplier_pricing records

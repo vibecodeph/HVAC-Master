@@ -1,4 +1,4 @@
-import { Timestamp, collection, getDocs, doc, writeBatch } from 'firebase/firestore';
+import { Timestamp, collection, getDocs, doc, writeBatch, query, where } from 'firebase/firestore';
 import { db } from '../firebase';
 
 export interface BackupData {
@@ -158,6 +158,76 @@ export const validateBackup = (data: unknown): data is BackupData => {
     typeof d.collections === 'object' &&
     !Array.isArray(d.collections)
   );
+};
+
+// --- Undelivered requests backup ---
+
+export interface UndeliveredRequestsBackup {
+  timestamp: string;
+  backupType: 'undelivered_requests';
+  filterCriteria: {
+    statuses: string[];
+    excludeStatuses: string[];
+  };
+  totalRequests: number;
+  requests: any[];
+}
+
+export const backupUndeliveredRequests = async (): Promise<void> => {
+  const snap = await getDocs(
+    query(collection(db, 'requests'), where('status', 'in', ['pending', 'approved']))
+  );
+  const requests = snap.docs.map(d => serialize({ id: d.id, ...d.data() }));
+
+  const backup: UndeliveredRequestsBackup = {
+    timestamp: new Date().toISOString(),
+    backupType: 'undelivered_requests',
+    filterCriteria: {
+      statuses: ['pending', 'approved'],
+      excludeStatuses: ['for delivery', 'delivered', 'rejected', 'for_pull_out', 'cancelled'],
+    },
+    totalRequests: requests.length,
+    requests,
+  };
+
+  const blob = new Blob([JSON.stringify(backup)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+
+  const d = new Date();
+  const pad = (n: number) => String(n).padStart(2, '0');
+  const filename = [
+    'HVAC-Requests-Backup',
+    `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`,
+    `${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`,
+  ].join('-') + '.json';
+
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+};
+
+export const validateUndeliveredRequestsBackup = (data: unknown): data is UndeliveredRequestsBackup => {
+  if (!data || typeof data !== 'object') return false;
+  const d = data as any;
+  return (
+    typeof d.timestamp === 'string' &&
+    d.backupType === 'undelivered_requests' &&
+    Array.isArray(d.requests) &&
+    typeof d.totalRequests === 'number'
+  );
+};
+
+export const restoreUndeliveredRequests = async (
+  backup: UndeliveredRequestsBackup,
+  onProgress: ProgressCallback,
+): Promise<void> => {
+  onProgress(`Restoring ${backup.requests.length} request(s)…`, 0, backup.requests.length);
+  await writeCollection('requests', backup.requests);
+  onProgress('Done.', backup.requests.length, backup.requests.length);
 };
 
 export const restoreFromBackup = async (

@@ -123,7 +123,7 @@ export const getPurchaseOrder = async (id: string): Promise<{ po: PurchaseOrder;
   try {
     const poSnap = await getDoc(doc(db, 'purchase_orders', id));
     if (!poSnap.exists()) return null;
-    
+
     const itemsSnap = await getDocs(collection(db, 'purchase_orders', id, 'items'));
     const items = itemsSnap.docs
       .map(doc => doc.data() as PurchaseOrderItem)
@@ -136,5 +136,17 @@ export const getPurchaseOrder = async (id: string): Promise<{ po: PurchaseOrder;
   } catch (error) {
     handleFirestoreError(error, OperationType.GET, 'purchase_orders');
     return null;
+  }
+};
+
+export const getPOItems = async (poId: string): Promise<PurchaseOrderItem[]> => {
+  try {
+    const snap = await getDocs(collection(db, 'purchase_orders', poId, 'items'));
+    return snap.docs
+      .map(d => ({ id: d.id, ...d.data() } as PurchaseOrderItem))
+      .sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0));
+  } catch (error) {
+    handleFirestoreError(error, OperationType.LIST, `purchase_orders/${poId}/items`);
+    return [];
   }
 };

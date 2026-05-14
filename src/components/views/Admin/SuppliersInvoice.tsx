@@ -14,6 +14,7 @@ import {
   updateSuppliersInvoice,
   deleteSuppliersInvoice,
 } from '../../../services/suppliersInvoiceService';
+import { getPOItems } from '../../../services/purchaseOrderService';
 
 const ITEMS_PER_PAGE = 15;
 const todayStr = () => new Date().toISOString().slice(0, 10);
@@ -85,7 +86,8 @@ export const SuppliersInvoiceView = () => {
   const [formError, setFormError] = useState<string | null>(null);
 
   // Form — PO linking
-  const [linkedPOIds, setLinkedPOIds] = useState<string[]>([]);
+  const [selectedPOId, setSelectedPOId] = useState('');
+  const [isFetchingPOItems, setIsFetchingPOItems] = useState(false);
 
   // Form — payment
   const [enablePayment, setEnablePayment] = useState(false);
@@ -168,14 +170,19 @@ export const SuppliersInvoiceView = () => {
     return list.slice(0, 8);
   }, [supplierOptions, supplierSearch]);
 
-  // Unpaid / partially-paid POs for selected supplier
+  // POs for selected supplier excluding fully paid
   const supplierUnpaidPOs = useMemo(() => {
     if (!formSupplierId) return [];
     return purchaseOrders.filter(po =>
       po.supplierId === formSupplierId &&
-      (!po.paymentStatus || po.paymentStatus === 'unpaid' || po.paymentStatus === 'partially_paid')
+      po.paymentStatus !== 'fully_paid'
     );
   }, [purchaseOrders, formSupplierId]);
+
+  const selectedPO = useMemo(
+    () => purchaseOrders.find(po => po.id === selectedPOId),
+    [selectedPOId, purchaseOrders]
+  );
 
   // Net payment amount
   const netPaymentAmount = useMemo(() => {
@@ -198,7 +205,8 @@ export const SuppliersInvoiceView = () => {
     setFormLocationId(mainWh?.id || '');
     setFormNotes('');
     setFormItems([emptyFormItem()]);
-    setLinkedPOIds([]);
+    setSelectedPOId('');
+    setIsFetchingPOItems(false);
     setEnablePayment(false);
     setPaymentMethod('cash');
     setPaymentAmount('');
@@ -231,7 +239,7 @@ export const SuppliersInvoiceView = () => {
       quantity: String(item.quantity),
       unitPrice: String(item.unitPrice),
     })));
-    setLinkedPOIds((invoice.linkedPOs || []).map(lp => lp.poId));
+    setSelectedPOId(invoice.linkedPOs?.[0]?.poId || '');
     setEnablePayment(false);
     setPaymentMethod('cash');
     setPaymentAmount('');
@@ -262,10 +270,28 @@ export const SuppliersInvoiceView = () => {
     }
   };
 
-  const toggleLinkedPO = (poId: string) => {
-    setLinkedPOIds(prev =>
-      prev.includes(poId) ? prev.filter(id => id !== poId) : [...prev, poId]
-    );
+  const handleSelectPO = async (poId: string) => {
+    setSelectedPOId(poId);
+    if (!poId || editingInvoice) return;
+    setIsFetchingPOItems(true);
+    try {
+      const poItems = await getPOItems(poId);
+      if (poItems.length > 0) {
+        setFormItems(poItems.map(poi => ({
+          key: Math.random().toString(36).slice(2),
+          itemId: poi.itemId,
+          itemSearch: '',
+          showSearch: false,
+          variant: poi.variant || {},
+          quantity: String(poi.quantity),
+          unitPrice: String(poi.unitPrice),
+        })));
+      }
+    } catch {
+      setFormError('Failed to load PO items. You can add items manually.');
+    } finally {
+      setIsFetchingPOItems(false);
+    }
   };
 
   const addOtherDeduction = () => {
@@ -294,7 +320,7 @@ export const SuppliersInvoiceView = () => {
       const fi = formItems[i];
       if (!fi.itemId) { setFormError(`Row ${i + 1}: select an item`); return; }
       const qty = parseFloat(fi.quantity);
-      if (!fi.quantity || isNaN(qty) || qty <= 0) { setFormError(`Row ${i + 1}: quantity must be > 0`); return; }
+      if (fi.quantity === '' || isNaN(qty) || qty < 0) { setFormError(`Row ${i + 1}: quantity must be 0 or greater`); return; }
       const price = parseFloat(fi.unitPrice);
       if (fi.unitPrice === '' || isNaN(price) || price < 0) { setFormError(`Row ${i + 1}: enter a valid unit price`); return; }
       const itemDef = items.find(it => it.id === fi.itemId);
@@ -332,12 +358,9 @@ export const SuppliersInvoiceView = () => {
       };
     });
 
-    const selectedPOs = supplierUnpaidPOs.filter(po => linkedPOIds.includes(po.id));
-    const linkedPOsData = selectedPOs.map(po => ({
-      poId: po.id,
-      poNumber: po.poNumber,
-      amount: po.totalAmount,
-    }));
+    const linkedPOsData: { poId: string; poNumber: string; amount: number }[] = selectedPOId && selectedPO
+      ? [{ poId: selectedPO.id, poNumber: selectedPO.poNumber, amount: selectedPO.totalAmount }]
+      : [];
 
     let paymentData: SuppliersInvoice['payment'] | undefined;
     if (enablePayment) {
@@ -439,7 +462,7 @@ export const SuppliersInvoiceView = () => {
                   <div className="p-2.5 bg-blue-50 rounded-xl border border-blue-100 flex items-center justify-between">
                     <span className="text-sm font-bold text-gray-900">{formSupplierName}</span>
                     <button
-                      onClick={() => { setFormSupplierId(''); setFormSupplierName(''); setSupplierSearch(''); setLinkedPOIds([]); }}
+                      onClick={() => { setFormSupplierId(''); setFormSupplierName(''); setSupplierSearch(''); setSelectedPOId(''); }}
                       className="text-gray-400 hover:text-red-500 ml-2 transition-colors"
                     >
                       <X size={14} />
@@ -472,7 +495,7 @@ export const SuppliersInvoiceView = () => {
                               setFormSupplierName(opt.name);
                               setSupplierSearch('');
                               setShowSupplierDropdown(false);
-                              setLinkedPOIds([]);
+                              setSelectedPOId('');
                             }}
                             className="w-full p-3 text-left text-sm font-medium hover:bg-gray-50 transition-colors"
                           >
@@ -521,6 +544,62 @@ export const SuppliersInvoiceView = () => {
               </div>
             </div>
           </Card>
+
+          {/* PO Linking */}
+          {formSupplierId && (
+            <Card className="p-4 space-y-3">
+              <h3 className="text-[10px] font-black text-gray-400 uppercase tracking-[0.2em]">Link to Purchase Order (Optional)</h3>
+
+              {selectedPOId && selectedPO ? (
+                <div className="flex items-center justify-between p-3 bg-blue-50 rounded-xl border border-blue-100">
+                  <div className="min-w-0">
+                    <p className="text-sm font-bold text-gray-900">{selectedPO.poNumber}</p>
+                    <p className="text-xs text-gray-500">
+                      ₱{selectedPO.totalAmount.toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                      {selectedPO.paymentStatus && selectedPO.paymentStatus !== 'unpaid' && (
+                        <span className="ml-2 capitalize">{selectedPO.paymentStatus.replace('_', ' ')}</span>
+                      )}
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => setSelectedPOId('')}
+                    className="text-gray-400 hover:text-red-500 ml-3 flex-shrink-0 transition-colors"
+                  >
+                    <X size={14} />
+                  </button>
+                </div>
+              ) : (
+                <>
+                  <select
+                    value={selectedPOId}
+                    onChange={e => handleSelectPO(e.target.value)}
+                    disabled={isFetchingPOItems}
+                    className="w-full p-2.5 bg-gray-100 rounded-xl text-sm outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50"
+                  >
+                    <option value="">Select PO (optional)...</option>
+                    {supplierUnpaidPOs.map(po => {
+                      const status = po.paymentStatus === 'partially_paid' ? 'Partial' : po.paymentStatus === 'unpaid' || !po.paymentStatus ? 'Unpaid' : po.paymentStatus.replace('_', ' ');
+                      return (
+                        <option key={po.id} value={po.id}>
+                          {po.poNumber} | ₱{po.totalAmount.toLocaleString('en-US', { minimumFractionDigits: 2 })} | {status}
+                        </option>
+                      );
+                    })}
+                  </select>
+                  {supplierUnpaidPOs.length === 0 && (
+                    <p className="text-[10px] text-gray-400">No open POs for this supplier.</p>
+                  )}
+                </>
+              )}
+
+              {isFetchingPOItems && (
+                <div className="flex items-center gap-2 text-xs text-gray-500">
+                  <Loader2 className="animate-spin" size={12} />
+                  <span>Loading PO items...</span>
+                </div>
+              )}
+            </Card>
+          )}
 
           {/* Items */}
           <Card className="p-4 space-y-3">
@@ -680,57 +759,6 @@ export const SuppliersInvoiceView = () => {
             </div>
           </Card>
 
-          {/* PO Reference — only when supplier selected from list and unpaid POs exist */}
-          {!editingInvoice && formSupplierId && supplierUnpaidPOs.length > 0 && (
-            <Card className="p-4 space-y-3">
-              <h3 className="text-[10px] font-black text-gray-400 uppercase tracking-[0.2em]">PO Reference (optional)</h3>
-              <p className="text-[10px] text-gray-400">Select POs from this supplier that this invoice covers.</p>
-              <div className="space-y-2">
-                {supplierUnpaidPOs.map(po => {
-                  const checked = linkedPOIds.includes(po.id);
-                  const statusLabel = po.paymentStatus === 'partially_paid' ? 'Partial' : 'Unpaid';
-                  const statusColor = po.paymentStatus === 'partially_paid' ? 'bg-yellow-100 text-yellow-700' : 'bg-gray-100 text-gray-500';
-                  return (
-                    <label
-                      key={po.id}
-                      className={cn(
-                        'flex items-center gap-3 p-3 rounded-xl border cursor-pointer transition-colors',
-                        checked ? 'border-blue-300 bg-blue-50' : 'border-gray-100 bg-gray-50 hover:bg-gray-100'
-                      )}
-                    >
-                      <input
-                        type="checkbox"
-                        checked={checked}
-                        onChange={() => toggleLinkedPO(po.id)}
-                        className="rounded accent-blue-600"
-                      />
-                      <div className="flex-1 min-w-0">
-                        <p className="text-sm font-bold text-gray-900">{po.poNumber}</p>
-                        {po.amountPaid && po.amountPaid > 0 && (
-                          <p className="text-[10px] text-gray-400">
-                            Paid: ₱{po.amountPaid.toLocaleString('en-US', { minimumFractionDigits: 2 })}
-                          </p>
-                        )}
-                      </div>
-                      <div className="text-right flex-shrink-0">
-                        <p className="text-sm font-black text-gray-900">
-                          ₱{po.totalAmount.toLocaleString('en-US', { minimumFractionDigits: 2 })}
-                        </p>
-                        <span className={cn('text-[9px] font-bold px-1.5 py-0.5 rounded-full', statusColor)}>
-                          {statusLabel}
-                        </span>
-                      </div>
-                    </label>
-                  );
-                })}
-              </div>
-              {linkedPOIds.length > 0 && (
-                <p className="text-[10px] font-bold text-blue-600">
-                  {linkedPOIds.length} PO{linkedPOIds.length !== 1 ? 's' : ''} selected
-                </p>
-              )}
-            </Card>
-          )}
 
           {/* Payment Recording */}
           {!editingInvoice && (
@@ -808,6 +836,11 @@ export const SuppliersInvoiceView = () => {
                         placeholder="0.00"
                         className="w-full p-2.5 bg-gray-100 rounded-xl text-sm outline-none focus:ring-2 focus:ring-blue-500"
                       />
+                      {computedTotal > 0 && paymentAmount && parseFloat(paymentAmount) !== computedTotal && (
+                        <p className="text-[10px] text-gray-400">
+                          Invoice: ₱{computedTotal.toLocaleString('en-US', { minimumFractionDigits: 2 })} · Paying: ₱{parseFloat(paymentAmount).toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                        </p>
+                      )}
                     </div>
                     <div className="space-y-1.5">
                       <label className="text-xs font-bold text-gray-400 uppercase tracking-wider">Payment Date *</label>

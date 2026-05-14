@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { ChevronRight, Package, Filter, MapPin, Box, Users, Shield, Trash2, AlertCircle, Loader2, Check, LogOut, Hammer, UserCheck, Tag, Archive, Database, RotateCcw, Download, Upload } from 'lucide-react';
 import { useAuth, useData } from '../../App';
 import { clearInventoryData, updateSystemConfig } from '../../services/inventoryService';
-import { downloadBackup, restoreFromBackup, validateBackup } from '../../services/backupService';
+import { downloadBackup, restoreFromBackup, validateBackup, backupUndeliveredRequests, restoreUndeliveredRequests, validateUndeliveredRequestsBackup, UndeliveredRequestsBackup } from '../../services/backupService';
 import { cn } from '../../lib/utils';
 import { Header } from '../common/Header';
 import { Card } from '../common/Card';
@@ -27,6 +27,17 @@ export const SettingsView = () => {
   const [restoreFile, setRestoreFile] = useState<File | null>(null);
   const [showRestoreConfirm, setShowRestoreConfirm] = useState(false);
   const restoreInputRef = useRef<HTMLInputElement>(null);
+
+  // Requests backup & restore state
+  const [isBackingUpRequests, setIsBackingUpRequests] = useState(false);
+  const [isRestoringRequests, setIsRestoringRequests] = useState(false);
+  const [requestsBackupMsg, setRequestsBackupMsg] = useState<{ type: 'success' | 'error' | 'progress'; text: string } | null>(null);
+  const [requestsRestoreFile, setRequestsRestoreFile] = useState<File | null>(null);
+  const [requestsRestoreParsed, setRequestsRestoreParsed] = useState<UndeliveredRequestsBackup | null>(null);
+  const [showRequestsRestoreConfirm, setShowRequestsRestoreConfirm] = useState(false);
+  const [requestsRestoreLocOptions, setRequestsRestoreLocOptions] = useState<{ id: string; name: string; count: number }[]>([]);
+  const [requestsRestoreSelectedLocs, setRequestsRestoreSelectedLocs] = useState<Set<string>>(new Set());
+  const requestsRestoreInputRef = useRef<HTMLInputElement>(null);
 
   const assignedLocations = locations.filter(l => profile?.assignedLocationIds?.includes(l.id));
 
@@ -135,6 +146,79 @@ export const SettingsView = () => {
     } finally {
       setIsRestoring(false);
       setRestoreFile(null);
+    }
+  };
+
+  const handleDownloadRequestsBackup = async () => {
+    setIsBackingUpRequests(true);
+    setRequestsBackupMsg({ type: 'progress', text: 'Fetching pending/approved requests…' });
+    try {
+      await backupUndeliveredRequests();
+      setRequestsBackupMsg({ type: 'success', text: 'Requests backup downloaded.' });
+    } catch (err) {
+      console.error('Requests backup failed:', err);
+      setRequestsBackupMsg({ type: 'error', text: 'Backup failed. Please try again.' });
+    } finally {
+      setIsBackingUpRequests(false);
+    }
+  };
+
+  const handleRequestsRestoreFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    e.target.value = '';
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(await file.text());
+    } catch {
+      setRequestsBackupMsg({ type: 'error', text: 'File is not valid JSON.' });
+      return;
+    }
+    if (!validateUndeliveredRequestsBackup(parsed)) {
+      setRequestsBackupMsg({ type: 'error', text: 'Invalid format — not an undelivered requests backup.' });
+      return;
+    }
+    // Build per-location counts from the parsed requests
+    const locCountMap = new Map<string, number>();
+    for (const req of parsed.requests) {
+      const lid = (req as any).jobsiteId as string | undefined;
+      if (lid) locCountMap.set(lid, (locCountMap.get(lid) ?? 0) + 1);
+    }
+    const locOptions = Array.from(locCountMap.entries()).map(([id, count]) => ({
+      id,
+      name: locations.find(l => l.id === id)?.name ?? id,
+      count,
+    }));
+    setRequestsRestoreLocOptions(locOptions);
+    setRequestsRestoreSelectedLocs(new Set(locCountMap.keys()));
+    setRequestsRestoreFile(file);
+    setRequestsRestoreParsed(parsed);
+    setShowRequestsRestoreConfirm(true);
+  };
+
+  const handleRequestsRestoreConfirm = async () => {
+    if (!requestsRestoreParsed) return;
+    setShowRequestsRestoreConfirm(false);
+    setIsRestoringRequests(true);
+    setRequestsBackupMsg({ type: 'progress', text: 'Restoring requests…' });
+    try {
+      const filteredRequests = requestsRestoreParsed.requests.filter(
+        (r: any) => requestsRestoreSelectedLocs.has(r.jobsiteId)
+      );
+      const filteredBackup = { ...requestsRestoreParsed, requests: filteredRequests, totalRequests: filteredRequests.length };
+      await restoreUndeliveredRequests(filteredBackup, (msg) => {
+        setRequestsBackupMsg({ type: 'progress', text: msg });
+      });
+      setRequestsBackupMsg({ type: 'success', text: `${filteredRequests.length} request(s) restored successfully.` });
+    } catch (err) {
+      console.error('Requests restore failed:', err);
+      setRequestsBackupMsg({ type: 'error', text: 'Restore failed. Please try again.' });
+    } finally {
+      setIsRestoringRequests(false);
+      setRequestsRestoreFile(null);
+      setRequestsRestoreParsed(null);
+      setRequestsRestoreLocOptions([]);
+      setRequestsRestoreSelectedLocs(new Set());
     }
   };
 
@@ -347,6 +431,62 @@ export const SettingsView = () => {
 
         {profile?.role === 'admin' && (
           <div className="space-y-2">
+            <h3 className="text-xs font-bold text-gray-400 uppercase tracking-widest px-2">Requests Backup</h3>
+            <Card className="p-4 space-y-3">
+              <p className="text-[10px] text-gray-500 font-medium leading-snug">
+                Backup and restore only pending and approved requests. Use this before clearing a location to preserve undelivered work orders.
+              </p>
+
+              {requestsBackupMsg && (
+                <div className={cn(
+                  'p-3 rounded-xl text-xs font-bold flex items-center gap-2',
+                  requestsBackupMsg.type === 'success' && 'bg-green-100 text-green-700',
+                  requestsBackupMsg.type === 'error'   && 'bg-red-100 text-red-700',
+                  requestsBackupMsg.type === 'progress' && 'bg-blue-50 text-blue-700',
+                )}>
+                  {requestsBackupMsg.type === 'progress' && <Loader2 size={14} className="animate-spin shrink-0" />}
+                  {requestsBackupMsg.type === 'success'  && <Check size={14} className="shrink-0" />}
+                  {requestsBackupMsg.type === 'error'    && <AlertCircle size={14} className="shrink-0" />}
+                  <span>{requestsBackupMsg.text}</span>
+                </div>
+              )}
+
+              <button
+                onClick={handleDownloadRequestsBackup}
+                disabled={isBackingUpRequests || isRestoringRequests}
+                className={cn(
+                  'w-full py-3 bg-blue-600 text-white rounded-xl font-bold flex items-center justify-center gap-2 active:scale-95 transition-transform',
+                  (isBackingUpRequests || isRestoringRequests) && 'opacity-60 cursor-not-allowed',
+                )}
+              >
+                {isBackingUpRequests ? <Loader2 size={18} className="animate-spin" /> : <Download size={18} />}
+                <span>{isBackingUpRequests ? 'Backing Up…' : 'Download Requests Backup'}</span>
+              </button>
+
+              <input
+                ref={requestsRestoreInputRef}
+                type="file"
+                accept=".json"
+                className="hidden"
+                onChange={handleRequestsRestoreFileSelect}
+              />
+              <button
+                onClick={() => requestsRestoreInputRef.current?.click()}
+                disabled={isBackingUpRequests || isRestoringRequests}
+                className={cn(
+                  'w-full py-3 bg-amber-500 text-white rounded-xl font-bold flex items-center justify-center gap-2 active:scale-95 transition-transform',
+                  (isBackingUpRequests || isRestoringRequests) && 'opacity-60 cursor-not-allowed',
+                )}
+              >
+                {isRestoringRequests ? <Loader2 size={18} className="animate-spin" /> : <Upload size={18} />}
+                <span>{isRestoringRequests ? 'Restoring…' : 'Restore Requests'}</span>
+              </button>
+            </Card>
+          </div>
+        )}
+
+        {profile?.role === 'admin' && (
+          <div className="space-y-2">
             <h3 className="text-xs font-bold text-red-400 uppercase tracking-widest px-2">Danger Zone</h3>
             <Card className="p-4 bg-red-50 border-red-100">
               {statusMessage && (
@@ -420,6 +560,93 @@ export const SettingsView = () => {
               </button>
               <button
                 onClick={() => { setShowRestoreConfirm(false); setRestoreFile(null); }}
+                className="w-full py-4 bg-gray-100 text-gray-600 rounded-2xl font-black uppercase tracking-widest text-xs active:scale-95 transition-transform"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </Modal>
+
+        <Modal
+          isOpen={showRequestsRestoreConfirm}
+          onClose={() => { setShowRequestsRestoreConfirm(false); setRequestsRestoreFile(null); setRequestsRestoreParsed(null); setRequestsRestoreLocOptions([]); setRequestsRestoreSelectedLocs(new Set()); }}
+          title="Restore Requests"
+        >
+          <div className="space-y-4">
+            <div className="p-4 bg-amber-50 rounded-2xl border border-amber-100 flex items-start gap-3">
+              <AlertCircle className="text-amber-600 shrink-0 mt-0.5" size={20} />
+              <div className="space-y-1">
+                <p className="text-sm font-bold text-amber-900">Existing requests with the same IDs will be overwritten.</p>
+                <p className="text-xs text-amber-700 font-medium leading-relaxed">
+                  Only requests for the selected locations will be restored. Other requests in the database are not affected.
+                </p>
+              </div>
+            </div>
+
+            {requestsRestoreFile && requestsRestoreParsed && (
+              <div className="p-3 bg-gray-50 rounded-xl border border-gray-100 space-y-1">
+                <p className="text-xs font-bold text-gray-700">{requestsRestoreFile.name}</p>
+                <p className="text-[10px] text-gray-500">{(requestsRestoreFile.size / 1024).toFixed(1)} KB &middot; {requestsRestoreParsed.totalRequests} request(s)</p>
+                <p className="text-[10px] text-gray-400">Backed up: {new Date(requestsRestoreParsed.timestamp).toLocaleString()}</p>
+              </div>
+            )}
+
+            {requestsRestoreLocOptions.length > 0 && (
+              <div className="space-y-2">
+                <div className="flex items-center justify-between px-1">
+                  <p className="text-xs font-bold text-gray-600 uppercase tracking-widest">Locations</p>
+                  <div className="flex gap-3">
+                    <button
+                      onClick={() => setRequestsRestoreSelectedLocs(new Set(requestsRestoreLocOptions.map(l => l.id)))}
+                      className="text-[10px] font-bold text-blue-600 active:opacity-60"
+                    >All</button>
+                    <button
+                      onClick={() => setRequestsRestoreSelectedLocs(new Set())}
+                      className="text-[10px] font-bold text-gray-400 active:opacity-60"
+                    >None</button>
+                  </div>
+                </div>
+                <div className="divide-y divide-gray-100 rounded-xl border border-gray-100 overflow-hidden">
+                  {requestsRestoreLocOptions.map(loc => (
+                    <label key={loc.id} className="flex items-center gap-3 px-3 py-2.5 bg-white cursor-pointer active:bg-gray-50">
+                      <input
+                        type="checkbox"
+                        checked={requestsRestoreSelectedLocs.has(loc.id)}
+                        onChange={(e) => {
+                          const next = new Set(requestsRestoreSelectedLocs);
+                          e.target.checked ? next.add(loc.id) : next.delete(loc.id);
+                          setRequestsRestoreSelectedLocs(next);
+                        }}
+                        className="w-4 h-4 rounded border-gray-300 text-amber-500 focus:ring-amber-400"
+                      />
+                      <span className="flex-1 text-xs font-bold text-gray-800">{loc.name}</span>
+                      <span className="text-[10px] font-bold text-gray-400">{loc.count} req</span>
+                    </label>
+                  ))}
+                </div>
+                <p className="text-[10px] text-gray-400 px-1">
+                  {requestsRestoreSelectedLocs.size === 0
+                    ? 'No locations selected — nothing will be restored.'
+                    : `${requestsRestoreParsed?.requests.filter((r: any) => requestsRestoreSelectedLocs.has(r.jobsiteId)).length ?? 0} of ${requestsRestoreParsed?.totalRequests} request(s) will be restored.`
+                  }
+                </p>
+              </div>
+            )}
+
+            <div className="flex flex-col gap-2">
+              <button
+                onClick={handleRequestsRestoreConfirm}
+                disabled={requestsRestoreSelectedLocs.size === 0}
+                className={cn(
+                  'w-full py-4 bg-amber-500 text-white rounded-2xl font-black uppercase tracking-widest text-xs active:scale-95 transition-transform shadow-lg shadow-amber-200',
+                  requestsRestoreSelectedLocs.size === 0 && 'opacity-40 cursor-not-allowed',
+                )}
+              >
+                Yes, Restore Requests
+              </button>
+              <button
+                onClick={() => { setShowRequestsRestoreConfirm(false); setRequestsRestoreFile(null); setRequestsRestoreParsed(null); setRequestsRestoreLocOptions([]); setRequestsRestoreSelectedLocs(new Set()); }}
                 className="w-full py-4 bg-gray-100 text-gray-600 rounded-2xl font-black uppercase tracking-widest text-xs active:scale-95 transition-transform"
               >
                 Cancel

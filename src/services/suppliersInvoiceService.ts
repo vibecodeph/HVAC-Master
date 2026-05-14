@@ -196,6 +196,7 @@ export const updateSuppliersInvoice = async (
   newData: InvoiceFormData
 ): Promise<void> => {
   const userId = auth.currentUser?.uid;
+  const userName = auth.currentUser?.displayName || '';
   if (!userId) throw new Error('User not authenticated');
 
   try {
@@ -234,7 +235,7 @@ export const updateSuppliersInvoice = async (
         invNetDelta.set(path, (invNetDelta.get(path) || 0) + item.quantity);
       });
 
-      // Apply inventory changes
+      // Apply inventory changes + create transaction records
       for (const [path, delta] of invNetDelta) {
         if (delta === 0) continue;
         const ref = invRefMap.get(path)!;
@@ -255,6 +256,33 @@ export const updateSuppliersInvoice = async (
               quantity: newQty,
             });
           }
+        }
+
+        // Transaction record for audit trail
+        const isAddition = delta > 0;
+        const sourceItem = isAddition
+          ? newData.items.find(i => getInventoryRef(i.itemId, newData.locationId, i.variant).path === path)
+          : invoice.items.find(i => getInventoryRef(i.itemId, invoice.locationId, i.variant).path === path);
+        if (sourceItem) {
+          const txnDocRef = doc(collection(db, 'transactions'));
+          txn.set(txnDocRef, {
+            itemId: sourceItem.itemId,
+            variant: sourceItem.variant && Object.keys(sourceItem.variant).length > 0 ? sourceItem.variant : null,
+            quantity: delta,
+            uomId: sourceItem.uomId,
+            conversionFactor: 1,
+            baseQuantity: delta,
+            type: 'supplier_invoice',
+            toLocationId: isAddition ? newData.locationId : null,
+            fromLocationId: isAddition ? null : invoice.locationId,
+            unitPrice: sourceItem.unitPrice,
+            totalPrice: Math.abs(delta) * sourceItem.unitPrice,
+            supplierInvoice: newData.billNumber,
+            notes: `Edit — Supplier: ${newData.supplierName} — Bill#: ${newData.billNumber}`,
+            timestamp: serverTimestamp(),
+            userId,
+            userName,
+          });
         }
       }
 

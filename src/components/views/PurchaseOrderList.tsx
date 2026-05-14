@@ -2,7 +2,8 @@ import React, { useState, useMemo, useRef, useEffect } from 'react';
 import { Plus, Search, FileText, Calendar, User, ChevronRight, Filter, MoreVertical, Edit2, Trash2, ExternalLink, Package, Download, Upload, Loader2, AlertCircle, CheckCircle2, Printer, Settings } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { PurchaseOrder, Location, Item, UOM, UserProfile } from '../../types';
-import { deletePurchaseOrder } from '../../services/inventoryService';
+import { deletePurchaseOrder, getAllPOPayments } from '../../services/inventoryService';
+import { POPayment } from '../../types';
 import { cn } from '../../lib/utils';
 import { format } from 'date-fns';
 import { CreditCard, DollarSign } from 'lucide-react';
@@ -62,14 +63,27 @@ export const PurchaseOrderList = ({ purchaseOrders, locations, items, uoms, prof
   };
 
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [isExporting, setIsExporting] = useState(false);
 
   const handleDelete = async (id: string) => {
     await deletePurchaseOrder(id);
     setDeletingId(null);
   };
 
-  const handleExport = () => {
-    exportPurchaseOrdersToCSV(purchaseOrders, locations, items, uoms);
+  const handleExport = async () => {
+    setIsExporting(true);
+    try {
+      const paymentsMap = new Map<string, POPayment[]>();
+      await Promise.all(
+        purchaseOrders.map(async po => {
+          const payments = await getAllPOPayments(po.id);
+          if (payments.length > 0) paymentsMap.set(po.id, payments);
+        })
+      );
+      exportPurchaseOrdersToCSV(purchaseOrders, locations, items, uoms, paymentsMap);
+    } finally {
+      setIsExporting(false);
+    }
   };
 
   const handleImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -120,12 +134,13 @@ export const PurchaseOrderList = ({ purchaseOrders, locations, items, uoms, prof
               <span className="text-[10px] font-black uppercase tracking-widest hidden sm:inline">Template</span>
             </button>
           )}
-          <button 
+          <button
             onClick={handleExport}
+            disabled={isExporting}
             title="Export to CSV"
-            className="p-4 bg-white text-gray-600 rounded-2xl shadow-sm border border-gray-100 active:scale-95 transition-transform"
+            className={cn("p-4 bg-white text-gray-600 rounded-2xl shadow-sm border border-gray-100 active:scale-95 transition-transform", isExporting && "opacity-60 cursor-not-allowed")}
           >
-            <Download size={24} />
+            {isExporting ? <Loader2 size={24} className="animate-spin" /> : <Download size={24} />}
           </button>
           <button 
             onClick={() => fileInputRef.current?.click()}

@@ -961,6 +961,16 @@ export const deletePurchaseOrder = async (id: string) => {
 
 // --- PO Payment Operations ---
 
+export const getAllPOPayments = async (poId: string): Promise<POPayment[]> => {
+  try {
+    const snap = await getDocs(collection(db, 'purchase_orders', poId, 'payments'));
+    return snap.docs.map(d => ({ id: d.id, ...d.data() } as POPayment));
+  } catch (error) {
+    handleFirestoreError(error, OperationType.LIST, `purchase_orders/${poId}/payments`);
+    return [];
+  }
+};
+
 export const subscribeToPOPayments = (poId: string, callback: (payments: POPayment[]) => void) => {
   const q = query(collection(db, 'purchase_orders', poId, 'payments'), orderBy('date', 'desc'));
   return onSnapshot(q, (snapshot) => {

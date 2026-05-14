@@ -1,6 +1,6 @@
 import Papa from 'papaparse';
-import { Item, Category, UOM, BOQItem, Tag, PurchaseOrder, PurchaseOrderItem, Location } from '../types';
-import { addItem, updateItem, addPurchaseOrder, updatePurchaseOrder, addLocation, updateLocation } from './inventoryService';
+import { Item, Category, UOM, BOQItem, Tag, PurchaseOrder, PurchaseOrderItem, Location, POPayment } from '../types';
+import { addItem, updateItem, addPurchaseOrder, updatePurchaseOrder, addLocation, updateLocation, addPOPayment } from './inventoryService';
 import { Timestamp } from 'firebase/firestore';
 import { format, parse, isValid } from 'date-fns';
 
@@ -41,6 +41,7 @@ export interface CSVPOItemRow {
   'Supplier': string;
   'Status': string;
   'Payment Status'?: string;
+  'Amount Paid'?: string;
   'Total Amount'?: string;
   'Notes'?: string;
   'Item Name': string;
@@ -50,13 +51,15 @@ export interface CSVPOItemRow {
   'Unit Price': string;
   'Received Qty'?: string;
   'Item Note'?: string;
+  'Payments'?: string;
 }
 
 export const exportPurchaseOrdersToCSV = (
   purchaseOrders: PurchaseOrder[],
   locations: Location[],
   items: Item[],
-  uoms: UOM[]
+  uoms: UOM[],
+  paymentsMap: Map<string, POPayment[]> = new Map()
 ) => {
   const data: CSVPOItemRow[] = [];
 
@@ -72,7 +75,25 @@ export const exportPurchaseOrdersToCSV = (
       }
     }
 
-    po.items.forEach(poItem => {
+    // Encode payments as a compact string on the first item row only
+    const poPayments = paymentsMap.get(po.id) || [];
+    const paymentsStr = poPayments.map(p => {
+      let pDateStr = '';
+      try { pDateStr = p.date ? format(p.date.toDate(), 'yyyy-MM-dd') : ''; } catch {}
+      const deductionsStr = (p.deductions || []).map(d => `${d.type}:${d.amount}`).join(',');
+      return [
+        pDateStr,
+        p.cvNumber || '',
+        p.grossAmount ?? 0,
+        p.amount ?? 0,
+        p.status || '',
+        p.chequeNumber || '',
+        p.notes || '',
+        deductionsStr,
+      ].join('|');
+    }).join('; ');
+
+    po.items.forEach((poItem, itemIndex) => {
       const item = items.find(i => i.id === poItem.itemId);
       const uom = uoms.find(u => u.id === poItem.uomId);
       const variantStr = (poItem.variant && Object.keys(poItem.variant).length > 0) ? `[${Object.entries(poItem.variant).map(([k, v]) => `${k}:${v}`).join(', ')}]` : '';
@@ -83,6 +104,7 @@ export const exportPurchaseOrdersToCSV = (
         'Supplier': supplier?.name || po.supplierId,
         'Status': po.status,
         'Payment Status': po.paymentStatus || 'unpaid',
+        'Amount Paid': (po.amountPaid || 0).toString(),
         'Total Amount': po.totalAmount.toString(),
         'Notes': po.notes || '',
         'Item Name': item?.name || poItem.itemId,
@@ -91,7 +113,8 @@ export const exportPurchaseOrdersToCSV = (
         'UOM': uom?.symbol || poItem.uomId,
         'Unit Price': poItem.unitPrice.toString(),
         'Received Qty': (poItem.receivedQuantity || 0).toString(),
-        'Item Note': poItem.note || ''
+        'Item Note': poItem.note || '',
+        'Payments': itemIndex === 0 ? paymentsStr : '',
       });
     });
   });
@@ -233,7 +256,48 @@ export const importPurchaseOrdersFromCSV = async (
               totalAmount: parseFloat((firstRow['Total Amount'] || '').toString().replace(/,/g, '')) || totalAmount
             };
 
-            await addPurchaseOrder(poData);
+            const newPoId = await addPurchaseOrder(poData);
+
+            // Restore payment records if present
+            if (newPoId && firstRow['Payments']) {
+              const paymentEntries = (firstRow['Payments'] as string).split('; ').filter(Boolean);
+              for (const entry of paymentEntries) {
+                const parts = entry.split('|');
+                const [dateStr, cvNumber, grossAmtStr, amtStr, status, chequeNumber, notes, deductionsStr] = parts;
+
+                let payDate = Timestamp.now();
+                if (dateStr?.trim()) {
+                  const d = parse(dateStr.trim(), 'yyyy-MM-dd', new Date());
+                  if (isValid(d)) payDate = Timestamp.fromDate(d);
+                }
+
+                const deductions: { type: string; amount: number }[] = deductionsStr
+                  ? deductionsStr.split(',').map(d => {
+                      const colonIdx = d.lastIndexOf(':');
+                      if (colonIdx < 1) return null;
+                      return { type: d.slice(0, colonIdx).trim(), amount: parseFloat(d.slice(colonIdx + 1)) || 0 };
+                    }).filter(Boolean) as { type: string; amount: number }[]
+                  : [];
+
+                const validStatuses: POPayment['status'][] = ['processing', 'prepared', 'collected', 'bank_deposit'];
+                const payStatus = validStatuses.includes(status?.trim() as POPayment['status'])
+                  ? (status.trim() as POPayment['status'])
+                  : 'processing';
+
+                await addPOPayment(newPoId, {
+                  poId: newPoId,
+                  date: payDate,
+                  cvNumber: cvNumber?.trim() || '',
+                  grossAmount: parseFloat(grossAmtStr) || 0,
+                  amount: parseFloat(amtStr) || 0,
+                  status: payStatus,
+                  chequeNumber: chequeNumber?.trim() || undefined,
+                  notes: notes?.trim() || undefined,
+                  deductions,
+                });
+              }
+            }
+
             successCount++;
             if (onProgress) onProgress(i + 1, poNumbers.length);
           } catch (err: any) {

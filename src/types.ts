@@ -44,6 +44,7 @@ export interface VariantConfig {
   variant: Record<string, string>;
   reorderLevel?: number;
   averageCost?: number;
+  isRequired?: boolean; // per-combination override; undefined/true = required, false = optional
 }
 
 export interface ItemComponent {

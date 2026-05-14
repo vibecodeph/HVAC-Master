@@ -382,7 +382,7 @@ service cloud.firestore {
       return data.poNumber is string && data.poNumber.size() <= 50 &&
              data.supplierId is string && data.supplierId.size() <= 50 &&
              data.status in ['draft', 'sent', 'partially_received', 'received', 'cancelled'] &&
-             (!('paymentStatus' in data) || data.paymentStatus in ['unpaid', 'processing', 'prepared', 'paid', 'partially_paid', 'fully_paid']) &&
+             (!('paymentStatus' in data) || data.paymentStatus in ['unpaid', 'processing', 'prepared', 'paid', 'partially_paid', 'fully_paid', 'with_invoice']) &&
              (!('amountPaid' in data) || data.amountPaid is number) &&
              data.totalAmount is number &&
              data.date is timestamp &&

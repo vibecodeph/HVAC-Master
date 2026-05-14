@@ -941,10 +941,10 @@ export const ItemForm = ({ uoms, categories, locations, items, initialData, isDu
   const [newConversionFactor, setNewConversionFactor] = useState<number | ''>('');
   const [attributes, setAttributes] = useState<{ name: string; values: string[] }[]>(initialData?.variantAttributes || []);
   const [newAttrName, setNewAttrName] = useState('');
-  const [variantConfigs, setVariantConfigs] = useState<Record<string, { reorderLevel?: number; averageCost?: number }>>(() => {
-    const initial: Record<string, { reorderLevel?: number; averageCost?: number }> = {};
+  const [variantConfigs, setVariantConfigs] = useState<Record<string, { reorderLevel?: number; averageCost?: number; isRequired?: boolean }>>(() => {
+    const initial: Record<string, { reorderLevel?: number; averageCost?: number; isRequired?: boolean }> = {};
     initialData?.variantConfigs?.forEach(vc => {
-      initial[normalizeVariant(vc.variant)] = { reorderLevel: vc.reorderLevel, averageCost: vc.averageCost };
+      initial[normalizeVariant(vc.variant)] = { reorderLevel: vc.reorderLevel, averageCost: vc.averageCost, isRequired: vc.isRequired };
     });
     return initial;
   });
@@ -1020,13 +1020,14 @@ export const ItemForm = ({ uoms, categories, locations, items, initialData, isDu
           variantConfigs: combinations
             .map(variant => {
               const key = normalizeVariant(variant);
-              const config = variantConfigs[key];
-              if (!config) return null;
-              if (config.reorderLevel === undefined && config.averageCost === undefined) return null;
+              const config = variantConfigs[key] || {};
+              const hasData = config.reorderLevel !== undefined || config.averageCost !== undefined || config.isRequired === false;
+              if (!hasData) return null;
               return {
                 variant,
-                reorderLevel: config.reorderLevel,
-                averageCost: config.averageCost
+                ...(config.reorderLevel !== undefined ? { reorderLevel: config.reorderLevel } : {}),
+                ...(config.averageCost !== undefined ? { averageCost: config.averageCost } : {}),
+                ...(config.isRequired === false ? { isRequired: false } : {}),
               };
             })
             .filter((vc): vc is any => vc !== null),
@@ -1275,6 +1276,46 @@ export const ItemForm = ({ uoms, categories, locations, items, initialData, isDu
                 requireVariant ? "left-7" : "left-1"
               )} />
             </button>
+          </div>
+        )}
+
+        {combinations.length > 0 && (
+          <div className="space-y-2">
+            <label className="text-xs font-bold text-gray-400 uppercase tracking-wider pl-1">Variant Required Settings</label>
+            {combinations.map((variant, idx) => {
+              const key = normalizeVariant(variant);
+              const isReq = variantConfigs[key]?.isRequired !== false;
+              return (
+                <div key={idx} className="flex items-center justify-between px-3 py-2.5 bg-gray-50 rounded-xl border border-gray-100">
+                  <div className="flex flex-wrap gap-1">
+                    {Object.entries(variant).map(([k, v]) => (
+                      <span key={k} className="px-2 py-0.5 bg-white border border-gray-200 text-gray-700 text-[9px] font-black uppercase rounded tracking-widest">{v}</span>
+                    ))}
+                  </div>
+                  <div className="flex items-center space-x-2 flex-shrink-0">
+                    <span className={cn("text-[9px] font-black uppercase tracking-widest", isReq ? "text-blue-600" : "text-gray-400")}>
+                      {isReq ? "Required" : "Optional"}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setVariantConfigs(prev => ({
+                        ...prev,
+                        [key]: { ...(prev[key] || {}), isRequired: !isReq }
+                      }))}
+                      className={cn(
+                        "w-10 h-5 rounded-full transition-colors relative flex-shrink-0",
+                        isReq ? "bg-blue-600" : "bg-gray-300"
+                      )}
+                    >
+                      <div className={cn(
+                        "absolute top-0.5 w-4 h-4 bg-white rounded-full transition-all",
+                        isReq ? "left-5" : "left-0.5"
+                      )} />
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
           </div>
         )}
 

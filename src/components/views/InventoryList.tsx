@@ -169,6 +169,18 @@ const ItemCard = ({
                                 {String(v)}
                               </span>
                             ))}
+                            {(() => {
+                              const vc = item.variantConfigs?.find((c: any) => normalizeVariant(c.variant) === normalizeVariant(variantToMatch));
+                              const isReq = !vc || vc.isRequired !== false;
+                              return (
+                                <span className={cn(
+                                  "text-[8px] px-1.5 py-0.5 rounded-full font-black uppercase tracking-widest self-center",
+                                  isReq ? "bg-blue-100 text-blue-500" : "bg-gray-100 text-gray-400"
+                                )}>
+                                  {isReq ? "Required" : "Optional"}
+                                </span>
+                              );
+                            })()}
                           </div>
                         )}
                         {invList[0]?.customSpec && (

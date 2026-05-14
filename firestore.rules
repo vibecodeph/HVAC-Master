@@ -468,7 +468,7 @@ service cloud.firestore {
 
     match /items/{itemId} {
       allow read: if isApproved();
-      allow create: if isAdmin() && hasRequiredFields(['id', 'name', 'uomId', 'isTool', 'isActive', 'createdAt']) && isValidItem(request.resource.data);
+      allow create: if isAdmin() && isValidItem(request.resource.data);
       allow update: if isAdmin() || (isApproved() && (isWarehouseman() || isEngineer()) && isValidItem(request.resource.data) && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['averageCost', 'averageCostPerVariant', 'totalQuantity', 'updatedAt', 'updatedBy'])) || (isApproved() && request.auth.token.get('role', '') == 'worker' && isValidItem(request.resource.data) && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['totalQuantity']));
       allow delete: if isAdmin();
     }

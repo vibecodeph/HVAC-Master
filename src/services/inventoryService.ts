@@ -3302,6 +3302,20 @@ export const clearLocationInventory = async (
     d.data().status !== 'delivered' && !!d.data().batchId
   );
 
+  // Collect all batchIds from requests at this location (pick transactions reference the
+  // location only via batchId — their fromLocationId points to the warehouse, not the jobsite)
+  const batchIds = [...new Set(
+    requestsSnap.docs.map(d => d.data().batchId as string | undefined).filter(Boolean) as string[]
+  )];
+  // Query transactions by batchId in chunks of 30 (Firestore 'in' limit)
+  for (let i = 0; i < batchIds.length; i += 30) {
+    const snap = await getDocs(query(
+      collection(db, 'transactions'),
+      where('batchId', 'in', batchIds.slice(i, i + 30))
+    ));
+    for (const d of snap.docs) txRefsToDelete.set(d.id, d.ref);
+  }
+
   // Only redirect POs that have already been (partially) delivered
   const deliveredPOs = posSnap.docs.filter(d =>
     ['partially_received', 'received'].includes(d.data().status)

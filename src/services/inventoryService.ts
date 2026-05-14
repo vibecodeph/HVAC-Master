@@ -3294,8 +3294,13 @@ export const clearLocationInventory = async (
   const txRefsToDelete = new Map<string, ReturnType<typeof doc>>();
   for (const d of [...txFromSnap.docs, ...txToSnap.docs]) txRefsToDelete.set(d.id, d.ref);
 
-  // Requests that have a DR assignment to clear
-  const requestsWithBatch = requestsSnap.docs.filter(d => !!d.data().batchId);
+  // Delivered requests are terminal — delete them entirely
+  const deliveredRequests = requestsSnap.docs.filter(d => d.data().status === 'delivered');
+
+  // In-flight requests that have a DR batchId — remove the assignment so they can be reassigned
+  const requestsWithBatch = requestsSnap.docs.filter(d =>
+    d.data().status !== 'delivered' && !!d.data().batchId
+  );
 
   // Only redirect POs that have already been (partially) delivered
   const deliveredPOs = posSnap.docs.filter(d =>
@@ -3384,21 +3389,28 @@ export const clearLocationInventory = async (
     await batch.commit();
   }
 
-  // 2b: Remove batchId from requests that had a DR assignment at this location
+  // 2b: Delete delivered requests (terminal — no longer needed after location is cleared)
+  for (let i = 0; i < deliveredRequests.length; i += BATCH) {
+    const batch = writeBatch(db);
+    deliveredRequests.slice(i, i + BATCH).forEach(d => batch.delete(d.ref));
+    await batch.commit();
+  }
+
+  // 2c: Remove batchId from in-flight requests that had a DR assignment at this location
   for (let i = 0; i < requestsWithBatch.length; i += BATCH) {
     const batch = writeBatch(db);
     requestsWithBatch.slice(i, i + BATCH).forEach(d => batch.update(d.ref, { batchId: deleteField() }));
     await batch.commit();
   }
 
-  // 2c: Redirect delivered POs from this location to Main Warehouse
+  // 2d: Redirect delivered POs from this location to Main Warehouse
   for (let i = 0; i < deliveredPOs.length; i += BATCH) {
     const batch = writeBatch(db);
     deliveredPOs.slice(i, i + BATCH).forEach(d => batch.update(d.ref, { toLocationId: mainWarehouseId }));
     await batch.commit();
   }
 
-  // 2d: Redirect all supplier invoices from this location to Main Warehouse
+  // 2e: Redirect all supplier invoices from this location to Main Warehouse
   for (let i = 0; i < invoicesSnap.docs.length; i += BATCH) {
     const batch = writeBatch(db);
     invoicesSnap.docs.slice(i, i + BATCH).forEach(d => batch.update(d.ref, { toLocationId: mainWarehouseId }));
@@ -3414,6 +3426,7 @@ export const clearLocationInventory = async (
     itemsCleared,
     boqCleared: boqSnap.docs.length,
     transactionsDeleted: txRefs.length,
+    deliveredRequestsDeleted: deliveredRequests.length,
     requestsUpdated: requestsWithBatch.length,
     posUpdated: deliveredPOs.length,
     invoicesUpdated: invoicesSnap.docs.length,

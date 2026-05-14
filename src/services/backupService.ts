@@ -177,14 +177,12 @@ export const restoreFromBackup = async (
     onProgress(`Deleting ${name}…`, step++, total);
 
     if (name === 'purchase_orders') {
-      // Must delete subcollections before (or after) deleting PO docs
       const poSnap = await getDocs(collection(db, 'purchase_orders'));
       for (const d of poSnap.docs) {
         await deleteCollection(`purchase_orders/${d.id}/items`);
         await deleteCollection(`purchase_orders/${d.id}/payments`);
       }
     }
-
     await deleteCollection(name, name === 'users' ? preserveAdminUid : undefined);
   }
 

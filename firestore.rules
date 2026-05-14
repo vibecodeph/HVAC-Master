@@ -468,32 +468,35 @@ service cloud.firestore {
 
     match /items/{itemId} {
       allow read: if isApproved();
-      allow create: if isAdmin() && isValidItem(request.resource.data);
+      allow create: if isAdmin();
       allow update: if isAdmin() || (isApproved() && (isWarehouseman() || isEngineer()) && isValidItem(request.resource.data) && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['averageCost', 'averageCostPerVariant', 'totalQuantity', 'updatedAt', 'updatedBy'])) || (isApproved() && request.auth.token.get('role', '') == 'worker' && isValidItem(request.resource.data) && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['totalQuantity']));
       allow delete: if isAdmin();
     }
 
     match /categories/{categoryId} {
       allow read: if isApproved();
-      allow create, update: if isAdmin() && isValidCategory(request.resource.data);
+      allow create: if isAdmin();
+      allow update: if isAdmin() && isValidCategory(request.resource.data);
       allow delete: if isAdmin();
     }
 
     match /locations/{locationId} {
       allow read: if isApproved();
-      allow create, update: if isAdmin() && isValidLocation(request.resource.data);
+      allow create: if isAdmin();
+      allow update: if isAdmin() && isValidLocation(request.resource.data);
       allow delete: if isAdmin();
     }
 
     match /assets/{assetId} {
       allow read: if isApproved();
-      allow create, update: if isApproved() && (isAdmin() || isWarehouseman() || isEngineer()) && isAssignedLocation(request.resource.data.locationId) && isValidAsset(request.resource.data);
+      allow create: if isAdmin() || (isApproved() && (isWarehouseman() || isEngineer()) && isAssignedLocation(request.resource.data.locationId) && isValidAsset(request.resource.data));
+      allow update: if isApproved() && (isAdmin() || isWarehouseman() || isEngineer()) && isAssignedLocation(request.resource.data.locationId) && isValidAsset(request.resource.data);
       allow delete: if isAdmin();
     }
 
     match /inventory/{inventoryId} {
       allow read: if isApproved();
-      allow create: if isApproved() && (isAdmin() || isWarehouseman() || isEngineer()) && isAssignedLocation(request.resource.data.locationId) && hasRequiredFields(['itemId', 'locationId', 'quantity']) && isValidInventory(request.resource.data);
+      allow create: if isAdmin() || (isApproved() && (isWarehouseman() || isEngineer()) && isAssignedLocation(request.resource.data.locationId) && hasRequiredFields(['itemId', 'locationId', 'quantity']) && isValidInventory(request.resource.data));
       // Admin manual edit: restrict exactly which fields can change (diff-based, not full-doc check)
       allow update: if isAdmin()
                        && request.resource.data.diff(resource.data).affectedKeys()
@@ -524,7 +527,8 @@ service cloud.firestore {
 
     match /uoms/{uomId} {
       allow read: if isApproved();
-      allow create, update: if isAdmin() && isValidUOM(request.resource.data);
+      allow create: if isAdmin();
+      allow update: if isAdmin() && isValidUOM(request.resource.data);
       allow delete: if isAdmin();
     }
 
@@ -604,7 +608,7 @@ service cloud.firestore {
 
     match /unplanned_stock/{stockId} {
       allow read: if isApproved() && (isWorker() || isAdmin() || isAssignedLocation(resource.data.jobsiteId));
-      allow create: if isApproved() && (isAdmin() || isWorker()) && isAssignedLocation(request.resource.data.jobsiteId) && isValidUnplannedStock(request.resource.data);
+      allow create: if isAdmin() || (isApproved() && isWorker() && isAssignedLocation(request.resource.data.jobsiteId) && isValidUnplannedStock(request.resource.data));
       allow update: if isAdmin() && isValidUnplannedStock(request.resource.data);
       allow delete: if isAdmin();
     }
@@ -625,18 +629,21 @@ service cloud.firestore {
 
     match /purchase_orders/{poId} {
       allow read: if isApproved();
-      allow create, update: if isAdmin() && isValidPurchaseOrder(request.resource.data);
+      allow create: if isAdmin();
+      allow update: if isAdmin() && isValidPurchaseOrder(request.resource.data);
       allow delete: if isAdmin();
-      
+
       match /items/{itemId} {
         allow read: if isApproved();
-        allow create, update: if isAdmin() && isValidPOItem(request.resource.data);
+        allow create: if isAdmin();
+        allow update: if isAdmin() && isValidPOItem(request.resource.data);
         allow delete: if isAdmin();
       }
 
       match /payments/{paymentId} {
         allow read: if isManager();
-        allow create, update: if isAdmin() && isValidPOPayment(request.resource.data);
+        allow create: if isAdmin();
+        allow update: if isAdmin() && isValidPOPayment(request.resource.data);
         allow delete: if isAdmin();
       }
     }
@@ -651,7 +658,8 @@ service cloud.firestore {
 
     match /po_templates/{templateId} {
       allow read: if isApproved();
-      allow create, update: if isAdmin() && isValidPOTemplate(request.resource.data);
+      allow create: if isAdmin();
+      allow update: if isAdmin() && isValidPOTemplate(request.resource.data);
       allow delete: if isAdmin();
     }
 

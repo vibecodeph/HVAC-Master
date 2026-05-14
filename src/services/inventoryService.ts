@@ -3026,12 +3026,15 @@ export const subscribeToAllUOMs = (callback: (data: UOM[]) => void) => {
   });
 };
 
-export const subscribeToRequests = (callback: (data: Request[]) => void, locationIds?: string[], limitCount: number = 50) => {
+export const subscribeToRequests = (callback: (data: Request[]) => void, locationIds?: string[], limitCount?: number) => {
   if (locationIds && locationIds.length === 0) {
     callback([]);
     return () => {};
   }
-  let q = query(collection(db, 'requests'), orderBy('timestamp', 'desc'), limit(limitCount));
+  // limitCount undefined = no limit (used for admin to load all requests)
+  let q = limitCount != null
+    ? query(collection(db, 'requests'), orderBy('timestamp', 'desc'), limit(limitCount))
+    : query(collection(db, 'requests'), orderBy('timestamp', 'desc'));
   if (locationIds && locationIds.length > 0) {
     q = query(q, where('jobsiteId', 'in', locationIds));
   }

@@ -394,9 +394,12 @@ const DataProvider = ({ children }: { children: React.ReactNode }) => {
       return;
     }
     const locationIds = profile.role === 'admin' ? undefined : (profile.assignedLocationIds || []);
+    // Admin loads all requests (no limit) so historical DR lookups work;
+    // non-admin uses paginated limit
+    const effectiveLimit = profile.role === 'admin' ? undefined : requestsLimitCount;
     const unsub = subscribeToRequests((incoming) => {
       setData(prev => ({ ...prev, requests: incoming }));
-    }, locationIds, requestsLimitCount);
+    }, locationIds, effectiveLimit);
     return () => unsub();
   }, [user?.uid, profile?.isApproved, profile?.role, JSON.stringify(profile?.assignedLocationIds), requestsLimitCount]);
 

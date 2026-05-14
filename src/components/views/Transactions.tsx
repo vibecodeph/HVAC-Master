@@ -13,7 +13,7 @@ import { Transaction } from '../../types';
 
 export const Transactions = () => {
   const { profile } = useAuth();
-  const { items, locations, assets, uoms, inventory, purchaseOrders } = useData();
+  const { items, locations, assets, uoms, inventory, purchaseOrders, requests } = useData();
   const [isTransferModalOpen, setIsTransferModalOpen] = useState(false);
   const [transferType, setTransferType] = useState<'delivery' | 'usage' | 'return' | 'adjustment'>('delivery');
   const [editingTransaction, setEditingTransaction] = useState<Transaction | null>(null);
@@ -80,8 +80,24 @@ export const Transactions = () => {
 
     const batchesList = Object.entries(batches).map(([batchId, batchTransactions]) => {
       const first = batchTransactions[0];
-      const from = locations.find(l => l.id === first.fromLocationId);
-      const to = locations.find(l => l.id === first.toLocationId);
+      // Prefer delivery tx for destination, pick tx for source
+      const deliveryTx = batchTransactions.find(t => t.type === 'delivery');
+      const pickTx     = batchTransactions.find(t => t.type === 'pick');
+      const from = locations.find(l => l.id === (pickTx ?? first).fromLocationId);
+      const to   = locations.find(l => {
+        const destId = (deliveryTx ?? first).toLocationId;
+        return l.id === destId && destId !== 'in-transit';
+      });
+      // For pending batches (no delivery tx yet), resolve destination from linked requests
+      const pendingDest = !to
+        ? (() => {
+            const jobsiteId = batchTransactions
+              .flatMap(t => t.requestIds ?? [])
+              .map(id => requests.find(r => r.id === id)?.jobsiteId)
+              .find(Boolean);
+            return jobsiteId ? locations.find(l => l.id === jobsiteId) : undefined;
+          })()
+        : undefined;
       const isExpanded = expandedBatches[batchId];
 
       // Consolidate duplicates within the batch (e.g. pick vs delivery for same request)
@@ -125,6 +141,16 @@ export const Transactions = () => {
               <p className="text-[10px] font-bold text-blue-600 uppercase tracking-widest">
                 {consolidatedTransactions.length} items
               </p>
+              {(from || to || pendingDest) && (
+                <p className="text-[10px] font-medium mt-0.5">
+                  <span className="text-blue-500">
+                    {from ? `FROM ${from.name}` : ''}
+                    {(from && (to || pendingDest)) ? ' → ' : ''}
+                  </span>
+                  {to && <span className="text-blue-500">TO {to.name}</span>}
+                  {!to && pendingDest && <span className="text-amber-600 font-semibold">FOR {pendingDest.name}</span>}
+                </p>
+              )}
             </div>
             <div className="text-right flex items-center space-x-3">
               <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">
@@ -249,7 +275,7 @@ export const Transactions = () => {
     });
 
     return { renderedBatches: batchesList, renderedSingles: singlesList };
-  }, [localTransactions, locations, expandedBatches, items, uoms, profile, deletingId]);
+  }, [localTransactions, locations, expandedBatches, items, uoms, profile, deletingId, requests]);
 
   return (
     <div className="pb-20">

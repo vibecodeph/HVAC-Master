@@ -1,8 +1,9 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ChevronRight, Package, Filter, MapPin, Box, Users, Shield, Trash2, AlertCircle, Loader2, Check, LogOut, Hammer, UserCheck, Tag, Archive, Database, RotateCcw } from 'lucide-react';
+import { ChevronRight, Package, Filter, MapPin, Box, Users, Shield, Trash2, AlertCircle, Loader2, Check, LogOut, Hammer, UserCheck, Tag, Archive, Database, RotateCcw, Download, Upload } from 'lucide-react';
 import { useAuth, useData } from '../../App';
 import { clearInventoryData, updateSystemConfig } from '../../services/inventoryService';
+import { downloadBackup, restoreFromBackup, validateBackup } from '../../services/backupService';
 import { cn } from '../../lib/utils';
 import { Header } from '../common/Header';
 import { Card } from '../common/Card';
@@ -18,6 +19,14 @@ export const SettingsView = () => {
   const [includeBOQ, setIncludeBOQ] = useState(false);
   const [includePOs, setIncludePOs] = useState(false);
   const [statusMessage, setStatusMessage] = useState<{ type: 'success' | 'error', text: string } | null>(null);
+
+  // Backup & restore state
+  const [isBackingUp, setIsBackingUp] = useState(false);
+  const [isRestoring, setIsRestoring] = useState(false);
+  const [backupMsg, setBackupMsg] = useState<{ type: 'success' | 'error' | 'progress'; text: string } | null>(null);
+  const [restoreFile, setRestoreFile] = useState<File | null>(null);
+  const [showRestoreConfirm, setShowRestoreConfirm] = useState(false);
+  const restoreInputRef = useRef<HTMLInputElement>(null);
 
   const assignedLocations = locations.filter(l => profile?.assignedLocationIds?.includes(l.id));
 
@@ -61,6 +70,71 @@ export const SettingsView = () => {
       setStatusMessage({ type: 'error', text: 'Failed to update auto-approve setting.' });
     } finally {
       setIsUpdatingConfig(false);
+    }
+  };
+
+  const handleDownloadBackup = async () => {
+    setIsBackingUp(true);
+    setBackupMsg({ type: 'progress', text: 'Starting backup…' });
+    try {
+      await downloadBackup((msg, current, total) => {
+        const pct = total > 0 ? Math.round((current / total) * 100) : 0;
+        setBackupMsg({ type: 'progress', text: `${msg} (${pct}%)` });
+      });
+      setBackupMsg({ type: 'success', text: 'Backup downloaded successfully.' });
+    } catch (err) {
+      console.error('Backup failed:', err);
+      setBackupMsg({ type: 'error', text: 'Backup failed. Please try again.' });
+    } finally {
+      setIsBackingUp(false);
+    }
+  };
+
+  const handleRestoreFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setRestoreFile(file);
+    setShowRestoreConfirm(true);
+    e.target.value = ''; // allow re-selecting same file
+  };
+
+  const handleRestoreConfirm = async () => {
+    if (!restoreFile) return;
+    setShowRestoreConfirm(false);
+    setIsRestoring(true);
+    setBackupMsg({ type: 'progress', text: 'Reading backup file…' });
+    try {
+      const text = await restoreFile.text();
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(text);
+      } catch {
+        setBackupMsg({ type: 'error', text: 'File is not valid JSON.' });
+        setIsRestoring(false);
+        setRestoreFile(null);
+        return;
+      }
+      if (!validateBackup(parsed)) {
+        setBackupMsg({ type: 'error', text: 'Invalid backup format. Missing required fields.' });
+        setIsRestoring(false);
+        setRestoreFile(null);
+        return;
+      }
+      await restoreFromBackup(
+        parsed,
+        (msg, current, total) => {
+          const pct = total > 0 ? Math.round((current / total) * 100) : 0;
+          setBackupMsg({ type: 'progress', text: `${msg} (${pct}%)` });
+        },
+        profile?.uid,
+      );
+      setBackupMsg({ type: 'success', text: 'Restore completed successfully.' });
+    } catch (err) {
+      console.error('Restore failed:', err);
+      setBackupMsg({ type: 'error', text: 'Restore failed. The database may be in an inconsistent state — restore again from backup.' });
+    } finally {
+      setIsRestoring(false);
+      setRestoreFile(null);
     }
   };
 
@@ -217,6 +291,62 @@ export const SettingsView = () => {
 
         {profile?.role === 'admin' && (
           <div className="space-y-2">
+            <h3 className="text-xs font-bold text-gray-400 uppercase tracking-widest px-2">Backup & Restore</h3>
+            <Card className="p-4 space-y-3">
+              <p className="text-[10px] text-gray-500 font-medium leading-snug">
+                Backup saves all Firestore collections to a JSON file. Restore overwrites all data — it is not atomic; if it fails partway, restore again from the same file.
+              </p>
+
+              {backupMsg && (
+                <div className={cn(
+                  'p-3 rounded-xl text-xs font-bold flex items-center gap-2',
+                  backupMsg.type === 'success' && 'bg-green-100 text-green-700',
+                  backupMsg.type === 'error'   && 'bg-red-100 text-red-700',
+                  backupMsg.type === 'progress' && 'bg-blue-50 text-blue-700',
+                )}>
+                  {backupMsg.type === 'progress' && <Loader2 size={14} className="animate-spin shrink-0" />}
+                  {backupMsg.type === 'success'  && <Check size={14} className="shrink-0" />}
+                  {backupMsg.type === 'error'    && <AlertCircle size={14} className="shrink-0" />}
+                  <span>{backupMsg.text}</span>
+                </div>
+              )}
+
+              <button
+                onClick={handleDownloadBackup}
+                disabled={isBackingUp || isRestoring}
+                className={cn(
+                  'w-full py-3 bg-blue-600 text-white rounded-xl font-bold flex items-center justify-center gap-2 active:scale-95 transition-transform',
+                  (isBackingUp || isRestoring) && 'opacity-60 cursor-not-allowed',
+                )}
+              >
+                {isBackingUp ? <Loader2 size={18} className="animate-spin" /> : <Download size={18} />}
+                <span>{isBackingUp ? 'Creating Backup…' : 'Download Backup'}</span>
+              </button>
+
+              <input
+                ref={restoreInputRef}
+                type="file"
+                accept=".json"
+                className="hidden"
+                onChange={handleRestoreFileSelect}
+              />
+              <button
+                onClick={() => restoreInputRef.current?.click()}
+                disabled={isBackingUp || isRestoring}
+                className={cn(
+                  'w-full py-3 bg-amber-500 text-white rounded-xl font-bold flex items-center justify-center gap-2 active:scale-95 transition-transform',
+                  (isBackingUp || isRestoring) && 'opacity-60 cursor-not-allowed',
+                )}
+              >
+                {isRestoring ? <Loader2 size={18} className="animate-spin" /> : <Upload size={18} />}
+                <span>{isRestoring ? 'Restoring…' : 'Restore from Backup'}</span>
+              </button>
+            </Card>
+          </div>
+        )}
+
+        {profile?.role === 'admin' && (
+          <div className="space-y-2">
             <h3 className="text-xs font-bold text-red-400 uppercase tracking-widest px-2">Danger Zone</h3>
             <Card className="p-4 bg-red-50 border-red-100">
               {statusMessage && (
@@ -259,9 +389,48 @@ export const SettingsView = () => {
           </div>
         )}
 
-        <Modal 
-          isOpen={isConfirmModalOpen} 
-          onClose={() => setIsConfirmModalOpen(false)} 
+        <Modal
+          isOpen={showRestoreConfirm}
+          onClose={() => { setShowRestoreConfirm(false); setRestoreFile(null); }}
+          title="Restore Database"
+        >
+          <div className="space-y-4">
+            <div className="p-4 bg-red-50 rounded-2xl border border-red-100 flex items-start gap-3">
+              <AlertCircle className="text-red-600 shrink-0 mt-0.5" size={20} />
+              <div className="space-y-1">
+                <p className="text-sm font-bold text-red-900">This will overwrite ALL data!</p>
+                <p className="text-xs text-red-700 font-medium leading-relaxed">
+                  Every document in every collection will be deleted and replaced with the backup contents.
+                  This cannot be undone. The operation is not atomic — if it fails midway, restore again from the same file.
+                </p>
+              </div>
+            </div>
+            {restoreFile && (
+              <div className="p-3 bg-gray-50 rounded-xl border border-gray-100 space-y-0.5">
+                <p className="text-xs font-bold text-gray-700">{restoreFile.name}</p>
+                <p className="text-[10px] text-gray-500">{(restoreFile.size / 1024).toFixed(1)} KB</p>
+              </div>
+            )}
+            <div className="flex flex-col gap-2">
+              <button
+                onClick={handleRestoreConfirm}
+                className="w-full py-4 bg-red-600 text-white rounded-2xl font-black uppercase tracking-widest text-xs active:scale-95 transition-transform shadow-lg shadow-red-200"
+              >
+                Yes, Overwrite All Data
+              </button>
+              <button
+                onClick={() => { setShowRestoreConfirm(false); setRestoreFile(null); }}
+                className="w-full py-4 bg-gray-100 text-gray-600 rounded-2xl font-black uppercase tracking-widest text-xs active:scale-95 transition-transform"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </Modal>
+
+        <Modal
+          isOpen={isConfirmModalOpen}
+          onClose={() => setIsConfirmModalOpen(false)}
           title="Confirm Data Deletion"
         >
           <div className="space-y-4">

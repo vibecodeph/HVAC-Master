@@ -82,6 +82,64 @@ interface EditState { key: string; notes: string; saving: boolean; error: string
 interface DeleteState { key: string; txCount: number; requestIds: string[]; deleting: boolean; error: string | null }
 interface ReverseState { key: string; batchId: string; items: ItemSummary[]; requestIds: string[]; reversing: boolean; error: string | null }
 
+// --- Location label: type-aware FROM/TO/AT display ---
+function renderLocationLabel(
+  txTypes: string[],
+  fromName: string | undefined,
+  toName: string | undefined,
+  hasPO: boolean,
+  pendingDestName?: string,   // destination from requests when delivery not yet recorded
+) {
+  if (!fromName && !toName && !hasPO && !pendingDestName) return null;
+  const isAdjustment = txTypes.length === 1 && txTypes[0] === 'adjustment';
+  const isUsage = txTypes.every(t => t === 'usage' || t === 'consumption');
+  const atLoc = fromName || toName;
+  const cls = 'flex items-center gap-1 text-[10px] font-medium text-gray-500';
+
+  if (hasPO) return (
+    <div className={cls}>
+      <MapPin size={10} className="shrink-0" />
+      <span>FROM</span>
+      <span className="font-semibold text-gray-600">{fromName || 'External Supplier'}</span>
+      {toName && <><span>→</span><span className="text-gray-400">TO</span><span className="font-bold text-gray-700">{toName}</span></>}
+    </div>
+  );
+
+  if (isAdjustment && atLoc) return (
+    <div className={cls}>
+      <MapPin size={10} className="shrink-0" />
+      <span>AT</span>
+      <span className="font-bold text-gray-700">{atLoc}</span>
+    </div>
+  );
+
+  if (isUsage && atLoc) return (
+    <div className={cls}>
+      <MapPin size={10} className="shrink-0" />
+      <span className="font-bold text-gray-700">{atLoc}</span>
+      <span className="italic">(consumed)</span>
+    </div>
+  );
+
+  // delivery / pick — use confirmed toName, or fall back to request-derived destination
+  const effectiveDest = toName || pendingDestName;
+  const isPending = !toName && !!pendingDestName;
+
+  return (
+    <div className={cls}>
+      <MapPin size={10} className="shrink-0" />
+      {fromName && <><span>FROM</span><span className="font-semibold text-gray-600">{fromName}</span></>}
+      {effectiveDest && <span>→</span>}
+      {effectiveDest && (
+        <>
+          <span className={isPending ? 'text-amber-500 font-semibold' : ''}>{isPending ? 'FOR' : 'TO'}</span>
+          <span className={cn('font-bold', isPending ? 'text-amber-700' : 'text-gray-700')}>{effectiveDest}</span>
+        </>
+      )}
+    </div>
+  );
+}
+
 // --- Helper: build item summary from a set of transactions ---
 function buildItems(
   txs: Transaction[],
@@ -248,7 +306,10 @@ export const TransactionsManager = () => {
 
       const destTxs = deliveryTxs.length > 0 ? deliveryTxs : txs;
       const toLocationId   = destTxs.find(t => t.toLocationId && t.toLocationId !== 'in-transit')?.toLocationId;
-      const fromLocationId = pickTxs.find(t => t.fromLocationId && t.fromLocationId !== 'in-transit')?.fromLocationId;
+      // Prefer pick tx for source; fall back to delivery tx (older DRs may lack a pick step)
+      const fromLocationId =
+        pickTxs.find(t => t.fromLocationId && t.fromLocationId !== 'in-transit')?.fromLocationId ??
+        deliveryTxs.find(t => t.fromLocationId && t.fromLocationId !== 'in-transit')?.fromLocationId;
 
       groups.push({
         key: batchId,
@@ -504,6 +565,18 @@ export const TransactionsManager = () => {
               const s = STATUS_STYLES[g.status] ?? STATUS_STYLES.Other;
               const toName   = locMap.get(g.toLocationId   || '');
               const fromName = locMap.get(g.fromLocationId || '');
+              const hasPO    = g.txTypes.includes('supplier_invoice') || g.transactions.some(t => !!t.poId);
+              // For pending DRs (no confirmed delivery destination), resolve from linked requests
+              const pendingDestId = !toName
+                ? g.allRequestIds.map(id => requestMap.get(id)?.jobsiteId).find(Boolean)
+                : undefined;
+              const pendingDestName = pendingDestId ? locMap.get(pendingDestId) : undefined;
+              // For supplier_invoice batches: extract supplier name from notes field
+              const supplierLabel = g.txTypes.includes('supplier_invoice')
+                ? (g.transactions[0]?.notes?.match(/^Supplier: (.+?) —/)?.[1]
+                    || g.transactions[0]?.supplierInvoice
+                    || null)
+                : null;
 
               return (
                 <Card key={g.key} className={cn('overflow-hidden border-l-2', s.border)}>
@@ -514,7 +587,9 @@ export const TransactionsManager = () => {
                       <div className="min-w-0 space-y-1">
                         {/* Batch ID + status + count */}
                         <div className="flex items-center gap-2 flex-wrap">
-                          {g.batchId ? (
+                          {supplierLabel ? (
+                            <span className="text-xs font-bold text-gray-900">{supplierLabel}</span>
+                          ) : g.batchId ? (
                             <span className="text-xs font-black text-gray-900 tracking-tight">{g.batchId}</span>
                           ) : (
                             <span className="text-[10px] font-mono text-gray-400" title={g.transactions[0]?.id}>
@@ -537,14 +612,7 @@ export const TransactionsManager = () => {
                         </div>
 
                         {/* Location */}
-                        {(fromName || toName) && (
-                          <div className="flex items-center gap-1 text-[10px] font-medium text-gray-500">
-                            <MapPin size={10} className="shrink-0" />
-                            {fromName && <span>{fromName}</span>}
-                            {fromName && toName && <span>→</span>}
-                            {toName && <span className="font-bold text-gray-700">{toName}</span>}
-                          </div>
-                        )}
+                        {renderLocationLabel(g.txTypes, fromName, toName, hasPO, pendingDestName)}
 
                         {/* Picker + timestamp */}
                         <div className="text-[10px] text-gray-400 font-medium">

@@ -557,7 +557,7 @@ service cloud.firestore {
                     (isOwner(userId) &&
                      request.resource.data.diff(resource.data).affectedKeys().hasOnly(['lastLoginAt', 'lastLogoutAt'])
                     ) ||
-                    (isEngineer() && 
+                    (isEngineer() &&
                      userId != request.auth.uid && // Engineers cannot edit themselves through this rule
                      resource.data.role == 'worker' && // Engineers can only edit workers
                      isValidUser(request.resource.data) &&
@@ -566,6 +566,7 @@ service cloud.firestore {
                      request.resource.data.get('assignedLocationIds', []).removeAll(request.auth.token.get('assignedLocationIds', [])) ==
                      resource.data.get('assignedLocationIds', []).removeAll(request.auth.token.get('assignedLocationIds', []))
                     );
+      allow delete: if isAdmin();
     }
 
     match /requests/{requestId} {

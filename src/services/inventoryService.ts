@@ -3277,78 +3277,135 @@ export const clearLocationInventory = async (
   userId: string,
   userName: string
 ): Promise<{ itemsCleared: number; boqCleared: number }> => {
-  const [invSnap, boqSnap] = await Promise.all([
+  const BATCH = 400;
+
+  // --- Phase 0: Fetch all affected data upfront ---
+  const [invSnap, boqSnap, requestsSnap, txFromSnap, txToSnap, posSnap, invoicesSnap] = await Promise.all([
     getDocs(query(collection(db, 'inventory'), where('locationId', '==', locationId))),
     getDocs(query(collection(db, 'boq'), where('jobsiteId', '==', locationId))),
+    getDocs(query(collection(db, 'requests'), where('jobsiteId', '==', locationId))),
+    getDocs(query(collection(db, 'transactions'), where('fromLocationId', '==', locationId))),
+    getDocs(query(collection(db, 'transactions'), where('toLocationId', '==', locationId))),
+    getDocs(query(collection(db, 'purchase_orders'), where('toLocationId', '==', locationId))),
+    getDocs(query(collection(db, 'suppliers_invoices'), where('toLocationId', '==', locationId))),
   ]);
 
-  if (invSnap.empty && boqSnap.empty) {
-    return { itemsCleared: 0, boqCleared: 0 };
-  }
+  // Deduplicate transaction refs (a tx could appear in both from/to snaps)
+  const txRefsToDelete = new Map<string, ReturnType<typeof doc>>();
+  for (const d of [...txFromSnap.docs, ...txToSnap.docs]) txRefsToDelete.set(d.id, d.ref);
+
+  // Requests that have a DR assignment to clear
+  const requestsWithBatch = requestsSnap.docs.filter(d => !!d.data().batchId);
+
+  // Only redirect POs that have already been (partially) delivered
+  const deliveredPOs = posSnap.docs.filter(d =>
+    ['partially_received', 'received'].includes(d.data().status)
+  );
 
   let itemsCleared = 0;
 
+  // --- Phase 1: Atomic inventory move (runTransaction for read-modify-write safety) ---
   await runTransaction(db, async (tx) => {
-    // READS PHASE 1: current jobsite inventory docs
+    // Re-read inventory docs inside transaction for fresh data
     const invDocs = await Promise.all(invSnap.docs.map(d => tx.get(d.ref)));
 
-    // Build entries and warehouse refs from live data
-    type Entry = { jobsiteRef: ReturnType<typeof doc>; data: Inventory; qty: number; whRef: ReturnType<typeof doc> };
+    type Entry = {
+      jobsiteRef: ReturnType<typeof doc>;
+      data: Inventory;
+      qty: number;
+      unitPrice: number;
+      whRef: ReturnType<typeof doc>;
+    };
     const entries: Entry[] = [];
     for (let i = 0; i < invSnap.docs.length; i++) {
       const invDoc = invDocs[i];
       if (!invDoc.exists()) continue;
       const data = invDoc.data() as Inventory;
-      const qty = data.quantity || 0;
-      const whRef = getInventoryRef(
-        data.itemId, mainWarehouseId,
-        data.variant, data.serialNumber, data.propertyNumber, data.customSpec
-      );
-      entries.push({ jobsiteRef: invSnap.docs[i].ref, data, qty, whRef });
+      const qty = data.quantity ?? 0;
+      if (qty <= 0) continue; // leave zero/negative at location unchanged
+      entries.push({
+        jobsiteRef: invSnap.docs[i].ref,
+        data,
+        qty,
+        unitPrice: data.unitPrice ?? 0,
+        whRef: getInventoryRef(data.itemId, mainWarehouseId, data.variant, data.serialNumber, data.propertyNumber, data.customSpec),
+      });
     }
 
-    // READS PHASE 2: warehouse counterpart docs
+    // Re-read warehouse counterparts
     const whDocs = await Promise.all(entries.map(e => tx.get(e.whRef)));
 
-    // WRITES
     itemsCleared = 0;
     const now = serverTimestamp();
-    for (let i = 0; i < entries.length; i++) {
-      const { jobsiteRef, data, qty, whRef } = entries[i];
-      const whDoc = whDocs[i];
 
-      if (qty > 0) {
-        itemsCleared++;
-        if (whDoc.exists()) {
-          tx.update(whRef, {
-            quantity: (whDoc.data().quantity || 0) + qty,
-            lastEditedBy: userId,
-            lastEditedAt: now,
-          });
-        } else {
-          const newInv: Record<string, any> = {
-            itemId: data.itemId,
-            locationId: mainWarehouseId,
-            quantity: qty,
-            lastEditedBy: userId,
-            lastEditedAt: now,
-          };
-          if (data.variant && Object.keys(data.variant).length > 0) newInv.variant = data.variant;
-          if (data.customSpec) newInv.customSpec = data.customSpec;
-          if (data.serialNumber) newInv.serialNumber = data.serialNumber;
-          if (data.propertyNumber) newInv.propertyNumber = data.propertyNumber;
-          if (data.unitPrice) newInv.unitPrice = data.unitPrice;
-          tx.set(whRef, newInv);
+    for (let i = 0; i < entries.length; i++) {
+      const { jobsiteRef, data, qty, unitPrice, whRef } = entries[i];
+      const whDoc = whDocs[i];
+      itemsCleared++;
+
+      if (whDoc.exists()) {
+        const whData = whDoc.data();
+        const whQty: number = whData.quantity ?? 0;
+        const whPrice: number = whData.unitPrice ?? 0;
+        const update: Record<string, any> = { quantity: whQty + qty, updatedAt: now, updatedBy: userId };
+        if (unitPrice > 0) {
+          // Weighted average: blend existing warehouse cost with incoming cost
+          update.unitPrice = (whQty * whPrice + qty * unitPrice) / (whQty + qty);
         }
+        tx.update(whRef, update);
+      } else {
+        const newInv: Record<string, any> = {
+          itemId: data.itemId,
+          locationId: mainWarehouseId,
+          quantity: qty,
+          updatedAt: now,
+          updatedBy: userId,
+        };
+        if (unitPrice > 0) newInv.unitPrice = unitPrice;
+        if (data.variant && Object.keys(data.variant).length > 0) newInv.variant = data.variant;
+        if (data.customSpec) newInv.customSpec = data.customSpec;
+        if (data.serialNumber) newInv.serialNumber = data.serialNumber;
+        if (data.propertyNumber) newInv.propertyNumber = data.propertyNumber;
+        tx.set(whRef, newInv);
       }
       tx.delete(jobsiteRef);
     }
 
-    for (const d of boqSnap.docs) {
-      tx.delete(d.ref);
-    }
+    for (const d of boqSnap.docs) tx.delete(d.ref);
   });
 
+  // --- Phase 2: Cleanup in batched writes ---
+
+  // 2a: Delete all transactions that involved this location
+  const txRefs = [...txRefsToDelete.values()];
+  for (let i = 0; i < txRefs.length; i += BATCH) {
+    const batch = writeBatch(db);
+    txRefs.slice(i, i + BATCH).forEach(ref => batch.delete(ref));
+    await batch.commit();
+  }
+
+  // 2b: Remove batchId from requests that had a DR assignment at this location
+  for (let i = 0; i < requestsWithBatch.length; i += BATCH) {
+    const batch = writeBatch(db);
+    requestsWithBatch.slice(i, i + BATCH).forEach(d => batch.update(d.ref, { batchId: deleteField() }));
+    await batch.commit();
+  }
+
+  // 2c: Redirect delivered POs from this location to Main Warehouse
+  for (let i = 0; i < deliveredPOs.length; i += BATCH) {
+    const batch = writeBatch(db);
+    deliveredPOs.slice(i, i + BATCH).forEach(d => batch.update(d.ref, { toLocationId: mainWarehouseId }));
+    await batch.commit();
+  }
+
+  // 2d: Redirect all supplier invoices from this location to Main Warehouse
+  for (let i = 0; i < invoicesSnap.docs.length; i += BATCH) {
+    const batch = writeBatch(db);
+    invoicesSnap.docs.slice(i, i + BATCH).forEach(d => batch.update(d.ref, { toLocationId: mainWarehouseId }));
+    await batch.commit();
+  }
+
+  // --- Phase 3: Audit log ---
   await addDoc(collection(db, 'audit_logs'), {
     action: 'clear_location_inventory',
     locationId,
@@ -3356,6 +3413,10 @@ export const clearLocationInventory = async (
     mainWarehouseId,
     itemsCleared,
     boqCleared: boqSnap.docs.length,
+    transactionsDeleted: txRefs.length,
+    requestsUpdated: requestsWithBatch.length,
+    posUpdated: deliveredPOs.length,
+    invoicesUpdated: invoicesSnap.docs.length,
     performedBy: userId,
     performedByName: userName,
     timestamp: serverTimestamp(),

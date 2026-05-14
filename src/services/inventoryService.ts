@@ -3294,18 +3294,30 @@ export const clearLocationInventory = async (
   const txRefsToDelete = new Map<string, ReturnType<typeof doc>>();
   for (const d of [...txFromSnap.docs, ...txToSnap.docs]) txRefsToDelete.set(d.id, d.ref);
 
+  // 'for delivery' requests have items already picked and in transit — leave them completely
+  // untouched. Clearing the site must not break the pick→receive chain: their pick transactions
+  // are still needed, and removing their batchId would cause recordBulkReceive to generate a
+  // new batchId with no matching pick transaction, breaking the FROM display.
+  const inTransitRequests = new Set(
+    requestsSnap.docs.filter(d => d.data().status === 'for delivery').map(d => d.id)
+  );
+
   // Delivered requests are terminal — delete them entirely
   const deliveredRequests = requestsSnap.docs.filter(d => d.data().status === 'delivered');
 
-  // In-flight requests that have a DR batchId — remove the assignment so they can be reassigned
-  const requestsWithBatch = requestsSnap.docs.filter(d =>
-    d.data().status !== 'delivered' && !!d.data().batchId
-  );
+  // Pre-delivery requests (pending/approved) with a batchId — remove the DR assignment
+  // so they can be reassigned. Do NOT include 'for delivery' here.
+  const requestsWithBatch = requestsSnap.docs.filter(d => {
+    const { status, batchId } = d.data();
+    return !inTransitRequests.has(d.id) && status !== 'delivered' && !!batchId;
+  });
 
-  // Collect all batchIds from requests at this location (pick transactions reference the
-  // location only via batchId — their fromLocationId points to the warehouse, not the jobsite)
+  // Collect batchIds only from delivered + pre-delivery requests (not in-transit ones).
+  // Pick transactions for in-transit items must be preserved so receive can resolve FROM.
   const batchIds = [...new Set(
-    requestsSnap.docs.map(d => d.data().batchId as string | undefined).filter(Boolean) as string[]
+    [...deliveredRequests, ...requestsWithBatch]
+      .map(d => d.data().batchId as string | undefined)
+      .filter(Boolean) as string[]
   )];
   // Query transactions by batchId in chunks of 30 (Firestore 'in' limit)
   for (let i = 0; i < batchIds.length; i += 30) {

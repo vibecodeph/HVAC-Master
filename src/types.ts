@@ -285,7 +285,7 @@ export interface PurchaseOrder {
   terms?: string;
   deliverTo?: string;
   status: 'draft' | 'sent' | 'partially_received' | 'received' | 'cancelled';
-  paymentStatus?: 'unpaid' | 'processing' | 'prepared' | 'paid' | 'partially_paid' | 'fully_paid';
+  paymentStatus?: 'unpaid' | 'processing' | 'prepared' | 'paid' | 'partially_paid' | 'fully_paid' | 'with_invoice';
   amountPaid?: number;
   items?: PurchaseOrderItem[];
   discount?: number; // Added PO-level discount
@@ -325,6 +325,7 @@ export interface SuppliersInvoiceItem {
   itemId: string;
   itemName: string;
   variant?: Record<string, string>;
+  customSpec?: string;
   quantity: number;
   unitPrice: number;
   uomId: string;
@@ -369,6 +370,8 @@ export interface SuppliersInvoice {
   linkedPOs?: LinkedPO[];
   payment?: InvoicePayment;
   invoiceStatus?: 'for_processing' | 'with_cheque' | 'paid';
+  addToInventory?: boolean;
+  previousPOStatus?: string;
   createdBy: string;
   createdAt: Timestamp;
   updatedBy?: string;

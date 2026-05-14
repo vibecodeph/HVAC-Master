@@ -27,6 +27,7 @@ interface FormItemState {
   itemSearch: string;
   showSearch: boolean;
   variant: Record<string, string>;
+  customSpec: string;
   quantity: string;
   unitPrice: string;
   uomId: string;
@@ -44,6 +45,7 @@ const emptyFormItem = (): FormItemState => ({
   itemSearch: '',
   showSearch: false,
   variant: {},
+  customSpec: '',
   quantity: '',
   unitPrice: '',
   uomId: '',
@@ -104,6 +106,7 @@ export const SuppliersInvoiceView = () => {
   const [invoiceStatus, setInvoiceStatus] = useState<'for_processing' | 'with_cheque' | 'paid'>('for_processing');
   const [taxAmount, setTaxAmount] = useState('');
   const [otherDeductions, setOtherDeductions] = useState<OtherDeduction[]>([]);
+  const [addToInventory, setAddToInventory] = useState(true);
 
   const isAdmin = profile?.role === 'admin';
 
@@ -176,12 +179,13 @@ export const SuppliersInvoiceView = () => {
     return list.slice(0, 8);
   }, [supplierOptions, supplierSearch]);
 
-  // POs for selected supplier excluding fully paid
+  // POs for selected supplier excluding fully paid and already-invoiced
   const supplierUnpaidPOs = useMemo(() => {
     if (!formSupplierId) return [];
     return purchaseOrders.filter(po =>
       po.supplierId === formSupplierId &&
-      po.paymentStatus !== 'fully_paid'
+      po.paymentStatus !== 'fully_paid' &&
+      po.paymentStatus !== 'with_invoice'
     );
   }, [purchaseOrders, formSupplierId]);
 
@@ -225,6 +229,7 @@ export const SuppliersInvoiceView = () => {
     setInvoiceStatus('for_processing');
     setTaxAmount('');
     setOtherDeductions([]);
+    setAddToInventory(true);
     setFormError(null);
     setEditingInvoice(null);
   };
@@ -246,24 +251,44 @@ export const SuppliersInvoiceView = () => {
       itemSearch: '',
       showSearch: false,
       variant: item.variant || {},
+      customSpec: item.customSpec || '',
       quantity: String(item.quantity),
       unitPrice: String(item.unitPrice),
       uomId: item.uomId,
     })));
     setSelectedPOId(invoice.linkedPOs?.[0]?.poId || '');
-    setEnablePayment(false);
-    setPaymentMethod('cash');
-    setPaymentAmount('');
-    setPaymentDate(todayStr());
-    setChequeNumber('');
-    setChequeDate(todayStr());
-    setBank('BDO');
-    setDepositReference('');
-    setDepositDate(todayStr());
+    setAddToInventory(invoice.addToInventory !== false);
     const existing = invoice.invoiceStatus;
     setInvoiceStatus(existing === 'paid' ? 'paid' : existing === 'with_cheque' ? 'with_cheque' : 'for_processing');
-    setTaxAmount('');
-    setOtherDeductions([]);
+    if (invoice.payment) {
+      setEnablePayment(true);
+      setPaymentMethod(invoice.payment.method);
+      setPaymentAmount(String(invoice.payment.amount));
+      setPaymentDate(invoice.payment.paymentDate?.toDate?.().toISOString().slice(0, 10) ?? todayStr());
+      setBank(invoice.payment.bank || 'BDO');
+      setChequeNumber(invoice.payment.chequeNumber || '');
+      setChequeDate(invoice.payment.chequeDate?.toDate?.().toISOString().slice(0, 10) ?? todayStr());
+      setDepositReference(invoice.payment.depositReference || '');
+      setDepositDate(invoice.payment.depositDate?.toDate?.().toISOString().slice(0, 10) ?? todayStr());
+      setTaxAmount(String(invoice.payment.deductions?.tax || ''));
+      setOtherDeductions((invoice.payment.deductions?.other || []).map(d => ({
+        id: Math.random().toString(36).slice(2),
+        type: d.type,
+        amount: String(d.amount),
+      })));
+    } else {
+      setEnablePayment(false);
+      setPaymentMethod('cash');
+      setPaymentAmount('');
+      setPaymentDate(todayStr());
+      setChequeNumber('');
+      setChequeDate(todayStr());
+      setBank('BDO');
+      setDepositReference('');
+      setDepositDate(todayStr());
+      setTaxAmount('');
+      setOtherDeductions([]);
+    }
     setFormError(null);
     setView('form');
   };
@@ -278,11 +303,11 @@ export const SuppliersInvoiceView = () => {
 
   const selectItem = (idx: number, itemId: string) => {
     const item = items.find(i => i.id === itemId);
-    updateFormItem(idx, { itemId, itemSearch: '', showSearch: false, variant: {}, uomId: item?.uomId || '' });
+    updateFormItem(idx, { itemId, itemSearch: '', showSearch: false, variant: {}, customSpec: '', uomId: item?.uomId || '' });
     if (item?.variantAttributes?.length) {
       const v: Record<string, string> = {};
       item.variantAttributes.forEach(attr => { v[attr.name] = ''; });
-      updateFormItem(idx, { itemId, itemSearch: '', showSearch: false, variant: v, uomId: item?.uomId || '' });
+      updateFormItem(idx, { itemId, itemSearch: '', showSearch: false, variant: v, customSpec: '', uomId: item?.uomId || '' });
     }
   };
 
@@ -299,6 +324,7 @@ export const SuppliersInvoiceView = () => {
           itemSearch: '',
           showSearch: false,
           variant: poi.variant || {},
+          customSpec: '',
           quantity: String(poi.quantity),
           unitPrice: String(poi.unitPrice),
           uomId: poi.uomId,
@@ -345,6 +371,9 @@ export const SuppliersInvoiceView = () => {
         const filled = itemDef.variantAttributes?.every(attr => fi.variant[attr.name]);
         if (!filled) { setFormError(`Row ${i + 1}: variant selection required`); return; }
       }
+      if (itemDef?.requireCustomSpec && !fi.customSpec.trim()) {
+        setFormError(`Row ${i + 1}: ${itemDef.customSpecLabel || 'specification'} is required`); return;
+      }
     }
 
     if (enablePayment) {
@@ -378,6 +407,7 @@ export const SuppliersInvoiceView = () => {
         itemName: itemDef.name,
         variant: Object.keys(fi.variant).length > 0 && Object.values(fi.variant).every(v => v)
           ? fi.variant : undefined,
+        customSpec: fi.customSpec.trim() || undefined,
         quantity: qty,
         unitPrice: price,
         uomId: effectiveUomId,
@@ -436,6 +466,7 @@ export const SuppliersInvoiceView = () => {
       linkedPOs: linkedPOsData.length > 0 ? linkedPOsData : undefined,
       payment: paymentData,
       invoiceStatus,
+      addToInventory,
     };
 
     setFormSubmitting(true);
@@ -734,6 +765,21 @@ export const SuppliersInvoiceView = () => {
                       </div>
                     )}
 
+                    {itemDef?.requireCustomSpec && (
+                      <div className="space-y-1">
+                        <label className="text-[9px] font-bold text-gray-400 uppercase tracking-widest">
+                          {itemDef.customSpecLabel || 'Specification'} *
+                        </label>
+                        <input
+                          type="text"
+                          value={fi.customSpec}
+                          onChange={e => updateFormItem(idx, { customSpec: e.target.value })}
+                          placeholder={`Enter ${itemDef.customSpecLabel || 'spec'}...`}
+                          className="w-full p-2 bg-white rounded-xl text-sm outline-none focus:ring-2 focus:ring-blue-500 border border-gray-200"
+                        />
+                      </div>
+                    )}
+
                     <div className="grid grid-cols-3 gap-2">
                       <div className="space-y-1">
                         <label className="text-[9px] font-bold text-gray-400 uppercase tracking-widest">Qty *</label>
@@ -800,205 +846,10 @@ export const SuppliersInvoiceView = () => {
           </Card>
 
 
-          {/* Payment Recording */}
-          {!editingInvoice && (
-            <Card className="p-4 space-y-4">
-              <label className="flex items-center gap-3 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={enablePayment}
-                  onChange={e => {
-                    setEnablePayment(e.target.checked);
-                    if (e.target.checked && !paymentAmount) {
-                      setPaymentAmount(computedTotal > 0 ? computedTotal.toFixed(2) : '');
-                    }
-                  }}
-                  className="rounded accent-blue-600"
-                />
-                <div className="flex items-center gap-2">
-                  <CreditCard size={14} className="text-gray-500" />
-                  <span className="text-[10px] font-black text-gray-700 uppercase tracking-[0.2em]">Record Payment</span>
-                </div>
-              </label>
-
-              {enablePayment && (
-                <div className="space-y-4 pt-1">
-                  {/* Method */}
-                  <div className="space-y-1.5">
-                    <label className="text-xs font-bold text-gray-400 uppercase tracking-wider">Payment Method</label>
-                    <select
-                      value={paymentMethod}
-                      onChange={e => setPaymentMethod(e.target.value as PaymentMethod)}
-                      className="w-full p-2.5 bg-gray-100 rounded-xl text-sm outline-none focus:ring-2 focus:ring-blue-500"
-                    >
-                      {(Object.keys(PAYMENT_METHOD_LABELS) as PaymentMethod[]).map(m => (
-                        <option key={m} value={m}>{PAYMENT_METHOD_LABELS[m]}</option>
-                      ))}
-                    </select>
-                  </div>
-
-                  {/* Conditional fields — Bank / Cheque or Reference / Date */}
-                  {(paymentMethod === 'check' || paymentMethod === 'bank_transfer') && (
-                    <div className="grid grid-cols-3 gap-3">
-                      <div className="space-y-1.5">
-                        <label className="text-xs font-bold text-gray-400 uppercase tracking-wider">Bank *</label>
-                        <select
-                          value={bank}
-                          onChange={e => setBank(e.target.value)}
-                          className="w-full p-2.5 bg-gray-100 rounded-xl text-sm outline-none focus:ring-2 focus:ring-blue-500"
-                        >
-                          <option value="BDO">BDO</option>
-                          <option value="UB">UB</option>
-                          <option value="MB">MB</option>
-                        </select>
-                      </div>
-                      <div className="space-y-1.5">
-                        <label className="text-xs font-bold text-gray-400 uppercase tracking-wider">
-                          {paymentMethod === 'check' ? 'Cheque # *' : 'Reference # *'}
-                        </label>
-                        <input
-                          type="text"
-                          value={paymentMethod === 'check' ? chequeNumber : depositReference}
-                          onChange={e => paymentMethod === 'check'
-                            ? setChequeNumber(e.target.value)
-                            : setDepositReference(e.target.value)}
-                          placeholder={paymentMethod === 'check' ? 'e.g. 00012345' : 'e.g. TXN-001'}
-                          className="w-full p-2.5 bg-gray-100 rounded-xl text-sm outline-none focus:ring-2 focus:ring-blue-500"
-                        />
-                      </div>
-                      <div className="space-y-1.5">
-                        <label className="text-xs font-bold text-gray-400 uppercase tracking-wider">
-                          {paymentMethod === 'check' ? 'Cheque Date *' : 'Deposit Date *'}
-                        </label>
-                        <input
-                          type="date"
-                          value={paymentMethod === 'check' ? chequeDate : depositDate}
-                          onChange={e => paymentMethod === 'check'
-                            ? setChequeDate(e.target.value)
-                            : setDepositDate(e.target.value)}
-                          className="w-full p-2.5 bg-gray-100 rounded-xl text-sm outline-none focus:ring-2 focus:ring-blue-500"
-                        />
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Amount + Date (date only shown for Cash/CC) */}
-                  <div className={`grid gap-3 ${paymentMethod === 'cash' || paymentMethod === 'credit_card' ? 'grid-cols-2' : 'grid-cols-1'}`}>
-                    <div className="space-y-1.5">
-                      <label className="text-xs font-bold text-gray-400 uppercase tracking-wider">Amount *</label>
-                      <input
-                        type="number"
-                        step="any"
-                        min="0"
-                        value={paymentAmount}
-                        onChange={e => setPaymentAmount(e.target.value)}
-                        placeholder="0.00"
-                        className="w-full p-2.5 bg-gray-100 rounded-xl text-sm outline-none focus:ring-2 focus:ring-blue-500"
-                      />
-                      {computedTotal > 0 && paymentAmount && parseFloat(paymentAmount) !== computedTotal && (
-                        <p className="text-[10px] text-gray-400">
-                          Invoice: ₱{computedTotal.toLocaleString('en-US', { minimumFractionDigits: 2 })} · Paying: ₱{parseFloat(paymentAmount).toLocaleString('en-US', { minimumFractionDigits: 2 })}
-                        </p>
-                      )}
-                    </div>
-                    {(paymentMethod === 'cash' || paymentMethod === 'credit_card') && (
-                      <div className="space-y-1.5">
-                        <label className="text-xs font-bold text-gray-400 uppercase tracking-wider">Payment Date *</label>
-                        <input
-                          type="date"
-                          value={paymentDate}
-                          onChange={e => setPaymentDate(e.target.value)}
-                          className="w-full p-2.5 bg-gray-100 rounded-xl text-sm outline-none focus:ring-2 focus:ring-blue-500"
-                        />
-                      </div>
-                    )}
-                  </div>
-
-                  {/* Invoice Status */}
-                  <div className="space-y-1.5">
-                    <label className="text-xs font-bold text-gray-400 uppercase tracking-wider">Invoice Status</label>
-                    <select
-                      value={invoiceStatus}
-                      onChange={e => setInvoiceStatus(e.target.value as typeof invoiceStatus)}
-                      className="w-full p-2.5 bg-gray-100 rounded-xl text-sm outline-none focus:ring-2 focus:ring-blue-500"
-                    >
-                      <option value="for_processing">For Processing</option>
-                      <option value="with_cheque">With Cheque</option>
-                      <option value="paid">Paid</option>
-                    </select>
-                  </div>
-
-                  {/* Deductions */}
-                  <div className="space-y-3">
-                    <div className="flex items-center justify-between">
-                      <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Deductions</span>
-                    </div>
-
-                    <div className="space-y-1.5">
-                      <label className="text-xs font-bold text-gray-400 uppercase tracking-wider">Tax Amount</label>
-                      <input
-                        type="number"
-                        step="any"
-                        min="0"
-                        value={taxAmount}
-                        onChange={e => setTaxAmount(e.target.value)}
-                        placeholder="0.00"
-                        className="w-full p-2.5 bg-gray-100 rounded-xl text-sm outline-none focus:ring-2 focus:ring-blue-500"
-                      />
-                    </div>
-
-                    {otherDeductions.map(d => (
-                      <div key={d.id} className="flex gap-2 items-center">
-                        <input
-                          type="text"
-                          value={d.type}
-                          onChange={e => updateOtherDeduction(d.id, { type: e.target.value })}
-                          placeholder="Description"
-                          className="flex-1 p-2.5 bg-gray-100 rounded-xl text-sm outline-none focus:ring-2 focus:ring-blue-500"
-                        />
-                        <input
-                          type="number"
-                          step="any"
-                          min="0"
-                          value={d.amount}
-                          onChange={e => updateOtherDeduction(d.id, { amount: e.target.value })}
-                          placeholder="0.00"
-                          className="w-24 p-2.5 bg-gray-100 rounded-xl text-sm outline-none focus:ring-2 focus:ring-blue-500"
-                        />
-                        <button
-                          onClick={() => removeOtherDeduction(d.id)}
-                          className="text-gray-300 hover:text-red-500 transition-colors flex-shrink-0"
-                        >
-                          <X size={14} />
-                        </button>
-                      </div>
-                    ))}
-
-                    <button
-                      onClick={addOtherDeduction}
-                      className="flex items-center space-x-1 text-[10px] font-black text-blue-600 uppercase tracking-widest hover:text-blue-800 transition-colors"
-                    >
-                      <Plus size={12} />
-                      <span>Add Deduction</span>
-                    </button>
-                  </div>
-
-                  {/* Net Amount */}
-                  <div className="flex items-center justify-between p-3 bg-blue-50 rounded-xl border border-blue-100">
-                    <span className="text-xs font-black text-blue-700 uppercase tracking-widest">Net Amount</span>
-                    <span className="text-lg font-black text-blue-900">
-                      ₱{netPaymentAmount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                    </span>
-                  </div>
-                </div>
-              )}
-            </Card>
-          )}
-
-          {/* Invoice Status (edit mode) */}
-          {editingInvoice && (
-            <Card className="p-4 space-y-3">
-              <h3 className="text-[10px] font-black text-gray-400 uppercase tracking-[0.2em]">Invoice Status</h3>
+          {/* Invoice Status & Payment */}
+          <Card className="p-4 space-y-4">
+            <div className="space-y-1.5">
+              <label className="text-xs font-bold text-gray-400 uppercase tracking-wider">Invoice Status</label>
               <select
                 value={invoiceStatus}
                 onChange={e => setInvoiceStatus(e.target.value as typeof invoiceStatus)}
@@ -1008,33 +859,200 @@ export const SuppliersInvoiceView = () => {
                 <option value="with_cheque">With Cheque</option>
                 <option value="paid">Paid</option>
               </select>
-            </Card>
-          )}
+            </div>
 
-          {/* Existing payment info in edit mode */}
-          {editingInvoice?.payment && (
-            <Card className="p-4 space-y-2">
-              <h3 className="text-[10px] font-black text-gray-400 uppercase tracking-[0.2em]">Payment Recorded</h3>
-              <div className="flex items-center justify-between">
-                <span className="text-xs text-gray-500">{PAYMENT_METHOD_LABELS[editingInvoice.payment.method]}</span>
-                <span className="text-sm font-black text-gray-900">
-                  ₱{editingInvoice.payment.amount.toLocaleString('en-US', { minimumFractionDigits: 2 })}
-                </span>
+            <label className="flex items-center gap-3 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={enablePayment}
+                onChange={e => {
+                  setEnablePayment(e.target.checked);
+                  if (e.target.checked && !paymentAmount) {
+                    setPaymentAmount(computedTotal > 0 ? computedTotal.toFixed(2) : '');
+                  }
+                }}
+                className="rounded accent-blue-600"
+              />
+              <div className="flex items-center gap-2">
+                <CreditCard size={14} className="text-gray-500" />
+                <span className="text-[10px] font-black text-gray-700 uppercase tracking-[0.2em]">Record Payment</span>
               </div>
-              {editingInvoice.payment.bank && (
-                <p className="text-[10px] text-gray-400">Bank: {editingInvoice.payment.bank}</p>
-              )}
-              {editingInvoice.payment.chequeNumber && (
-                <p className="text-[10px] text-gray-400">Cheque #: {editingInvoice.payment.chequeNumber}</p>
-              )}
-              {editingInvoice.payment.depositReference && (
-                <p className="text-[10px] text-gray-400">Reference #: {editingInvoice.payment.depositReference}</p>
-              )}
-              <p className="text-[10px] text-gray-400">
-                Net: ₱{editingInvoice.payment.netAmount.toLocaleString('en-US', { minimumFractionDigits: 2 })}
-              </p>
-            </Card>
-          )}
+            </label>
+
+            {enablePayment && (
+              <div className="space-y-4 pt-1">
+                {/* Method */}
+                <div className="space-y-1.5">
+                  <label className="text-xs font-bold text-gray-400 uppercase tracking-wider">Payment Method</label>
+                  <select
+                    value={paymentMethod}
+                    onChange={e => setPaymentMethod(e.target.value as PaymentMethod)}
+                    className="w-full p-2.5 bg-gray-100 rounded-xl text-sm outline-none focus:ring-2 focus:ring-blue-500"
+                  >
+                    {(Object.keys(PAYMENT_METHOD_LABELS) as PaymentMethod[]).map(m => (
+                      <option key={m} value={m}>{PAYMENT_METHOD_LABELS[m]}</option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* Conditional fields — Bank / Cheque or Reference / Date */}
+                {(paymentMethod === 'check' || paymentMethod === 'bank_transfer') && (
+                  <div className="grid grid-cols-3 gap-3">
+                    <div className="space-y-1.5">
+                      <label className="text-xs font-bold text-gray-400 uppercase tracking-wider">Bank *</label>
+                      <select
+                        value={bank}
+                        onChange={e => setBank(e.target.value)}
+                        className="w-full p-2.5 bg-gray-100 rounded-xl text-sm outline-none focus:ring-2 focus:ring-blue-500"
+                      >
+                        <option value="BDO">BDO</option>
+                        <option value="UB">UB</option>
+                        <option value="MB">MB</option>
+                      </select>
+                    </div>
+                    <div className="space-y-1.5">
+                      <label className="text-xs font-bold text-gray-400 uppercase tracking-wider">
+                        {paymentMethod === 'check' ? 'Cheque # *' : 'Reference # *'}
+                      </label>
+                      <input
+                        type="text"
+                        value={paymentMethod === 'check' ? chequeNumber : depositReference}
+                        onChange={e => paymentMethod === 'check'
+                          ? setChequeNumber(e.target.value)
+                          : setDepositReference(e.target.value)}
+                        placeholder={paymentMethod === 'check' ? 'e.g. 00012345' : 'e.g. TXN-001'}
+                        className="w-full p-2.5 bg-gray-100 rounded-xl text-sm outline-none focus:ring-2 focus:ring-blue-500"
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <label className="text-xs font-bold text-gray-400 uppercase tracking-wider">
+                        {paymentMethod === 'check' ? 'Cheque Date *' : 'Deposit Date *'}
+                      </label>
+                      <input
+                        type="date"
+                        value={paymentMethod === 'check' ? chequeDate : depositDate}
+                        onChange={e => paymentMethod === 'check'
+                          ? setChequeDate(e.target.value)
+                          : setDepositDate(e.target.value)}
+                        className="w-full p-2.5 bg-gray-100 rounded-xl text-sm outline-none focus:ring-2 focus:ring-blue-500"
+                      />
+                    </div>
+                  </div>
+                )}
+
+                {/* Amount + Date (date only shown for Cash/CC) */}
+                <div className={`grid gap-3 ${paymentMethod === 'cash' || paymentMethod === 'credit_card' ? 'grid-cols-2' : 'grid-cols-1'}`}>
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-bold text-gray-400 uppercase tracking-wider">Amount *</label>
+                    <input
+                      type="number"
+                      step="any"
+                      min="0"
+                      value={paymentAmount}
+                      onChange={e => setPaymentAmount(e.target.value)}
+                      placeholder="0.00"
+                      className="w-full p-2.5 bg-gray-100 rounded-xl text-sm outline-none focus:ring-2 focus:ring-blue-500"
+                    />
+                    {computedTotal > 0 && paymentAmount && parseFloat(paymentAmount) !== computedTotal && (
+                      <p className="text-[10px] text-gray-400">
+                        Invoice: ₱{computedTotal.toLocaleString('en-US', { minimumFractionDigits: 2 })} · Paying: ₱{parseFloat(paymentAmount).toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                      </p>
+                    )}
+                  </div>
+                  {(paymentMethod === 'cash' || paymentMethod === 'credit_card') && (
+                    <div className="space-y-1.5">
+                      <label className="text-xs font-bold text-gray-400 uppercase tracking-wider">Payment Date *</label>
+                      <input
+                        type="date"
+                        value={paymentDate}
+                        onChange={e => setPaymentDate(e.target.value)}
+                        className="w-full p-2.5 bg-gray-100 rounded-xl text-sm outline-none focus:ring-2 focus:ring-blue-500"
+                      />
+                    </div>
+                  )}
+                </div>
+
+                {/* Deductions */}
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Deductions</span>
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-bold text-gray-400 uppercase tracking-wider">Tax Amount</label>
+                    <input
+                      type="number"
+                      step="any"
+                      min="0"
+                      value={taxAmount}
+                      onChange={e => setTaxAmount(e.target.value)}
+                      placeholder="0.00"
+                      className="w-full p-2.5 bg-gray-100 rounded-xl text-sm outline-none focus:ring-2 focus:ring-blue-500"
+                    />
+                  </div>
+
+                  {otherDeductions.map(d => (
+                    <div key={d.id} className="flex gap-2 items-center">
+                      <input
+                        type="text"
+                        value={d.type}
+                        onChange={e => updateOtherDeduction(d.id, { type: e.target.value })}
+                        placeholder="Description"
+                        className="flex-1 p-2.5 bg-gray-100 rounded-xl text-sm outline-none focus:ring-2 focus:ring-blue-500"
+                      />
+                      <input
+                        type="number"
+                        step="any"
+                        min="0"
+                        value={d.amount}
+                        onChange={e => updateOtherDeduction(d.id, { amount: e.target.value })}
+                        placeholder="0.00"
+                        className="w-24 p-2.5 bg-gray-100 rounded-xl text-sm outline-none focus:ring-2 focus:ring-blue-500"
+                      />
+                      <button
+                        onClick={() => removeOtherDeduction(d.id)}
+                        className="text-gray-300 hover:text-red-500 transition-colors flex-shrink-0"
+                      >
+                        <X size={14} />
+                      </button>
+                    </div>
+                  ))}
+
+                  <button
+                    onClick={addOtherDeduction}
+                    className="flex items-center space-x-1 text-[10px] font-black text-blue-600 uppercase tracking-widest hover:text-blue-800 transition-colors"
+                  >
+                    <Plus size={12} />
+                    <span>Add Deduction</span>
+                  </button>
+                </div>
+
+                {/* Net Amount */}
+                <div className="flex items-center justify-between p-3 bg-blue-50 rounded-xl border border-blue-100">
+                  <span className="text-xs font-black text-blue-700 uppercase tracking-widest">Net Amount</span>
+                  <span className="text-lg font-black text-blue-900">
+                    ₱{netPaymentAmount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  </span>
+                </div>
+              </div>
+            )}
+          </Card>
+
+          {/* Add to Inventory */}
+          <Card className="p-4">
+            <label className="flex items-center gap-3 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={addToInventory}
+                onChange={e => setAddToInventory(e.target.checked)}
+                className="rounded accent-blue-600"
+              />
+              <span className="text-[10px] font-black text-gray-700 uppercase tracking-[0.2em]">Add items to inventory</span>
+            </label>
+            {!addToInventory && (
+              <p className="text-[10px] text-orange-500 font-medium mt-2 ml-7">Invoice will be recorded but items will not be added to inventory.</p>
+            )}
+          </Card>
 
           <button
             onClick={handleSubmit}
@@ -1206,7 +1224,7 @@ export const SuppliersInvoiceView = () => {
                   {isConfirmingDelete && (
                     <div className="p-3 bg-red-50 rounded-xl border border-red-100 space-y-2">
                       <p className="text-xs font-bold text-red-700">
-                        Delete this invoice? Items will be removed from inventory.
+                        Delete this invoice?{inv.addToInventory !== false ? ' Items will be removed from inventory.' : ''}
                       </p>
                       <div className="flex space-x-2">
                         <button

@@ -3235,14 +3235,15 @@ export const addInventoryToJobsite = async (
   locationId: string,
   variant: Record<string, string> | undefined,
   quantity: number,
-  unitPrice?: number
+  unitPrice?: number,
+  customSpec?: string
 ) => {
   const userId = auth.currentUser?.uid;
   if (!userId) throw new Error('User not authenticated');
 
   try {
     await runTransaction(db, async (txn) => {
-      const invRef = getInventoryRef(itemId, locationId, variant, undefined, undefined, undefined);
+      const invRef = getInventoryRef(itemId, locationId, variant, undefined, undefined, customSpec);
       const itemRef = doc(db, 'items', itemId);
 
       const [invDoc, itemDoc] = await Promise.all([txn.get(invRef), txn.get(itemRef)]);
@@ -3260,6 +3261,7 @@ export const addInventoryToJobsite = async (
           itemId,
           locationId,
           variant: variant && Object.keys(variant).length > 0 ? variant : null,
+          ...(customSpec ? { customSpec } : {}),
           quantity: newQty,
         });
       }

@@ -330,6 +330,7 @@ export const InventoryList = () => {
   const [addInvItemSearch, setAddInvItemSearch] = useState('');
   const [addInvShowSearch, setAddInvShowSearch] = useState(false);
   const [addInvVariant, setAddInvVariant] = useState<Record<string, string>>({});
+  const [addInvCustomSpec, setAddInvCustomSpec] = useState('');
   const [addInvQty, setAddInvQty] = useState('1');
   const [addInvPrice, setAddInvPrice] = useState('');
   const [addInvSubmitting, setAddInvSubmitting] = useState(false);
@@ -485,25 +486,26 @@ export const InventoryList = () => {
         }
       });
 
-      // Process Inventory entries (unplanned variants)
-      const invByVariant: Record<string, Inventory[]> = {};
+      // Process Inventory entries (unplanned variants + custom specs)
+      const invBySpecKey: Record<string, Inventory[]> = {};
       itemInv.forEach(inv => {
-        const vKey = normalizeVariant(inv.variant);
-        if (!invByVariant[vKey]) invByVariant[vKey] = [];
-        invByVariant[vKey].push(inv);
+        const specKey = `${normalizeVariant(inv.variant)}::${inv.customSpec || ''}`;
+        if (!invBySpecKey[specKey]) invBySpecKey[specKey] = [];
+        invBySpecKey[specKey].push(inv);
       });
 
-      Object.entries(invByVariant).forEach(([vKey, invs]) => {
-        // If handled by BOQ, skip
-        if (variantEntries[vKey]) return;
+      Object.entries(invBySpecKey).forEach(([specKey, invs]) => {
+        // If BOQ covers this variant (BOQ has no customSpec, check variant-only)
+        const variantPart = specKey.split('::')[0];
+        if (variantEntries[variantPart]) return;
 
         const totalQty = invs.reduce((sum, inv) => sum + inv.quantity, 0);
         // Show unplanned variant only if it has stock
         if (totalQty !== 0) {
-          variantEntries[vKey] = {
+          variantEntries[specKey] = {
             type: 'unplanned',
             item,
-            inv: invs[0], // for metadata
+            inv: invs[0], // for metadata (first doc carries variant + customSpec)
             totalQty
           };
         }
@@ -968,6 +970,7 @@ export const InventoryList = () => {
           setAddInvItemId('');
           setAddInvItemSearch('');
           setAddInvVariant({});
+          setAddInvCustomSpec('');
           setAddInvQty('1');
           setAddInvPrice('');
           setAddInvError(null);
@@ -990,6 +993,9 @@ export const InventoryList = () => {
             if (addInvItem?.requireVariant && (!addInvItem.variantAttributes?.length || Object.keys(addInvVariant).length === 0)) {
               setAddInvError('Please select a variant'); return;
             }
+            if (addInvItem?.requireCustomSpec && !addInvCustomSpec.trim()) {
+              setAddInvError(`Please enter ${addInvItem.customSpecLabel || 'specification'}`); return;
+            }
             const price = addInvPrice !== '' ? parseFloat(addInvPrice) : undefined;
             if (addInvPrice !== '' && (isNaN(price!) || price! < 0)) { setAddInvError('Invalid price'); return; }
 
@@ -1001,12 +1007,14 @@ export const InventoryList = () => {
                 selectedJobsiteId,
                 Object.keys(addInvVariant).length > 0 ? addInvVariant : undefined,
                 qty,
-                price
+                price,
+                addInvCustomSpec.trim() || undefined
               );
               setAddInvSuccess(`Added ${qty} ${baseUom?.symbol || ''} of ${addInvItem?.name} to ${jobsite?.name}`);
               setAddInvItemId('');
               setAddInvItemSearch('');
               setAddInvVariant({});
+              setAddInvCustomSpec('');
               setAddInvQty('1');
               setAddInvPrice('');
             } catch (e: any) {
@@ -1036,7 +1044,7 @@ export const InventoryList = () => {
                 {addInvItem && (
                   <div className="p-2.5 bg-blue-50 rounded-xl border border-blue-100 flex items-center justify-between">
                     <p className="text-sm font-bold text-gray-900">{addInvItem.name}</p>
-                    <button onClick={() => { setAddInvItemId(''); setAddInvVariant({}); }} className="text-gray-400 hover:text-red-500 ml-2"><X size={14} /></button>
+                    <button onClick={() => { setAddInvItemId(''); setAddInvVariant({}); setAddInvCustomSpec(''); }} className="text-gray-400 hover:text-red-500 ml-2"><X size={14} /></button>
                   </div>
                 )}
                 <div className="relative">
@@ -1057,6 +1065,7 @@ export const InventoryList = () => {
                           onMouseDown={() => {
                             setAddInvItemId(i.id);
                             setAddInvVariant({});
+                            setAddInvCustomSpec('');
                             setAddInvItemSearch('');
                             setAddInvShowSearch(false);
                           }}
@@ -1088,6 +1097,21 @@ export const InventoryList = () => {
                       </div>
                     ))}
                   </div>
+                </div>
+              )}
+
+              {addInvItem?.requireCustomSpec && (
+                <div className="space-y-1.5">
+                  <label className="text-xs font-bold text-gray-400 uppercase tracking-wider">
+                    {addInvItem.customSpecLabel || 'Specification'} *
+                  </label>
+                  <input
+                    type="text"
+                    value={addInvCustomSpec}
+                    onChange={e => setAddInvCustomSpec(e.target.value)}
+                    placeholder={`Enter ${addInvItem.customSpecLabel || 'spec'}...`}
+                    className="w-full p-2.5 bg-gray-100 rounded-xl text-sm outline-none focus:ring-2 focus:ring-blue-500"
+                  />
                 </div>
               )}
 

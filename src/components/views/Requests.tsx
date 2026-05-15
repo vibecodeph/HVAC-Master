@@ -306,10 +306,21 @@ export const RequestsView = () => {
 
   const handleEditSave = async () => {
     if (!editRequestForm || editQty <= 0) return;
+    const editItem = items.find(i => i.id === editItemId);
+    if (editItem?.variantAttributes && editItem.variantAttributes.length > 0) {
+      const dimReqs = editItem.variantConfigs?.[0]?.dimensionRequirements;
+      const missingRequired = editItem.variantAttributes.some(attr => {
+        const isRequired = !dimReqs || dimReqs[attr.name] !== false;
+        return isRequired && !editVariant[attr.name];
+      });
+      if (missingRequired) {
+        setError('Please select all required variant options.');
+        return;
+      }
+    }
     setIsProcessing(true);
     setError(null);
     try {
-      const editItem = items.find(i => i.id === editItemId);
       await updateRequest(editRequestForm.id, {
         itemId: editItemId,
         variant: Object.keys(editVariant).length > 0 ? editVariant : undefined,
@@ -911,26 +922,38 @@ export const RequestsView = () => {
                   )}
                 </div>
               </div>
-              {editItem?.variantAttributes && editItem.variantAttributes.length > 0 && (
-                <div className="space-y-2">
-                  <label className="text-xs font-bold text-gray-400 uppercase tracking-wider">Variant</label>
-                  <div className="grid grid-cols-2 gap-2">
-                    {editItem.variantAttributes.map(attr => (
-                      <div key={attr.name} className="space-y-1">
-                        <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">{attr.name}</label>
-                        <select
-                          value={editVariant[attr.name] || ''}
-                          onChange={e => setEditVariant(prev => ({ ...prev, [attr.name]: e.target.value }))}
-                          className="w-full p-2 bg-gray-100 rounded-xl text-xs outline-none focus:ring-2 focus:ring-blue-500"
-                        >
-                          <option value="">Select...</option>
-                          {attr.values.map(v => <option key={v} value={v}>{v}</option>)}
-                        </select>
-                      </div>
-                    ))}
+              {editItem?.variantAttributes && editItem.variantAttributes.length > 0 && (() => {
+                const dimReqs = editItem.variantConfigs?.[0]?.dimensionRequirements;
+                return (
+                  <div className="space-y-2">
+                    <label className="text-xs font-bold text-gray-400 uppercase tracking-wider">Variant</label>
+                    <div className="grid grid-cols-2 gap-2">
+                      {editItem.variantAttributes.map(attr => {
+                        const isRequired = !dimReqs || dimReqs[attr.name] !== false;
+                        const isMissing = isRequired && !editVariant[attr.name];
+                        return (
+                          <div key={attr.name} className="space-y-1">
+                            <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">
+                              {attr.name}{isRequired && <span className="text-red-500 ml-0.5">*</span>}
+                            </label>
+                            <select
+                              value={editVariant[attr.name] || ''}
+                              onChange={e => setEditVariant(prev => ({ ...prev, [attr.name]: e.target.value }))}
+                              className={cn(
+                                "w-full p-2 bg-gray-100 rounded-xl text-xs outline-none focus:ring-2 focus:ring-blue-500",
+                                isMissing && "ring-2 ring-red-300"
+                              )}
+                            >
+                              <option value="">Select...</option>
+                              {attr.values.map(v => <option key={v} value={v}>{v}</option>)}
+                            </select>
+                          </div>
+                        );
+                      })}
+                    </div>
                   </div>
-                </div>
-              )}
+                );
+              })()}
               {editItem?.requireCustomSpec && (
                 <div className="space-y-1">
                   <label className="text-xs font-bold text-gray-400 uppercase tracking-wider">{editItem.customSpecLabel || 'Specification'}</label>
@@ -982,7 +1005,14 @@ export const RequestsView = () => {
                   Cancel
                 </button>
                 <button
-                  disabled={editQty <= 0 || !editItemId}
+                  disabled={editQty <= 0 || !editItemId || (() => {
+                    if (!editItem?.variantAttributes?.length) return false;
+                    const dimReqs = editItem.variantConfigs?.[0]?.dimensionRequirements;
+                    return editItem.variantAttributes.some(attr => {
+                      const isRequired = !dimReqs || dimReqs[attr.name] !== false;
+                      return isRequired && !editVariant[attr.name];
+                    });
+                  })()}
                   onClick={handleEditSave}
                   className="flex-1 py-4 bg-blue-600 text-white rounded-2xl font-bold uppercase tracking-widest text-xs active:scale-95 transition-transform disabled:opacity-50"
                 >

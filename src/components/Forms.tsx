@@ -953,10 +953,10 @@ export const ItemForm = ({ uoms, categories, locations, items, initialData, isDu
   const [newConversionFactor, setNewConversionFactor] = useState<number | ''>('');
   const [attributes, setAttributes] = useState<{ name: string; values: string[] }[]>(initialData?.variantAttributes || []);
   const [newAttrName, setNewAttrName] = useState('');
-  const [variantConfigs, setVariantConfigs] = useState<Record<string, { reorderLevel?: number; averageCost?: number; isRequired?: boolean }>>(() => {
-    const initial: Record<string, { reorderLevel?: number; averageCost?: number; isRequired?: boolean }> = {};
+  const [variantConfigs, setVariantConfigs] = useState<Record<string, { reorderLevel?: number; latestPrice?: number; isRequired?: boolean }>>(() => {
+    const initial: Record<string, { reorderLevel?: number; latestPrice?: number; isRequired?: boolean }> = {};
     initialData?.variantConfigs?.forEach(vc => {
-      initial[normalizeVariant(vc.variant)] = { reorderLevel: vc.reorderLevel, averageCost: vc.averageCost, isRequired: vc.isRequired };
+      initial[normalizeVariant(vc.variant)] = { reorderLevel: vc.reorderLevel, latestPrice: vc.latestPrice, isRequired: vc.isRequired };
     });
     return initial;
   });
@@ -1031,19 +1031,19 @@ export const ItemForm = ({ uoms, categories, locations, items, initialData, isDu
           customSpecLabel: customSpecLabel.trim() || null,
           tags: (formData.get('tags') as string || '').split(',').map(t => t.trim()).filter(Boolean),
           reorderLevel: Number(formData.get('reorderLevel')) || 0,
-          averageCost: Number(formData.get('averageCost')) || 0,
+          latestPrice: Number(formData.get('latestPrice')) || undefined,
           variantConfigs: (() => {
             const hasDimOverrides = Object.values(dimensionRequirements).some(v => !v);
             return combinations
               .map(variant => {
                 const key = normalizeVariant(variant);
                 const config = variantConfigs[key] || {};
-                const hasData = config.reorderLevel !== undefined || config.averageCost !== undefined || config.isRequired === false || hasDimOverrides;
+                const hasData = config.reorderLevel !== undefined || config.latestPrice !== undefined || config.isRequired === false || hasDimOverrides;
                 if (!hasData) return null;
                 return {
                   variant,
                   ...(config.reorderLevel !== undefined ? { reorderLevel: config.reorderLevel } : {}),
-                  ...(config.averageCost !== undefined ? { averageCost: config.averageCost } : {}),
+                  ...(config.latestPrice !== undefined ? { latestPrice: config.latestPrice } : {}),
                   ...(config.isRequired === false ? { isRequired: false } : {}),
                   ...(hasDimOverrides ? { dimensionRequirements } : {}),
                 };
@@ -1519,8 +1519,8 @@ export const ItemForm = ({ uoms, categories, locations, items, initialData, isDu
             <input name="reorderLevel" type="number" defaultValue={initialData?.reorderLevel} className="w-full p-4 bg-gray-100 rounded-2xl text-sm font-medium outline-none focus:ring-2 focus:ring-blue-500" />
           </div>
           <div className="space-y-1">
-            <label className="text-xs font-bold text-gray-400 uppercase tracking-wider pl-1">Avg. Cost</label>
-            <input name="averageCost" type="number" step="any" min="0" defaultValue={initialData?.averageCost} className="w-full p-4 bg-gray-100 rounded-2xl text-sm font-medium outline-none focus:ring-2 focus:ring-blue-500" />
+            <label className="text-xs font-bold text-gray-400 uppercase tracking-wider pl-1">Latest Price</label>
+            <input name="latestPrice" type="number" step="any" min="0" defaultValue={initialData?.latestPrice} className="w-full p-4 bg-gray-100 rounded-2xl text-sm font-medium outline-none focus:ring-2 focus:ring-blue-500" />
           </div>
         </div>
 
@@ -1560,7 +1560,7 @@ export const ItemForm = ({ uoms, categories, locations, items, initialData, isDu
               <div className="space-y-4 animate-in fade-in slide-in-from-top-2 duration-300">
                 <div className="p-4 bg-orange-50 rounded-2xl border border-orange-100">
                   <p className="text-[10px] font-bold text-orange-800 uppercase tracking-widest">Note</p>
-                  <p className="text-xs text-orange-700 mt-1">Leave blank to use the default re-order level and average cost defined above.</p>
+                  <p className="text-xs text-orange-700 mt-1">Leave blank to use the default re-order level and latest price defined above.</p>
                 </div>
                 
                 <div className="space-y-3">
@@ -1595,14 +1595,14 @@ export const ItemForm = ({ uoms, categories, locations, items, initialData, isDu
                             />
                           </div>
                           <div className="space-y-1">
-                            <label className="text-[8px] font-black text-gray-400 uppercase tracking-widest pl-1">Avg. Cost</label>
-                            <input 
+                            <label className="text-[8px] font-black text-gray-400 uppercase tracking-widest pl-1">Latest Price</label>
+                            <input
                               type="number"
                               step="0.01"
-                              value={config.averageCost ?? ''}
+                              value={config.latestPrice ?? ''}
                               onChange={e => setVariantConfigs({
                                 ...variantConfigs,
-                                [key]: { ...config, averageCost: e.target.value === '' ? undefined : Number(e.target.value) }
+                                [key]: { ...config, latestPrice: e.target.value === '' ? undefined : Number(e.target.value) }
                               })}
                               className="w-full p-2 bg-gray-50 rounded-xl text-xs font-bold outline-none focus:ring-2 focus:ring-blue-500"
                               placeholder="Default"
@@ -1719,12 +1719,16 @@ export const TransactionForm = ({ items, locations, inventory, uoms, purchaseOrd
     );
   }, [selectedItem, selectedVariant]);
 
-  const displayAverageCost = currentVariantConfig?.averageCost ?? selectedItem?.averageCost;
+  const displayLatestPrice = currentVariantConfig?.latestPrice ?? selectedItem?.latestPrice;
 
   const [serialNumber, setSerialNumber] = useState(initialData?.serialNumber || '');
   const [propertyNumber, setPropertyNumber] = useState(initialData?.propertyNumber || '');
   const [customSpec, setCustomSpec] = useState(initialData?.customSpec || '');
   const [error, setError] = useState<string | null>(null);
+  const [pendingPOReceive, setPendingPOReceive] = useState<{
+    items: any[];
+    formData: { toLocationId: string; date: string; supplierInvoice?: string; supplierDR?: string; notes?: string };
+  } | null>(null);
 
   const isTool = selectedItem?.isTool;
   const isToolValid = !isTool || serialNumber.trim() !== '' || propertyNumber.trim() !== '';
@@ -1761,29 +1765,18 @@ export const TransactionForm = ({ items, locations, inventory, uoms, purchaseOrd
         return;
       }
 
-      setIsSubmitting(true);
-      try {
-        const formData = new FormData(e.currentTarget);
-        await recordBulkReceivePO(
-          selectedPO.id,
-          itemsToReceive,
-          profile?.uid || 'unknown',
-          profile?.displayName || 'Unknown',
-          {
-            toLocationId,
-            date: new Date(date),
-            supplierInvoice: formData.get('supplierInvoice') as string || undefined,
-            supplierDR: formData.get('supplierDR') as string || undefined,
-            notes: formData.get('note') as string || undefined,
-          }
-        );
-        onComplete();
-        return;
-      } catch (err: any) {
-        setError(err.message);
-        setIsSubmitting(false);
-        return;
-      }
+      const formData = new FormData(e.currentTarget);
+      setPendingPOReceive({
+        items: itemsToReceive,
+        formData: {
+          toLocationId,
+          date,
+          supplierInvoice: formData.get('supplierInvoice') as string || undefined,
+          supplierDR: formData.get('supplierDR') as string || undefined,
+          notes: formData.get('note') as string || undefined,
+        }
+      });
+      return;
     }
 
     if (isTool && !isToolValid) {
@@ -1847,6 +1840,76 @@ export const TransactionForm = ({ items, locations, inventory, uoms, purchaseOrd
       setIsSubmitting(false);
     }
   };
+
+  const executePOReceive = async (updateLatestPrice: boolean) => {
+    if (!pendingPOReceive || !selectedPO) return;
+    const { items, formData } = pendingPOReceive;
+    setPendingPOReceive(null);
+    setIsSubmitting(true);
+    try {
+      await recordBulkReceivePO(
+        selectedPO.id,
+        items,
+        profile?.uid || 'unknown',
+        profile?.displayName || 'Unknown',
+        {
+          toLocationId: formData.toLocationId,
+          date: new Date(formData.date),
+          supplierInvoice: formData.supplierInvoice,
+          supplierDR: formData.supplierDR,
+          notes: formData.notes,
+          updateLatestPrice,
+        }
+      );
+      onComplete();
+    } catch (err: any) {
+      setError(err.message);
+      setIsSubmitting(false);
+    }
+  };
+
+  if (pendingPOReceive) {
+    const prices = pendingPOReceive.items.map(i => {
+      const item = items.find(it => it.id === i.itemId);
+      return `${item?.name || i.itemId}: ₱${i.unitPrice.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+    });
+    return (
+      <div className="space-y-6 p-2">
+        <div className="p-4 bg-blue-50 rounded-2xl border border-blue-100">
+          <p className="text-sm font-bold text-blue-900 mb-1">Update Latest Price?</p>
+          <p className="text-xs text-blue-700 mb-3">Do you want to update the latest price for the received items?</p>
+          <div className="space-y-1 mb-4">
+            {prices.map((p, i) => (
+              <p key={i} className="text-xs text-blue-800 font-medium">{p}</p>
+            ))}
+          </div>
+          <div className="flex gap-3">
+            <button
+              type="button"
+              onClick={() => executePOReceive(true)}
+              className="flex-1 py-3 bg-blue-600 text-white rounded-2xl text-sm font-bold hover:bg-blue-700 transition-colors"
+            >
+              Yes, Update
+            </button>
+            <button
+              type="button"
+              onClick={() => executePOReceive(false)}
+              className="flex-1 py-3 bg-gray-200 text-gray-700 rounded-2xl text-sm font-bold hover:bg-gray-300 transition-colors"
+            >
+              No, Keep Current
+            </button>
+          </div>
+          <button
+            type="button"
+            onClick={() => setPendingPOReceive(null)}
+            className="w-full mt-2 py-2 text-xs text-gray-500 hover:text-gray-700 transition-colors"
+          >
+            Cancel
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <form className="space-y-6" onSubmit={handleSubmit}>
@@ -2211,9 +2274,9 @@ export const TransactionForm = ({ items, locations, inventory, uoms, purchaseOrd
               <div className="space-y-1">
                 <div className="flex items-center justify-between px-1">
                   <label className="text-xs font-bold text-gray-400 uppercase tracking-wider">Total Amount (Optional)</label>
-                  {displayAverageCost !== undefined && (
+                  {displayLatestPrice !== undefined && (
                     <span className="text-[10px] font-bold text-blue-500 uppercase tracking-tighter">
-                      Avg: ₱{displayAverageCost.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      Latest: ₱{displayLatestPrice.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                     </span>
                   )}
                 </div>
@@ -2979,7 +3042,7 @@ export const PurchaseOrderForm = ({ items, locations, uoms, profile, initialData
     const largestConv = item.uomConversions?.length
       ? item.uomConversions.reduce((best, curr) => curr.factor > best.factor ? curr : best)
       : null;
-    const baseCost = item.averageCost && item.averageCost > 0 ? item.averageCost : undefined;
+    const baseCost = item.latestPrice && item.latestPrice > 0 ? item.latestPrice : undefined;
     const jobsiteLoc = project ? locations.find(l => l.type === 'jobsite' && l.name === project && l.isActive) : null;
     const newItem: PurchaseOrderItem = {
       itemId: item.id,
@@ -3011,7 +3074,7 @@ export const PurchaseOrderForm = ({ items, locations, uoms, profile, initialData
     const next = [...poItems];
     const item = { ...next[idx], ...updates };
 
-    // When variant changes, update SRP from variantConfigs or base averageCost
+    // When variant changes, update SRP from variantConfigs or base latestPrice
     if ('variant' in updates) {
       const fullItem = items.find(i => i.id === item.itemId);
       if (fullItem) {
@@ -3021,12 +3084,12 @@ export const PurchaseOrderForm = ({ items, locations, uoms, profile, initialData
           const config = fullItem.variantConfigs?.find(
             vc => normalizeVariant(vc.variant) === normalizeVariant(newVariant)
           );
-          cost = config?.averageCost && config.averageCost > 0 ? config.averageCost : undefined;
-          if (cost === undefined && fullItem.averageCost && fullItem.averageCost > 0) {
-            cost = fullItem.averageCost;
+          cost = config?.latestPrice && config.latestPrice > 0 ? config.latestPrice : undefined;
+          if (cost === undefined && fullItem.latestPrice && fullItem.latestPrice > 0) {
+            cost = fullItem.latestPrice;
           }
         } else {
-          cost = fullItem.averageCost && fullItem.averageCost > 0 ? fullItem.averageCost : undefined;
+          cost = fullItem.latestPrice && fullItem.latestPrice > 0 ? fullItem.latestPrice : undefined;
         }
         item.srp = cost;
       }

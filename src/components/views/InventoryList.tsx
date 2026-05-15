@@ -136,12 +136,12 @@ const ItemCard = ({
 
                 let reorderLevel = item.reorderLevel || 0;
 
-                // Prefer location-specific averageCost from inventory docs; fall back to item-global
+                // Prefer location-specific averageCost from inventory docs; fall back to item latestPrice
                 const invWithCost = filteredInv.filter((i: any) => i.averageCost !== undefined);
                 const costQty = invWithCost.reduce((s: number, i: any) => s + (i.quantity || 0), 0);
                 let averageCost = costQty > 0
                   ? invWithCost.reduce((s: number, i: any) => s + (i.averageCost || 0) * (i.quantity || 0), 0) / costQty
-                  : (item.averageCost || 0);
+                  : (item.latestPrice || 0);
 
                 if (variantToMatch) {
                   const config = item.variantConfigs?.find((vc: any) =>
@@ -149,8 +149,8 @@ const ItemCard = ({
                   );
                   if (config) {
                     if (config.reorderLevel !== undefined) reorderLevel = config.reorderLevel;
-                    // Only use variantConfig cost if no inventory-level cost is tracked yet
-                    if (config.averageCost !== undefined && costQty === 0) averageCost = config.averageCost;
+                    // Only use variantConfig latestPrice if no inventory-level cost is tracked yet
+                    if (config.latestPrice !== undefined && costQty === 0) averageCost = config.latestPrice;
                   }
                 }
 
@@ -612,15 +612,15 @@ export const InventoryList = () => {
       const mainCatName = mainCat?.name || 'Uncategorized';
       mainCatSet.set(mainCatId, mainCatName);
       const variantLabel = inv.variant ? Object.values(inv.variant).join(', ') : '';
-      // Prefer location-specific cost from inventory doc; fall back to item-global or variantConfig
+      // Prefer location-specific cost from inventory doc; fall back to item latestPrice or variantConfig latestPrice
       let avgCost = inv.averageCost !== undefined
         ? inv.averageCost
-        : (item.averageCost || 0);
+        : (item.latestPrice || 0);
       if (inv.variant && inv.averageCost === undefined) {
         const variantConfig = item.variantConfigs?.find(
           vc => normalizeVariant(vc.variant) === normalizeVariant(inv.variant)
         );
-        if (variantConfig?.averageCost !== undefined) avgCost = variantConfig.averageCost;
+        if (variantConfig?.latestPrice !== undefined) avgCost = variantConfig.latestPrice;
       }
       const uomSymbol = uoms.find(u => u.id === item.uomId || u.symbol === item.uomId)?.symbol || item.uomId;
       rows.push({ itemName: item.name, variant: variantLabel, avgCost, qty: inv.quantity, uomSymbol, totalCost: inv.quantity * avgCost, mainCatId, mainCatName });

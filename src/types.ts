@@ -40,10 +40,18 @@ export interface UomConversion {
   factor: number; // multiplier to get base UOM quantity (e.g., 50 for a box of 50 pieces)
 }
 
+export interface PriceHistoryEntry {
+  date: Timestamp;
+  price: number;
+  source: string; // e.g., 'po_receive', 'invoice', 'manual'
+}
+
 export interface VariantConfig {
   variant: Record<string, string>;
   reorderLevel?: number;
-  averageCost?: number;
+  latestPrice?: number;
+  latestPriceDate?: Timestamp;
+  priceHistory?: PriceHistoryEntry[];
   isRequired?: boolean; // per-combination override; undefined/true = required, false = optional
   dimensionRequirements?: { [key: string]: boolean }; // per-dimension; undefined/true = required, false = optional
 }
@@ -64,8 +72,9 @@ export interface Item {
   tags?: string[];
   isTool: boolean;
   isActive: boolean;
-  averageCost?: number; // Default average cost per base unit
-  averageCostPerVariant?: Record<string, number>; // Weighted avg cost per variant key
+  latestPrice?: number;
+  latestPriceDate?: Timestamp;
+  priceHistory?: PriceHistoryEntry[];
   totalQuantity?: number; // Total quantity across all locations
   reorderLevel?: number; // Default reorder level in base UOM
   preferredSupplierId?: string; // Optional preferred supplier
@@ -375,6 +384,7 @@ export interface SuppliersInvoice {
   payment?: InvoicePayment;
   invoiceStatus?: 'for_processing' | 'with_cheque' | 'paid';
   addToInventory?: boolean;
+  updateLatestPrice?: boolean;
   previousPOStatus?: string;
   createdBy: string;
   createdAt: Timestamp;

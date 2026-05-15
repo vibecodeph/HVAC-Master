@@ -42,6 +42,7 @@ const TransactionsManager = lazy(() => import('./components/views/Admin/Transact
 const ClearLocationInventoryView = lazy(() => import('./components/views/Admin/ClearLocationInventory').then(m => ({ default: m.ClearLocationInventoryView })));
 const POPrintView = lazy(() => import('./components/views/POPrintView').then(m => ({ default: m.POPrintView })));
 const SuppliersInvoiceView = lazy(() => import('./components/views/Admin/SuppliersInvoice').then(m => ({ default: m.SuppliersInvoiceView })));
+const PriceTrends = lazy(() => import('./components/views/Admin/PriceTrends').then(m => ({ default: m.PriceTrends })));
 
 const PurchaseOrderView = () => {
   const { purchaseOrders, locations, items, uoms } = useData();
@@ -644,6 +645,14 @@ const App = () => {
                     <ProtectedRoute requireAdmin>
                       <Layout>
                         <ClearLocationInventoryView />
+                      </Layout>
+                    </ProtectedRoute>
+                  } />
+
+                  <Route path="/settings/manage/price-trends" element={
+                    <ProtectedRoute requireAdmin>
+                      <Layout>
+                        <PriceTrends />
                       </Layout>
                     </ProtectedRoute>
                   } />

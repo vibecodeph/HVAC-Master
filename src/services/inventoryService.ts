@@ -234,28 +234,11 @@ export const recordTransaction = async (transaction: Omit<Transaction, 'id' | 'u
       const toIsInternal = isInternal(toLocDoc);
       const fromIsInternal = isInternal(fromLocDoc);
 
-      let newAvgCost = itemData.averageCost || 0;
-      if (totalPrice !== undefined && !isNaN(totalPrice) && baseQuantity > 0 && toIsInternal && !fromIsInternal) {
-        const currentTotalQty = itemData.totalQuantity || 0;
-        const currentAvgCost = itemData.averageCost || 0;
-        const newUnitPricePerBase = totalPrice / baseQuantity;
-        
-        // Weighted average: (Current Total Cost + New Cost) / (Current Total Qty + New Qty)
-        const totalQty = currentTotalQty + baseQuantity;
-        if (totalQty > 0) {
-          newAvgCost = ((currentTotalQty * currentAvgCost) + (baseQuantity * newUnitPricePerBase)) / totalQty;
-        }
-      }
-
-      // Ensure newAvgCost is a valid number
-      if (isNaN(newAvgCost)) newAvgCost = itemData.averageCost || 0;
-
-      // Update Item document with new average cost and total quantity (All internal stock)
+      // Update Item document with total quantity (All internal stock)
       const changeInTotalQty = (toIsInternal ? baseQuantity : 0) - (fromIsInternal ? baseQuantity : 0);
       const newTotalQty = (itemData.totalQuantity || 0) + changeInTotalQty;
 
       dbTransaction.update(itemRef, {
-        averageCost: newAvgCost,
         totalQuantity: isNaN(newTotalQty) ? (itemData.totalQuantity || 0) : newTotalQty
       });
 
@@ -359,13 +342,13 @@ export const recordTransaction = async (transaction: Omit<Transaction, 'id' | 'u
         // Determine source cost for destination cost tracking
         let toSourceCost: number;
         if (fromIsInternal) {
-          toSourceCost = (fromInvDoc?.exists() ? fromInvDoc.data()?.averageCost : undefined) ?? itemData.averageCost ?? 0;
+          toSourceCost = (fromInvDoc?.exists() ? fromInvDoc.data()?.averageCost : undefined) ?? itemData.latestPrice ?? 0;
         } else if (totalPrice !== undefined && !isNaN(totalPrice) && baseQuantity > 0) {
           toSourceCost = totalPrice / baseQuantity;
         } else if (unitPrice !== undefined && !isNaN(unitPrice)) {
           toSourceCost = unitPrice;
         } else {
-          toSourceCost = itemData.averageCost || 0;
+          toSourceCost = itemData.latestPrice || 0;
         }
         const currentToCost = (toInvDoc?.exists() ? toInvDoc.data()?.averageCost : undefined) ?? 0;
         const toNewAvgCost = currentQty > 0
@@ -782,7 +765,6 @@ export const addItem = async (item: Omit<Item, 'id' | 'createdAt' | 'isActive'>)
     const id = itemRef.id;
     await setDoc(itemRef, cleanData({
       id,
-      averageCost: 0,
       totalQuantity: 0,
       ...item,
       isActive: true,
@@ -806,7 +788,6 @@ export const updateItem = async (id: string, item: Partial<Item>) => {
       await setDoc(itemRef, cleanData({
         ...item,
         isActive: item.isActive ?? true,
-        averageCost: item.averageCost ?? 0,
         totalQuantity: item.totalQuantity ?? 0,
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp()
@@ -1384,6 +1365,7 @@ export const recordBulkReceivePO = async (
     supplierInvoice?: string;
     supplierDR?: string;
     notes?: string;
+    updateLatestPrice?: boolean;
   }
 ) => {
   try {
@@ -1434,12 +1416,12 @@ export const recordBulkReceivePO = async (
       const updatedPoItems = [...poData.items];
       
       // Track item state changes for multiple lines of the same item
-      const rollingItemState: Record<string, { totalQuantity: number; averageCost: number; variantCosts: Record<string, number> }> = {};
+      const rollingItemState: Record<string, { totalQuantity: number; latestPricePerVariant: Record<string, { price: number; date: Timestamp; history: any[] }> }> = {};
+      const receiveTimestamp = Timestamp.fromDate(options.date);
       for (const id in itemDataMap) {
         rollingItemState[id] = {
           totalQuantity: itemDataMap[id].totalQuantity || 0,
-          averageCost: itemDataMap[id].averageCost || 0,
-          variantCosts: { ...(itemDataMap[id].averageCostPerVariant || {}) },
+          latestPricePerVariant: {},
         };
       }
 
@@ -1519,34 +1501,66 @@ export const recordBulkReceivePO = async (
           }, { merge: true });
         }
 
-        // Rolling Average Cost and Total Quantity
+        // Rolling Total Quantity and optional latestPrice update
         if (toIsInternal) {
           const state = rollingItemState[receive.itemId];
-          const totalQtyBefore = state.totalQuantity;
-          const avgCostBefore = state.averageCost;
-
           state.totalQuantity += baseQuantity;
-          if (state.totalQuantity > 0) {
-            state.averageCost = ((totalQtyBefore * avgCostBefore) + (baseQuantity * newUnitPricePerBase)) / state.totalQuantity;
-          }
 
-          // Per-variant weighted average cost
-          const vKey = receive.variant && Object.keys(receive.variant).length > 0
-            ? Object.keys(receive.variant).sort().map(k => `${k}:${receive.variant![k]}`).join('|')
-            : '_base';
-          const existingVariantCost = state.variantCosts[vKey] ?? avgCostBefore;
-          const totalVariantQty = preReceiptQty + baseQuantity;
-          state.variantCosts[vKey] = totalVariantQty > 0
-            ? ((preReceiptQty * existingVariantCost) + (baseQuantity * newUnitPricePerBase)) / totalVariantQty
-            : newUnitPricePerBase;
-
-          dbTransaction.update(doc(db, 'items', receive.itemId), {
+          const itemUpdate: Record<string, any> = {
             totalQuantity: state.totalQuantity,
-            averageCost: state.averageCost,
-            averageCostPerVariant: state.variantCosts,
             updatedAt: serverTimestamp(),
             updatedBy: userId
-          });
+          };
+
+          if (options.updateLatestPrice) {
+            const vKey = receive.variant && Object.keys(receive.variant).length > 0
+              ? Object.keys(receive.variant).sort().map(k => `${k}:${receive.variant![k]}`).join('|')
+              : '_base';
+
+            const itemData = itemDataMap[receive.itemId];
+            const isVariant = receive.variant && Object.keys(receive.variant).length > 0;
+
+            if (isVariant) {
+              // Update per-variant latestPrice in variantConfigs
+              const configs: any[] = itemData.variantConfigs ? itemData.variantConfigs.map(c => ({ ...c })) : [];
+              const existingIdx = configs.findIndex(c => {
+                const ck = Object.keys(c.variant).sort().map(k => `${k}:${c.variant[k]}`).join('|');
+                return ck === vKey;
+              });
+              const prevHistory: any[] = existingIdx >= 0 ? (configs[existingIdx].priceHistory || []) : [];
+              const newHistory = [...prevHistory, { date: receiveTimestamp, price: newUnitPricePerBase, source: 'po_receive' }].slice(-50);
+              if (existingIdx >= 0) {
+                configs[existingIdx] = { ...configs[existingIdx], latestPrice: newUnitPricePerBase, latestPriceDate: receiveTimestamp, priceHistory: newHistory };
+              } else {
+                configs.push({ variant: receive.variant, latestPrice: newUnitPricePerBase, latestPriceDate: receiveTimestamp, priceHistory: newHistory });
+              }
+              // Track for this run
+              state.latestPricePerVariant[vKey] = { price: newUnitPricePerBase, date: receiveTimestamp, history: newHistory };
+              itemUpdate.variantConfigs = configs;
+            } else {
+              // Base (no variant) — update item-level latestPrice
+              if (!state.latestPricePerVariant['_base']) {
+                const prevHistory: any[] = itemData.priceHistory || [];
+                state.latestPricePerVariant['_base'] = {
+                  price: newUnitPricePerBase,
+                  date: receiveTimestamp,
+                  history: [...prevHistory, { date: receiveTimestamp, price: newUnitPricePerBase, source: 'po_receive' }].slice(-50)
+                };
+              } else {
+                const prev = state.latestPricePerVariant['_base'];
+                state.latestPricePerVariant['_base'] = {
+                  price: newUnitPricePerBase,
+                  date: receiveTimestamp,
+                  history: [...prev.history, { date: receiveTimestamp, price: newUnitPricePerBase, source: 'po_receive' }].slice(-50)
+                };
+              }
+              itemUpdate.latestPrice = state.latestPricePerVariant['_base'].price;
+              itemUpdate.latestPriceDate = receiveTimestamp;
+              itemUpdate.priceHistory = state.latestPricePerVariant['_base'].history;
+            }
+          }
+
+          dbTransaction.update(doc(db, 'items', receive.itemId), itemUpdate);
         }
 
         // Supplier pricing record
@@ -2244,12 +2258,13 @@ export const recordBulkReceive = async (requestIds: string[], receiverId: string
             const invRef = getInventoryRef(itemId, jobsiteId, variant, sn, request.customSpec);
             const invKey = invRef.path;
 
-            // Serial items: cost = source item's average cost (no qty-weighting needed per serial doc)
+            // Serial items: cost = source item's latest price (no qty-weighting needed per serial doc)
             const snItemData = itemCache[itemId];
             const snVariantKey = normalizeVariant(variant);
-            invCache[invKey].averageCost = (variant && Object.keys(variant || {}).length > 0 && snItemData?.averageCostPerVariant?.[snVariantKey])
-              ? snItemData.averageCostPerVariant[snVariantKey]
-              : (snItemData?.averageCost || 0);
+            const snVariantConfig = snItemData?.variantConfigs?.find(c => normalizeVariant(c.variant) === snVariantKey);
+            invCache[invKey].averageCost = (variant && Object.keys(variant || {}).length > 0 && snVariantConfig?.latestPrice !== undefined)
+              ? snVariantConfig.latestPrice
+              : (snItemData?.latestPrice || 0);
             invCache[invKey].quantity += 1;
 
             // Record individual transaction per serial number
@@ -2286,12 +2301,13 @@ export const recordBulkReceive = async (requestIds: string[], receiverId: string
           const invRef = getInventoryRef(itemId, jobsiteId, variant, undefined, request.customSpec);
           const invKey = invRef.path;
 
-          // Compute weighted average cost from source item's cost before incrementing quantity
+          // Compute weighted average cost from source item's latest price before incrementing quantity
           const nsItemData = itemCache[itemId];
           const nsVariantKey = normalizeVariant(variant);
-          const nsSourceCost = (variant && Object.keys(variant || {}).length > 0 && nsItemData?.averageCostPerVariant?.[nsVariantKey])
-            ? nsItemData.averageCostPerVariant[nsVariantKey]
-            : (nsItemData?.averageCost || 0);
+          const nsVariantConfig = nsItemData?.variantConfigs?.find(c => normalizeVariant(c.variant) === nsVariantKey);
+          const nsSourceCost = (variant && Object.keys(variant || {}).length > 0 && nsVariantConfig?.latestPrice !== undefined)
+            ? nsVariantConfig.latestPrice
+            : (nsItemData?.latestPrice || 0);
           const nsCurrentQty = invCache[invKey].quantity;
           invCache[invKey].averageCost = nsCurrentQty > 0
             ? (nsCurrentQty * invCache[invKey].averageCost + baseQuantity * nsSourceCost) / (nsCurrentQty + baseQuantity)
@@ -2705,12 +2721,11 @@ export const clearInventoryData = async (includeBOQ: boolean = true, includePOs:
       handleFirestoreError(err, OperationType.WRITE, 'purchase_orders');
     }
     
-    // Also reset totalQuantity and averageCost for all items to keep data consistent
+    // Also reset totalQuantity for all items to keep data consistent
     try {
       const itemsSnap = await getDocs(collection(db, 'items'));
       const itemUpdates = itemsSnap.docs.map(d => updateDoc(d.ref, {
-        totalQuantity: 0,
-        averageCost: 0
+        totalQuantity: 0
       }));
       await Promise.all(itemUpdates);
     } catch (err) {
@@ -3159,18 +3174,24 @@ export const manualEditInventory = async (
 
     if (updates.unitPrice !== undefined) {
       const hasVariant = variant && Object.keys(variant).length > 0;
+      const manualTimestamp = Timestamp.now();
       if (hasVariant) {
         const varKey = normalizeVariant(variant!);
         const configs = [...(currentItem.variantConfigs || [])];
         const idx = configs.findIndex(vc => normalizeVariant(vc.variant) === varKey);
+        const prevHistory: any[] = idx >= 0 ? (configs[idx].priceHistory || []) : [];
+        const newHistory = [...prevHistory, { date: manualTimestamp, price: updates.unitPrice, source: 'manual' }].slice(-50);
         if (idx >= 0) {
-          configs[idx] = { ...configs[idx], averageCost: updates.unitPrice };
+          configs[idx] = { ...configs[idx], latestPrice: updates.unitPrice, latestPriceDate: manualTimestamp, priceHistory: newHistory };
         } else {
-          configs.push({ variant: variant!, averageCost: updates.unitPrice });
+          configs.push({ variant: variant!, latestPrice: updates.unitPrice, latestPriceDate: manualTimestamp, priceHistory: newHistory });
         }
         itemUpdate.variantConfigs = configs;
       } else {
-        itemUpdate.averageCost = updates.unitPrice;
+        const prevHistory: any[] = currentItem.priceHistory || [];
+        itemUpdate.latestPrice = updates.unitPrice;
+        itemUpdate.latestPriceDate = manualTimestamp;
+        itemUpdate.priceHistory = [...prevHistory, { date: manualTimestamp, price: updates.unitPrice, source: 'manual' }].slice(-50);
       }
     }
 
@@ -3304,11 +3325,12 @@ export const addInventoryToJobsite = async (
 
       // Compute location-level weighted average cost
       const ajVariantKey = normalizeVariant(variant);
+      const ajVariantConfig = itemData.variantConfigs?.find(c => normalizeVariant(c.variant) === ajVariantKey);
       const ajSourceCost = (unitPrice !== undefined && unitPrice > 0)
         ? unitPrice
-        : ((variant && Object.keys(variant || {}).length > 0 && itemData.averageCostPerVariant?.[ajVariantKey])
-          ? itemData.averageCostPerVariant[ajVariantKey]
-          : (itemData.averageCost || 0));
+        : ((variant && Object.keys(variant || {}).length > 0 && ajVariantConfig?.latestPrice !== undefined)
+          ? ajVariantConfig.latestPrice
+          : (itemData.latestPrice || 0));
       const existingCost = invDoc.exists() ? (invDoc.data()?.averageCost ?? 0) : 0;
       const ajNewAvgCost = existingQty > 0 && newQty > 0
         ? (existingQty * existingCost + quantity * ajSourceCost) / newQty
@@ -3333,10 +3355,25 @@ export const addInventoryToJobsite = async (
       };
 
       if (unitPrice !== undefined && unitPrice > 0) {
-        const currentAvgCost = itemData.averageCost || 0;
-        const currentTotal = itemData.totalQuantity || 0;
-        const weighted = ((currentTotal * currentAvgCost) + (quantity * unitPrice)) / (currentTotal + quantity);
-        itemUpdate.averageCost = isNaN(weighted) ? unitPrice : weighted;
+        const ajTimestamp = Timestamp.now();
+        const prevHistory: any[] = (variant && Object.keys(variant || {}).length > 0)
+          ? (ajVariantConfig?.priceHistory || [])
+          : (itemData.priceHistory || []);
+        const newHistory = [...prevHistory, { date: ajTimestamp, price: unitPrice, source: 'manual' }].slice(-50);
+        if (variant && Object.keys(variant || {}).length > 0) {
+          const configs = [...(itemData.variantConfigs || [])];
+          const idx = configs.findIndex(c => normalizeVariant(c.variant) === ajVariantKey);
+          if (idx >= 0) {
+            configs[idx] = { ...configs[idx], latestPrice: unitPrice, latestPriceDate: ajTimestamp, priceHistory: newHistory };
+          } else {
+            configs.push({ variant: variant!, latestPrice: unitPrice, latestPriceDate: ajTimestamp, priceHistory: newHistory });
+          }
+          itemUpdate.variantConfigs = configs;
+        } else {
+          itemUpdate.latestPrice = unitPrice;
+          itemUpdate.latestPriceDate = ajTimestamp;
+          itemUpdate.priceHistory = newHistory;
+        }
       }
 
       txn.update(itemRef, itemUpdate);
@@ -3549,4 +3586,48 @@ export const subscribeToPurchaseOrders = (callback: (data: PurchaseOrder[]) => v
     handleFirestoreError(error, OperationType.LIST, 'purchase_orders', false);
     callback([]);
   });
+};
+
+// Migrate averageCost → latestPrice for existing items (one-time admin utility)
+export const migrateAverageCostToLatestPrice = async (): Promise<{ migrated: number; skipped: number }> => {
+  const itemsSnap = await getDocs(collection(db, 'items'));
+  let migrated = 0;
+  let skipped = 0;
+  const batch = writeBatch(db);
+
+  for (const itemDoc of itemsSnap.docs) {
+    const data = itemDoc.data();
+    const updates: Record<string, any> = {};
+
+    // Migrate item-level averageCost → latestPrice
+    if (data.averageCost !== undefined && data.latestPrice === undefined) {
+      updates.latestPrice = data.averageCost;
+    }
+
+    // Migrate variantConfigs[].averageCost → latestPrice
+    if (data.variantConfigs && Array.isArray(data.variantConfigs)) {
+      let variantMigrated = false;
+      const updatedConfigs = data.variantConfigs.map((vc: any) => {
+        if (vc.averageCost !== undefined && vc.latestPrice === undefined) {
+          variantMigrated = true;
+          const { averageCost, ...rest } = vc;
+          return { ...rest, latestPrice: averageCost };
+        }
+        return vc;
+      });
+      if (variantMigrated) {
+        updates.variantConfigs = updatedConfigs;
+      }
+    }
+
+    if (Object.keys(updates).length > 0) {
+      batch.update(itemDoc.ref, updates);
+      migrated++;
+    } else {
+      skipped++;
+    }
+  }
+
+  await batch.commit();
+  return { migrated, skipped };
 };

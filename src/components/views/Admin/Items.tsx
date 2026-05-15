@@ -43,7 +43,7 @@ const VariantDetailsModal = ({ item, uoms, onClose }: { item: Item, uoms: any[],
       
       return {
         variant,
-        averageCost: config?.averageCost ?? item.averageCost,
+        latestPrice: config?.latestPrice ?? item.latestPrice,
         reorderLevel: config?.reorderLevel ?? item.reorderLevel
       };
     });
@@ -76,7 +76,7 @@ const VariantDetailsModal = ({ item, uoms, onClose }: { item: Item, uoms: any[],
 
             <div className="flex items-center space-x-4 pr-1 flex-shrink-0">
               <div className="flex flex-col items-end">
-                <span className="text-xs font-black text-blue-600">₱{(v.averageCost || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                <span className="text-xs font-black text-blue-600">₱{(v.latestPrice || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
               </div>
               <div className="flex flex-col items-end">
                 <span className="text-xs font-black text-gray-900">{v.reorderLevel || 0}</span>
@@ -388,7 +388,7 @@ export const ItemManagementView = () => {
                       ) : (
                         <>
                           <div className="flex flex-col items-end">
-                            <span className="text-xs font-black text-blue-600">₱{(item.averageCost || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                            <span className="text-xs font-black text-blue-600">₱{(item.latestPrice || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                           </div>
                           <div className="flex flex-col items-end">
                             <span className="text-xs font-black text-gray-900">{item.reorderLevel || 0}</span>

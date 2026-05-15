@@ -88,6 +88,7 @@ export const SuppliersInvoiceView = () => {
   const [formItems, setFormItems] = useState<FormItemState[]>([emptyFormItem()]);
   const [formSubmitting, setFormSubmitting] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
+  const [pendingInvoiceData, setPendingInvoiceData] = useState<any | null>(null);
 
   // Form — PO linking
   const [selectedPOId, setSelectedPOId] = useState('');
@@ -469,6 +470,12 @@ export const SuppliersInvoiceView = () => {
       addToInventory,
     };
 
+    if (!editingInvoice && addToInventory !== false) {
+      // For new invoices that add to inventory, ask whether to update latest price
+      setPendingInvoiceData(formData);
+      return;
+    }
+
     setFormSubmitting(true);
     try {
       if (editingInvoice) {
@@ -476,6 +483,22 @@ export const SuppliersInvoiceView = () => {
       } else {
         await createSuppliersInvoice(formData);
       }
+      resetForm();
+      setView('list');
+    } catch (e: any) {
+      setFormError(e.message || 'Failed to save invoice');
+    } finally {
+      setFormSubmitting(false);
+    }
+  };
+
+  const executeInvoiceSubmit = async (updateLatestPrice: boolean) => {
+    if (!pendingInvoiceData) return;
+    const data = { ...pendingInvoiceData, updateLatestPrice };
+    setPendingInvoiceData(null);
+    setFormSubmitting(true);
+    try {
+      await createSuppliersInvoice(data);
       resetForm();
       setView('list');
     } catch (e: any) {
@@ -1054,13 +1077,42 @@ export const SuppliersInvoiceView = () => {
             )}
           </Card>
 
-          <button
-            onClick={handleSubmit}
-            disabled={formSubmitting}
-            className="w-full py-4 bg-blue-600 text-white rounded-2xl font-black uppercase tracking-widest text-xs active:scale-95 transition-transform disabled:opacity-50 flex items-center justify-center gap-2"
-          >
-            {formSubmitting ? <Loader2 className="animate-spin" size={16} /> : (editingInvoice ? 'Save Changes' : 'Save Invoice')}
-          </button>
+          {pendingInvoiceData ? (
+            <Card className="p-4 bg-blue-50 border border-blue-100 space-y-3">
+              <p className="text-sm font-bold text-blue-900">Update Latest Price?</p>
+              <p className="text-xs text-blue-700">Do you want to update the latest price for items in this invoice?</p>
+              <div className="flex gap-3">
+                <button
+                  onClick={() => executeInvoiceSubmit(true)}
+                  disabled={formSubmitting}
+                  className="flex-1 py-3 bg-blue-600 text-white rounded-2xl text-xs font-black uppercase tracking-widest disabled:opacity-50"
+                >
+                  {formSubmitting ? <Loader2 className="animate-spin mx-auto" size={14} /> : 'Yes, Update'}
+                </button>
+                <button
+                  onClick={() => executeInvoiceSubmit(false)}
+                  disabled={formSubmitting}
+                  className="flex-1 py-3 bg-gray-200 text-gray-700 rounded-2xl text-xs font-black uppercase tracking-widest disabled:opacity-50"
+                >
+                  {formSubmitting ? <Loader2 className="animate-spin mx-auto" size={14} /> : 'No, Keep'}
+                </button>
+              </div>
+              <button
+                onClick={() => setPendingInvoiceData(null)}
+                className="w-full py-2 text-xs text-gray-500 hover:text-gray-700 transition-colors"
+              >
+                Cancel
+              </button>
+            </Card>
+          ) : (
+            <button
+              onClick={handleSubmit}
+              disabled={formSubmitting}
+              className="w-full py-4 bg-blue-600 text-white rounded-2xl font-black uppercase tracking-widest text-xs active:scale-95 transition-transform disabled:opacity-50 flex items-center justify-center gap-2"
+            >
+              {formSubmitting ? <Loader2 className="animate-spin" size={16} /> : (editingInvoice ? 'Save Changes' : 'Save Invoice')}
+            </button>
+          )}
         </div>
       </div>
     );

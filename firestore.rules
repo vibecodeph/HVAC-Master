@@ -151,7 +151,7 @@ service cloud.firestore {
     // ===============================================================
 
     function isValidItem(data) {
-      return hasOnlyAllowedFields(['id', 'name', 'uomId', 'isTool', 'isActive', 'createdAt', 'updatedAt', 'createdBy', 'updatedBy', 'description', 'categoryId', 'subcategoryId', 'tags', 'variantAttributes', 'requireVariant', 'averageCost', 'averageCostPerVariant', 'totalQuantity', 'reorderLevel', 'preferredSupplierId', 'variantConfigs', 'components', 'uomConversions', 'requireCustomSpec', 'customSpecLabel']) &&
+      return hasOnlyAllowedFields(['id', 'name', 'uomId', 'isTool', 'isActive', 'createdAt', 'updatedAt', 'createdBy', 'updatedBy', 'description', 'categoryId', 'subcategoryId', 'tags', 'variantAttributes', 'requireVariant', 'latestPrice', 'latestPriceDate', 'priceHistory', 'totalQuantity', 'reorderLevel', 'preferredSupplierId', 'variantConfigs', 'components', 'uomConversions', 'requireCustomSpec', 'customSpecLabel']) &&
              (!('name' in data) || (data.name is string && data.name.size() > 0 && data.name.size() <= 200)) &&
              (!('description' in data) || data.description == null || (data.description is string && data.description.size() <= 1000)) &&
              (!('uomId' in data) || (data.uomId is string && data.uomId.size() <= 50)) &&
@@ -163,8 +163,9 @@ service cloud.firestore {
              (!('tags' in data) || data.tags == null || (data.tags is list && data.tags.size() <= 100)) &&
              (!('variantAttributes' in data) || data.variantAttributes == null || (data.variantAttributes is list && data.variantAttributes.size() <= 30)) &&
              (!('requireVariant' in data) || data.requireVariant is bool) &&
-             (!('averageCost' in data) || data.averageCost == null || (data.averageCost is number && data.averageCost >= 0)) &&
-             (!('averageCostPerVariant' in data) || data.averageCostPerVariant == null || data.averageCostPerVariant is map) &&
+             (!('latestPrice' in data) || data.latestPrice == null || (data.latestPrice is number && data.latestPrice >= 0)) &&
+             (!('latestPriceDate' in data) || data.latestPriceDate == null || data.latestPriceDate is timestamp) &&
+             (!('priceHistory' in data) || data.priceHistory == null || (data.priceHistory is list && data.priceHistory.size() <= 50)) &&
              (!('totalQuantity' in data) || data.totalQuantity == null || (data.totalQuantity is number)) &&
              (!('reorderLevel' in data) || data.reorderLevel == null || (data.reorderLevel is number && data.reorderLevel >= 0)) &&
              (!('preferredSupplierId' in data) || data.preferredSupplierId == null || (data.preferredSupplierId is string && data.preferredSupplierId.size() <= 50)) &&
@@ -471,7 +472,7 @@ service cloud.firestore {
     match /items/{itemId} {
       allow read: if isApproved();
       allow create: if isAdmin();
-      allow update: if isAdmin() || (isApproved() && (isWarehouseman() || isEngineer()) && isValidItem(request.resource.data) && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['averageCost', 'averageCostPerVariant', 'totalQuantity', 'updatedAt', 'updatedBy'])) || (isApproved() && request.auth.token.get('role', '') == 'worker' && isValidItem(request.resource.data) && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['totalQuantity']));
+      allow update: if isAdmin() || (isApproved() && (isWarehouseman() || isEngineer()) && isValidItem(request.resource.data) && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['latestPrice', 'latestPriceDate', 'priceHistory', 'variantConfigs', 'totalQuantity', 'updatedAt', 'updatedBy'])) || (isApproved() && request.auth.token.get('role', '') == 'worker' && isValidItem(request.resource.data) && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['totalQuantity']));
       allow delete: if isAdmin();
     }
 

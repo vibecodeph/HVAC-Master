@@ -266,6 +266,7 @@ export const SettingsView = () => {
                 { label: 'User Management', icon: Users, path: '/settings/manage/users' },
                 { label: 'Role-Based Access Control', icon: Shield, path: '/settings/manage/rbac' },
                 { label: 'Supplier Pricing', icon: Tag, path: '/settings/manage/supplier-pricing' },
+                { label: 'Price Trends', icon: Tag, path: '/settings/manage/price-trends' },
                 { label: 'Archived Requests', icon: Archive, path: '/settings/manage/archived-requests' },
               ].map((item) => (
                 <button 

@@ -138,20 +138,8 @@ export const Dashboard = () => {
       const item = items.find(i => i.id === inv.itemId);
       if (!item) return acc;
       
-      // Resolve cost (variant-specific or base)
-      let cost = item.averageCost || 0;
-      if (inv.variant && item.variantConfigs) {
-        const config = item.variantConfigs.find(vc => {
-          if (!vc.variant || !inv.variant) return false;
-          const vcKeys = Object.keys(vc.variant);
-          const invKeys = Object.keys(inv.variant);
-          if (vcKeys.length !== invKeys.length) return false;
-          return vcKeys.every(k => vc.variant[k] === inv.variant[k]);
-        });
-        if (config && config.averageCost !== undefined) {
-          cost = config.averageCost;
-        }
-      }
+      // Resolve cost: use location-level averageCost, fallback to item latestPrice
+      const cost = inv.averageCost ?? item.latestPrice ?? 0;
       
       return acc + (inv.quantity * cost);
     }, 0);

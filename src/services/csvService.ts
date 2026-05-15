@@ -330,7 +330,7 @@ export const exportItemsToCSV = (
       Subcategory: subcategory?.name || '',
       UOM: uom?.symbol || item.uomId,
       'Is Tool': item.isTool ? 'TRUE' : 'FALSE',
-      'Average Cost': item.averageCost || 0,
+      'Latest Price': item.latestPrice || 0,
       'Reorder Level': item.reorderLevel || 0,
       Tags: (item.tags || []).join(', '),
       'Is Active': item.isActive ? 'TRUE' : 'FALSE',
@@ -341,7 +341,7 @@ export const exportItemsToCSV = (
       'Variant Configurations': (item.variantConfigs || []).map(config => {
         const variantStr = Object.entries(config.variant).map(([k, v]) => `${k}:${v}`).join(', ');
         const dataParts = [];
-        if (config.averageCost !== undefined) dataParts.push(`Cost:${config.averageCost}`);
+        if (config.latestPrice !== undefined) dataParts.push(`Cost:${config.latestPrice}`);
         if (config.reorderLevel !== undefined) dataParts.push(`Reorder:${config.reorderLevel}`);
         return variantStr ? `[${variantStr}] -> ${dataParts.join(', ')}` : dataParts.join(', ');
       }).join(' | '),
@@ -512,7 +512,7 @@ export const importItemsFromCSV = async (
               requireVariant: row['Require Variant']?.toUpperCase() === 'TRUE',
               requireCustomSpec: row['Require Custom Spec']?.toUpperCase() === 'TRUE',
               customSpecLabel: row['Custom Spec Label']?.trim() || '',
-              averageCost: parseFloat(row['Average Cost'] || '0') || 0,
+              latestPrice: parseFloat(row['Latest Price'] || '0') || undefined,
               reorderLevel: parseFloat(row['Reorder Level'] || '0') || 0,
             };
 
@@ -553,7 +553,7 @@ export const importItemsFromCSV = async (
                   if (k && v) {
                     const key = k.trim().toLowerCase();
                     const val = parseFloat(v.trim());
-                    if (key === 'cost') config.averageCost = val;
+                    if (key === 'cost') config.latestPrice = val;
                     if (key === 'reorder') config.reorderLevel = val;
                   }
                 });

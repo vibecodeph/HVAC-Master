@@ -174,7 +174,7 @@ export const ItemManagementView = () => {
   };
 
   const handleExport = () => {
-    exportItemsToCSV(items, categories, uoms);
+    exportItemsToCSV(items, categories, uoms, locations);
   };
 
   const handleImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -184,7 +184,7 @@ export const ItemManagementView = () => {
     setIsImporting(true);
     setImportStatus(null);
     try {
-      const result = await importItemsFromCSV(file, categories, uoms, tags, items);
+      const result = await importItemsFromCSV(file, categories, uoms, tags, items, locations);
       setImportStatus(result);
     } catch (error: any) {
       setImportStatus({ success: 0, errors: [error.message || 'Import failed'] });

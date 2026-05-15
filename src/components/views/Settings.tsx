@@ -4,6 +4,7 @@ import { ChevronRight, Package, Filter, MapPin, Box, Users, Shield, Trash2, Aler
 import { useAuth, useData } from '../../App';
 import { clearInventoryData, updateSystemConfig } from '../../services/inventoryService';
 import { downloadBackup, restoreFromBackup, validateBackup, backupUndeliveredRequests, restoreUndeliveredRequests, validateUndeliveredRequestsBackup, UndeliveredRequestsBackup } from '../../services/backupService';
+import { exportMetadata, importMetadata, validateMetadataExport, getExistingCounts, METADATA_COLLECTIONS, COLLECTION_LABELS, MetadataCollection, MetadataExport } from '../../services/metadataService';
 import { cn } from '../../lib/utils';
 import { Header } from '../common/Header';
 import { Card } from '../common/Card';
@@ -38,6 +39,17 @@ export const SettingsView = () => {
   const [requestsRestoreLocOptions, setRequestsRestoreLocOptions] = useState<{ id: string; name: string; count: number }[]>([]);
   const [requestsRestoreSelectedLocs, setRequestsRestoreSelectedLocs] = useState<Set<string>>(new Set());
   const requestsRestoreInputRef = useRef<HTMLInputElement>(null);
+
+  // Metadata management state
+  const [metaExportSelected, setMetaExportSelected] = useState<Set<MetadataCollection>>(new Set(METADATA_COLLECTIONS));
+  const [isExportingMeta, setIsExportingMeta] = useState(false);
+  const [isImportingMeta, setIsImportingMeta] = useState(false);
+  const [metaMsg, setMetaMsg] = useState<{ type: 'success' | 'error' | 'progress'; text: string } | null>(null);
+  const [metaImportParsed, setMetaImportParsed] = useState<MetadataExport | null>(null);
+  const [metaImportFile, setMetaImportFile] = useState<File | null>(null);
+  const [metaExistingCounts, setMetaExistingCounts] = useState<Record<string, number>>({});
+  const [showMetaImportConfirm, setShowMetaImportConfirm] = useState(false);
+  const metaImportInputRef = useRef<HTMLInputElement>(null);
 
   const assignedLocations = locations.filter(l => profile?.assignedLocationIds?.includes(l.id));
 
@@ -220,6 +232,84 @@ export const SettingsView = () => {
       setRequestsRestoreLocOptions([]);
       setRequestsRestoreSelectedLocs(new Set());
     }
+  };
+
+  const handleMetaExport = async () => {
+    const selected = [...metaExportSelected] as MetadataCollection[];
+    if (selected.length === 0) {
+      setMetaMsg({ type: 'error', text: 'Select at least one collection to export.' });
+      return;
+    }
+    setIsExportingMeta(true);
+    setMetaMsg({ type: 'progress', text: 'Starting export…' });
+    try {
+      await exportMetadata(selected, msg => setMetaMsg({ type: 'progress', text: msg }));
+      const totalDocs = selected.reduce((sum, c) => sum + (metaExistingCounts[c] ?? 0), 0);
+      setMetaMsg({ type: 'success', text: `Export complete — ${totalDocs} records downloaded.` });
+    } catch (err) {
+      console.error('Metadata export failed:', err);
+      setMetaMsg({ type: 'error', text: 'Export failed. Please try again.' });
+    } finally {
+      setIsExportingMeta(false);
+    }
+  };
+
+  const handleMetaImportFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    e.target.value = '';
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(await file.text());
+    } catch {
+      setMetaMsg({ type: 'error', text: 'File is not valid JSON.' });
+      return;
+    }
+    if (!validateMetadataExport(parsed)) {
+      setMetaMsg({ type: 'error', text: 'Invalid format — not a metadata export file.' });
+      return;
+    }
+    const incomingCols = Object.keys(parsed.metadata) as MetadataCollection[];
+    setMetaMsg({ type: 'progress', text: 'Reading current record counts…' });
+    try {
+      const existing = await getExistingCounts(incomingCols);
+      setMetaExistingCounts(existing);
+      setMetaImportParsed(parsed);
+      setMetaImportFile(file);
+      setShowMetaImportConfirm(true);
+      setMetaMsg(null);
+    } catch (err) {
+      console.error('Failed to read existing counts:', err);
+      setMetaMsg({ type: 'error', text: 'Could not read existing record counts. Please try again.' });
+    }
+  };
+
+  const handleMetaImportConfirm = async () => {
+    if (!metaImportParsed) return;
+    setShowMetaImportConfirm(false);
+    setIsImportingMeta(true);
+    setMetaMsg({ type: 'progress', text: 'Importing…' });
+    try {
+      const { totalImported } = await importMetadata(
+        metaImportParsed,
+        msg => setMetaMsg({ type: 'progress', text: msg })
+      );
+      setMetaMsg({ type: 'success', text: `Import complete — ${totalImported} records written.` });
+    } catch (err) {
+      console.error('Metadata import failed:', err);
+      setMetaMsg({ type: 'error', text: 'Import failed. Some data may be in an inconsistent state — restore from backup if needed.' });
+    } finally {
+      setIsImportingMeta(false);
+      setMetaImportParsed(null);
+      setMetaImportFile(null);
+    }
+  };
+
+  const resetMetaImportConfirm = () => {
+    setShowMetaImportConfirm(false);
+    setMetaImportParsed(null);
+    setMetaImportFile(null);
+    setMetaExistingCounts({});
   };
 
   return (
@@ -488,6 +578,95 @@ export const SettingsView = () => {
 
         {profile?.role === 'admin' && (
           <div className="space-y-2">
+            <h3 className="text-xs font-bold text-gray-400 uppercase tracking-widest px-2">Metadata Management</h3>
+            <Card className="p-4 space-y-4">
+              <p className="text-[10px] text-gray-500 font-medium leading-snug">
+                Export or import items, categories, UOMs, tags, locations, suppliers, and users as a single JSON file. Import overwrites existing records for selected collections.
+              </p>
+
+              {metaMsg && (
+                <div className={cn(
+                  'p-3 rounded-xl text-xs font-bold flex items-center gap-2',
+                  metaMsg.type === 'success' && 'bg-green-100 text-green-700',
+                  metaMsg.type === 'error'   && 'bg-red-100 text-red-700',
+                  metaMsg.type === 'progress' && 'bg-blue-50 text-blue-700',
+                )}>
+                  {metaMsg.type === 'progress' && <Loader2 size={14} className="animate-spin shrink-0" />}
+                  {metaMsg.type === 'success'  && <Check size={14} className="shrink-0" />}
+                  {metaMsg.type === 'error'    && <AlertCircle size={14} className="shrink-0" />}
+                  <span>{metaMsg.text}</span>
+                </div>
+              )}
+
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between px-1">
+                  <p className="text-[10px] font-black text-gray-400 uppercase tracking-wider">Collections to export</p>
+                  <div className="flex gap-3">
+                    <button
+                      onClick={() => setMetaExportSelected(new Set(METADATA_COLLECTIONS))}
+                      className="text-[10px] font-bold text-blue-600 active:opacity-60"
+                    >All</button>
+                    <button
+                      onClick={() => setMetaExportSelected(new Set())}
+                      className="text-[10px] font-bold text-gray-400 active:opacity-60"
+                    >None</button>
+                  </div>
+                </div>
+                <div className="divide-y divide-gray-100 rounded-xl border border-gray-100 overflow-hidden">
+                  {METADATA_COLLECTIONS.map(col => (
+                    <label key={col} className="flex items-center gap-3 px-3 py-2.5 bg-white cursor-pointer active:bg-gray-50">
+                      <input
+                        type="checkbox"
+                        checked={metaExportSelected.has(col)}
+                        onChange={e => {
+                          const next = new Set(metaExportSelected);
+                          e.target.checked ? next.add(col) : next.delete(col);
+                          setMetaExportSelected(next);
+                        }}
+                        className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-400"
+                      />
+                      <span className="text-xs font-bold text-gray-800">{COLLECTION_LABELS[col]}</span>
+                    </label>
+                  ))}
+                </div>
+              </div>
+
+              <button
+                onClick={handleMetaExport}
+                disabled={isExportingMeta || isImportingMeta || metaExportSelected.size === 0}
+                className={cn(
+                  'w-full py-3 bg-blue-600 text-white rounded-xl font-bold flex items-center justify-center gap-2 active:scale-95 transition-transform',
+                  (isExportingMeta || isImportingMeta || metaExportSelected.size === 0) && 'opacity-60 cursor-not-allowed',
+                )}
+              >
+                {isExportingMeta ? <Loader2 size={18} className="animate-spin" /> : <Download size={18} />}
+                <span>{isExportingMeta ? 'Exporting…' : 'Export Metadata'}</span>
+              </button>
+
+              <input
+                ref={metaImportInputRef}
+                type="file"
+                accept=".json"
+                className="hidden"
+                onChange={handleMetaImportFileSelect}
+              />
+              <button
+                onClick={() => metaImportInputRef.current?.click()}
+                disabled={isExportingMeta || isImportingMeta}
+                className={cn(
+                  'w-full py-3 bg-amber-500 text-white rounded-xl font-bold flex items-center justify-center gap-2 active:scale-95 transition-transform',
+                  (isExportingMeta || isImportingMeta) && 'opacity-60 cursor-not-allowed',
+                )}
+              >
+                {isImportingMeta ? <Loader2 size={18} className="animate-spin" /> : <Upload size={18} />}
+                <span>{isImportingMeta ? 'Importing…' : 'Import Metadata'}</span>
+              </button>
+            </Card>
+          </div>
+        )}
+
+        {profile?.role === 'admin' && (
+          <div className="space-y-2">
             <h3 className="text-xs font-bold text-red-400 uppercase tracking-widest px-2">Danger Zone</h3>
             <Card className="p-4 bg-red-50 border-red-100">
               {statusMessage && (
@@ -648,6 +827,69 @@ export const SettingsView = () => {
               </button>
               <button
                 onClick={() => { setShowRequestsRestoreConfirm(false); setRequestsRestoreFile(null); setRequestsRestoreParsed(null); setRequestsRestoreLocOptions([]); setRequestsRestoreSelectedLocs(new Set()); }}
+                className="w-full py-4 bg-gray-100 text-gray-600 rounded-2xl font-black uppercase tracking-widest text-xs active:scale-95 transition-transform"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </Modal>
+
+        <Modal
+          isOpen={showMetaImportConfirm}
+          onClose={resetMetaImportConfirm}
+          title="Import Metadata"
+        >
+          <div className="space-y-4">
+            <div className="p-4 bg-red-50 rounded-2xl border border-red-100 flex items-start gap-3">
+              <AlertCircle className="text-red-600 shrink-0 mt-0.5" size={20} />
+              <div className="space-y-1">
+                <p className="text-sm font-bold text-red-900">This will overwrite existing metadata!</p>
+                <p className="text-xs text-red-700 font-medium leading-relaxed">
+                  The following collections will be deleted and replaced with the imported data. This cannot be undone.
+                </p>
+              </div>
+            </div>
+
+            {metaImportFile && metaImportParsed && (
+              <div className="p-3 bg-gray-50 rounded-xl border border-gray-100 space-y-0.5">
+                <p className="text-xs font-bold text-gray-700">{metaImportFile.name}</p>
+                <p className="text-[10px] text-gray-400">
+                  {(metaImportFile.size / 1024).toFixed(1)} KB &middot; Exported {new Date(metaImportParsed.timestamp).toLocaleString()}
+                </p>
+              </div>
+            )}
+
+            {metaImportParsed && (
+              <div className="divide-y divide-gray-100 rounded-xl border border-gray-100 overflow-hidden">
+                {(Object.keys(metaImportParsed.metadata) as MetadataCollection[]).map(col => {
+                  const incoming = metaImportParsed.metadata[col]?.length ?? 0;
+                  const existing = metaExistingCounts[col] ?? 0;
+                  return (
+                    <div key={col} className="flex items-center justify-between px-3 py-2.5 bg-white">
+                      <span className="text-xs font-bold text-gray-800">{COLLECTION_LABELS[col] || col}</span>
+                      <span className="text-[10px] font-bold text-gray-500">
+                        {existing} records
+                        <span className="text-gray-300 mx-1">→</span>
+                        <span className={cn(incoming > existing ? 'text-blue-600' : incoming < existing ? 'text-amber-600' : 'text-gray-500')}>
+                          {incoming}
+                        </span>
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
+            <div className="flex flex-col gap-2">
+              <button
+                onClick={handleMetaImportConfirm}
+                className="w-full py-4 bg-red-600 text-white rounded-2xl font-black uppercase tracking-widest text-xs active:scale-95 transition-transform shadow-lg shadow-red-200"
+              >
+                Yes, Import & Overwrite
+              </button>
+              <button
+                onClick={resetMetaImportConfirm}
                 className="w-full py-4 bg-gray-100 text-gray-600 rounded-2xl font-black uppercase tracking-widest text-xs active:scale-95 transition-transform"
               >
                 Cancel

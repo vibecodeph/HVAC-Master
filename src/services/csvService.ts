@@ -12,7 +12,8 @@ export interface CSVItemRow {
   Subcategory?: string;
   UOM: string;
   'Is Tool': string;
-  'Average Cost'?: string;
+  'Latest Price'?: string;
+  'Average Cost'?: string; // legacy compat — read on import, not written on export
   'Reorder Level'?: string;
   Tags?: string;
   'Is Active': string;
@@ -21,6 +22,8 @@ export interface CSVItemRow {
   'Variant Configurations'?: string;
   'Require Custom Spec'?: string;
   'Custom Spec Label'?: string;
+  'UOM Conversions'?: string;
+  'Preferred Supplier'?: string;
   'Components'?: string;
 }
 
@@ -315,12 +318,27 @@ export const importPurchaseOrdersFromCSV = async (
 export const exportItemsToCSV = (
   items: Item[],
   categories: Category[],
-  uoms: UOM[]
+  uoms: UOM[],
+  locations: Location[] = []
 ) => {
+  const uomById = new Map(uoms.map(u => [u.id, u]));
+  const supplierById = new Map(
+    locations.filter(l => l.type === 'supplier').map(l => [l.id, l])
+  );
+
   const data = items.map(item => {
     const category = categories.find(c => c.id === item.categoryId);
     const subcategory = categories.find(c => c.id === item.subcategoryId);
-    const uom = uoms.find(u => u.id === item.uomId);
+    const uom = uomById.get(item.uomId);
+
+    const uomConversionsStr = (item.uomConversions || []).map(conv => {
+      const convUom = uomById.get(conv.uomId);
+      return `${convUom?.symbol || conv.uomId}:${conv.factor}`;
+    }).join(' | ');
+
+    const preferredSupplier = item.preferredSupplierId
+      ? (supplierById.get(item.preferredSupplierId)?.name || item.preferredSupplierId)
+      : '';
 
     return {
       ID: item.id,
@@ -335,18 +353,27 @@ export const exportItemsToCSV = (
       Tags: (item.tags || []).join(', '),
       'Is Active': item.isActive ? 'TRUE' : 'FALSE',
       'Require Variant': item.requireVariant ? 'TRUE' : 'FALSE',
-      'Variant Attributes': (item.variantAttributes || []).map(attr => 
+      'Variant Attributes': (item.variantAttributes || []).map(attr =>
         `${attr.name}: ${attr.values.join(', ')}`
       ).join(' | '),
       'Variant Configurations': (item.variantConfigs || []).map(config => {
         const variantStr = Object.entries(config.variant).map(([k, v]) => `${k}:${v}`).join(', ');
-        const dataParts = [];
+        const dataParts: string[] = [];
         if (config.latestPrice !== undefined) dataParts.push(`Cost:${config.latestPrice}`);
         if (config.reorderLevel !== undefined) dataParts.push(`Reorder:${config.reorderLevel}`);
+        if (config.isRequired !== undefined) dataParts.push(`Required:${config.isRequired ? 'TRUE' : 'FALSE'}`);
+        if (config.dimensionRequirements && Object.keys(config.dimensionRequirements).length > 0) {
+          const dimStr = Object.entries(config.dimensionRequirements)
+            .map(([dim, req]) => `${dim}=${req ? 'true' : 'false'}`)
+            .join('|');
+          dataParts.push(`DimReqs:${dimStr}`);
+        }
         return variantStr ? `[${variantStr}] -> ${dataParts.join(', ')}` : dataParts.join(', ');
       }).join(' | '),
       'Require Custom Spec': item.requireCustomSpec ? 'TRUE' : 'FALSE',
       'Custom Spec Label': item.customSpecLabel || '',
+      'UOM Conversions': uomConversionsStr,
+      'Preferred Supplier': preferredSupplier,
       'Components': (item.components || []).map(comp => {
         const compItem = items.find(i => i.id === comp.itemId);
         return `${compItem?.name || comp.itemId}: ${comp.quantity}`;
@@ -407,6 +434,7 @@ export const importItemsFromCSV = async (
   uoms: UOM[],
   tags: Tag[],
   allItems: Item[],
+  locations: Location[] = [],
   onProgress?: (current: number, total: number) => void
 ) => {
   return new Promise<{ success: number; errors: string[] }>((resolve, reject) => {
@@ -419,10 +447,10 @@ export const importItemsFromCSV = async (
         let successCount = 0;
         const errors: string[] = [];
 
-        // Pre-cache categories, uoms, and tags for faster lookup
+        // Pre-cache categories, uoms, tags, and suppliers for faster lookup
         const categoryMap = new Map<string, string>(); // name -> id (top-level)
         const subcategoryMap = new Map<string, string>(); // parentId:name -> id
-        
+
         categories.forEach(c => {
           if (!c.parentId) {
             categoryMap.set(c.name.toLowerCase(), c.id);
@@ -433,6 +461,9 @@ export const importItemsFromCSV = async (
 
         const uomMap = new Map<string, string>(); // symbol -> id
         uoms.forEach(u => uomMap.set(u.symbol.toLowerCase(), u.id));
+
+        const supplierMap = new Map<string, string>(); // name -> id
+        locations.filter(l => l.type === 'supplier').forEach(l => supplierMap.set(l.name.toLowerCase().trim(), l.id));
 
         const tagSet = new Set(tags.map(t => t.name.toLowerCase()));
 
@@ -501,6 +532,7 @@ export const importItemsFromCSV = async (
             }
 
             // 5. Prepare Item Data
+            const rawLatestPrice = row['Latest Price'] || row['Average Cost'] || '0';
             const itemData: any = {
               name: row.Name.trim(),
               description: row.Description?.trim() || '',
@@ -512,9 +544,26 @@ export const importItemsFromCSV = async (
               requireVariant: row['Require Variant']?.toUpperCase() === 'TRUE',
               requireCustomSpec: row['Require Custom Spec']?.toUpperCase() === 'TRUE',
               customSpecLabel: row['Custom Spec Label']?.trim() || '',
-              latestPrice: parseFloat(row['Latest Price'] || '0') || undefined,
+              latestPrice: parseFloat(rawLatestPrice) || undefined,
               reorderLevel: parseFloat(row['Reorder Level'] || '0') || 0,
             };
+
+            // Preferred Supplier
+            if (row['Preferred Supplier']?.trim()) {
+              const supplierId = supplierMap.get(row['Preferred Supplier'].trim().toLowerCase());
+              if (supplierId) itemData.preferredSupplierId = supplierId;
+            }
+
+            // UOM Conversions
+            if (row['UOM Conversions']?.trim()) {
+              itemData.uomConversions = row['UOM Conversions'].split('|').map((s: string) => {
+                const [symbol, factorStr] = s.trim().split(':');
+                const resolvedUomId = uomMap.get(symbol?.trim().toLowerCase());
+                const factor = parseFloat(factorStr?.trim() || '0');
+                if (resolvedUomId && factor > 0) return { uomId: resolvedUomId, factor };
+                return null;
+              }).filter(Boolean);
+            }
 
             if (rowTags !== undefined) {
               itemData.tags = rowTags;
@@ -535,9 +584,13 @@ export const importItemsFromCSV = async (
             }
 
             if (row.hasOwnProperty('Variant Configurations')) {
-              itemData.variantConfigs = (row['Variant Configurations'] || '').split('|').map(s => {
-              const [variantStr, dataStr] = s.split('->');
-              if (variantStr && dataStr) {
+              itemData.variantConfigs = (row['Variant Configurations'] || '').split('|').map((s: string) => {
+                const arrowIdx = s.indexOf('->');
+                if (arrowIdx === -1) return null;
+                const variantStr = s.slice(0, arrowIdx);
+                const dataStr = s.slice(arrowIdx + 2);
+                if (!variantStr.trim()) return null;
+
                 const variant: Record<string, string> = {};
                 const vMatch = variantStr.match(/\[(.*)\]/);
                 if (vMatch) {
@@ -549,18 +602,26 @@ export const importItemsFromCSV = async (
 
                 const config: any = { variant };
                 dataStr.split(',').forEach(pair => {
-                  const [k, v] = pair.split(':');
-                  if (k && v) {
-                    const key = k.trim().toLowerCase();
-                    const val = parseFloat(v.trim());
-                    if (key === 'cost') config.latestPrice = val;
-                    if (key === 'reorder') config.reorderLevel = val;
+                  const colonIdx = pair.indexOf(':');
+                  if (colonIdx === -1) return;
+                  const key = pair.slice(0, colonIdx).trim().toLowerCase();
+                  const val = pair.slice(colonIdx + 1).trim();
+                  if (key === 'cost') config.latestPrice = parseFloat(val) || undefined;
+                  if (key === 'reorder') config.reorderLevel = parseFloat(val) || undefined;
+                  if (key === 'required') config.isRequired = val.toUpperCase() === 'TRUE';
+                  if (key === 'dimreqs') {
+                    config.dimensionRequirements = {};
+                    val.split('|').forEach(entry => {
+                      const eqIdx = entry.indexOf('=');
+                      if (eqIdx === -1) return;
+                      const dimName = entry.slice(0, eqIdx).trim();
+                      const dimVal = entry.slice(eqIdx + 1).trim().toLowerCase() === 'true';
+                      if (dimName) config.dimensionRequirements[dimName] = dimVal;
+                    });
                   }
                 });
                 return config;
-              }
-              return null;
-            }).filter(c => c);
+              }).filter((c: any) => c !== null);
             }
 
             // 6. Parse Components

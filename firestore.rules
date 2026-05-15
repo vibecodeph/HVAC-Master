@@ -219,7 +219,7 @@ service cloud.firestore {
     }
 
     function isValidInventory(data) {
-      return hasOnlyAllowedFields(['id', 'itemId', 'locationId', 'quantity', 'variant', 'customSpec', 'serialNumber', 'propertyNumber', 'updatedAt', 'createdBy', 'updatedBy', 'status', 'createdAt', 'unitPrice', 'lastEditedBy', 'lastEditedAt', 'editNotes', 'assignedJobsiteId', 'assignedJobsiteName']) &&
+      return hasOnlyAllowedFields(['id', 'itemId', 'locationId', 'quantity', 'variant', 'customSpec', 'serialNumber', 'propertyNumber', 'updatedAt', 'createdBy', 'updatedBy', 'status', 'createdAt', 'unitPrice', 'lastEditedBy', 'lastEditedAt', 'editNotes', 'assignedJobsiteId', 'assignedJobsiteName', 'averageCost', 'averageCostPerVariant']) &&
              (!('itemId' in data) || (data.itemId is string && data.itemId.size() <= 50)) &&
              (!('locationId' in data) || (data.locationId is string && data.locationId.size() <= 50)) &&
              (!('quantity' in data) || data.quantity is number) &&
@@ -238,7 +238,9 @@ service cloud.firestore {
              (!('lastEditedAt' in data) || data.lastEditedAt is timestamp) &&
              (!('editNotes' in data) || data.editNotes is string) &&
              (!('assignedJobsiteId' in data) || data.assignedJobsiteId == null || data.assignedJobsiteId is string) &&
-             (!('assignedJobsiteName' in data) || data.assignedJobsiteName == null || data.assignedJobsiteName is string);
+             (!('assignedJobsiteName' in data) || data.assignedJobsiteName == null || data.assignedJobsiteName is string) &&
+             (!('averageCost' in data) || data.averageCost == null || (data.averageCost is number && data.averageCost >= 0)) &&
+             (!('averageCostPerVariant' in data) || data.averageCostPerVariant == null || data.averageCostPerVariant is map);
     }
 
     function isValidTransaction(data) {
@@ -515,7 +517,7 @@ service cloud.firestore {
                        && isAssignedLocation(request.resource.data.locationId)
                        && isValidInventory(request.resource.data)
                        && !request.resource.data.diff(resource.data).affectedKeys()
-                            .hasAny(['unitPrice', 'lastEditedBy', 'lastEditedAt', 'editNotes']);
+                            .hasAny(['unitPrice', 'lastEditedBy', 'lastEditedAt', 'editNotes', 'averageCost', 'averageCostPerVariant']);
       allow delete: if isAdmin();
     }
 

@@ -119,6 +119,8 @@ export interface Inventory {
   quantity: number;
   uomId?: string;
   unitPrice?: number;
+  averageCost?: number;             // weighted average cost per base unit at this location
+  averageCostPerVariant?: Record<string, number>; // per-variant costs at this location (future use)
   lastEditedBy?: string;
   lastEditedAt?: Timestamp;
   editNotes?: string;

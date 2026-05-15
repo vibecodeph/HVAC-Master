@@ -355,6 +355,23 @@ export const recordTransaction = async (transaction: Omit<Transaction, 'id' | 'u
       // Update destination location inventory
       if (toLocationId && toInvRef && toIsInternal) {
         const currentQty = (toInvDoc?.exists() ? toInvDoc.data()?.quantity : 0) || 0;
+
+        // Determine source cost for destination cost tracking
+        let toSourceCost: number;
+        if (fromIsInternal) {
+          toSourceCost = (fromInvDoc?.exists() ? fromInvDoc.data()?.averageCost : undefined) ?? itemData.averageCost ?? 0;
+        } else if (totalPrice !== undefined && !isNaN(totalPrice) && baseQuantity > 0) {
+          toSourceCost = totalPrice / baseQuantity;
+        } else if (unitPrice !== undefined && !isNaN(unitPrice)) {
+          toSourceCost = unitPrice;
+        } else {
+          toSourceCost = itemData.averageCost || 0;
+        }
+        const currentToCost = (toInvDoc?.exists() ? toInvDoc.data()?.averageCost : undefined) ?? 0;
+        const toNewAvgCost = currentQty > 0
+          ? (currentQty * currentToCost + baseQuantity * toSourceCost) / (currentQty + baseQuantity)
+          : toSourceCost;
+
         dbTransaction.set(toInvRef, {
           itemId: itemId,
           locationId: toLocationId,
@@ -362,7 +379,8 @@ export const recordTransaction = async (transaction: Omit<Transaction, 'id' | 'u
           customSpec: customSpec || null,
           serialNumber: serialNumber || null,
           propertyNumber: propertyNumber || null,
-          quantity: currentQty + baseQuantity
+          quantity: currentQty + baseQuantity,
+          averageCost: toNewAvgCost
         }, { merge: true });
       }
 
@@ -1396,7 +1414,7 @@ export const recordBulkReceivePO = async (
         if (snap.exists()) itemDataMap[id] = snap.data() as Item;
       }
 
-      const invDataMap: Record<string, { quantity: number; ref: any }> = {};
+      const invDataMap: Record<string, { quantity: number; averageCost: number; ref: any }> = {};
       for (const receive of receivedItems) {
         if (receive.quantity <= 0) continue;
         const invRef = getInventoryRef(receive.itemId, options.toLocationId, receive.variant, receive.serialNumber, receive.customSpec);
@@ -1405,6 +1423,7 @@ export const recordBulkReceivePO = async (
           const snap = await dbTransaction.get(invRef);
           invDataMap[invPath] = {
             quantity: (snap.exists() ? snap.data()?.quantity : 0) || 0,
+            averageCost: snap.exists() ? (snap.data()?.averageCost ?? 0) : 0,
             ref: invRef
           };
         }
@@ -1465,6 +1484,14 @@ export const recordBulkReceivePO = async (
         const preReceiptQty = invInfo.quantity;
         invInfo.quantity += baseQuantity;
 
+        // Compute location-level weighted average cost for this inventory doc
+        const newUnitPricePerBase = receive.unitPrice / conversionFactor;
+        if (toIsInternal) {
+          invInfo.averageCost = preReceiptQty > 0
+            ? (preReceiptQty * invInfo.averageCost + baseQuantity * newUnitPricePerBase) / invInfo.quantity
+            : newUnitPricePerBase;
+        }
+
         dbTransaction.set(invRef, {
           itemId: receive.itemId,
           locationId: options.toLocationId,
@@ -1473,6 +1500,7 @@ export const recordBulkReceivePO = async (
           serialNumber: receive.serialNumber || null,
           propertyNumber: receive.propertyNumber || null,
           quantity: invInfo.quantity,
+          ...(toIsInternal ? { averageCost: invInfo.averageCost } : {}),
           updatedAt: serverTimestamp(),
           ...(receive.assignedJobsiteId ? {
             assignedJobsiteId: receive.assignedJobsiteId,
@@ -1494,7 +1522,6 @@ export const recordBulkReceivePO = async (
         // Rolling Average Cost and Total Quantity
         if (toIsInternal) {
           const state = rollingItemState[receive.itemId];
-          const newUnitPricePerBase = receive.unitPrice / conversionFactor;
           const totalQtyBefore = state.totalQuantity;
           const avgCostBefore = state.averageCost;
 
@@ -2114,7 +2141,7 @@ export const recordBulkReceive = async (requestIds: string[], receiverId: string
 
       const requestData: any[] = [];
       const itemCache: Record<string, Item> = {};
-      const invCache: Record<string, { ref: any, quantity: number, serialNumber?: string, metadata: any }> = {};
+      const invCache: Record<string, { ref: any, quantity: number, averageCost: number, serialNumber?: string, metadata: any }> = {};
       const boqCache: Record<string, { ref: any, quantity: number }> = {};
 
       const locMap = new Map();
@@ -2168,6 +2195,7 @@ export const recordBulkReceive = async (requestIds: string[], receiverId: string
               invCache[invKey] = {
                 ref: invRef,
                 quantity: (invDoc.exists() ? invDoc.data()?.quantity : 0) || 0,
+                averageCost: invDoc.exists() ? (invDoc.data()?.averageCost ?? 0) : 0,
                 serialNumber: sn,
                 metadata: { itemId, jobsiteId, variant, customSpec }
               };
@@ -2181,6 +2209,7 @@ export const recordBulkReceive = async (requestIds: string[], receiverId: string
             invCache[invKey] = {
               ref: invRef,
               quantity: (invDoc.exists() ? invDoc.data()?.quantity : 0) || 0,
+              averageCost: invDoc.exists() ? (invDoc.data()?.averageCost ?? 0) : 0,
               metadata: { itemId, jobsiteId, variant, customSpec }
             };
           }
@@ -2214,6 +2243,13 @@ export const recordBulkReceive = async (requestIds: string[], receiverId: string
           for (const sn of serialNumbers) {
             const invRef = getInventoryRef(itemId, jobsiteId, variant, sn, request.customSpec);
             const invKey = invRef.path;
+
+            // Serial items: cost = source item's average cost (no qty-weighting needed per serial doc)
+            const snItemData = itemCache[itemId];
+            const snVariantKey = normalizeVariant(variant);
+            invCache[invKey].averageCost = (variant && Object.keys(variant || {}).length > 0 && snItemData?.averageCostPerVariant?.[snVariantKey])
+              ? snItemData.averageCostPerVariant[snVariantKey]
+              : (snItemData?.averageCost || 0);
             invCache[invKey].quantity += 1;
 
             // Record individual transaction per serial number
@@ -2249,6 +2285,17 @@ export const recordBulkReceive = async (requestIds: string[], receiverId: string
         } else {
           const invRef = getInventoryRef(itemId, jobsiteId, variant, undefined, request.customSpec);
           const invKey = invRef.path;
+
+          // Compute weighted average cost from source item's cost before incrementing quantity
+          const nsItemData = itemCache[itemId];
+          const nsVariantKey = normalizeVariant(variant);
+          const nsSourceCost = (variant && Object.keys(variant || {}).length > 0 && nsItemData?.averageCostPerVariant?.[nsVariantKey])
+            ? nsItemData.averageCostPerVariant[nsVariantKey]
+            : (nsItemData?.averageCost || 0);
+          const nsCurrentQty = invCache[invKey].quantity;
+          invCache[invKey].averageCost = nsCurrentQty > 0
+            ? (nsCurrentQty * invCache[invKey].averageCost + baseQuantity * nsSourceCost) / (nsCurrentQty + baseQuantity)
+            : nsSourceCost;
           invCache[invKey].quantity += baseQuantity;
 
           // Record individual transaction (Receive)
@@ -2296,14 +2343,15 @@ export const recordBulkReceive = async (requestIds: string[], receiverId: string
 
       // Final inventory writes
       for (const invKey in invCache) {
-        const { ref, quantity, serialNumber, metadata } = invCache[invKey];
+        const { ref, quantity, averageCost, serialNumber, metadata } = invCache[invKey];
         dbTransaction.set(ref, cleanData({
           itemId: metadata.itemId,
           locationId: metadata.jobsiteId,
           variant: metadata.variant || null,
           customSpec: metadata.customSpec || null,
           serialNumber: serialNumber || null,
-          quantity: quantity
+          quantity: quantity,
+          averageCost: averageCost
         }), { merge: true });
       }
 
@@ -3254,8 +3302,20 @@ export const addInventoryToJobsite = async (
       const newQty = existingQty + quantity;
       if (newQty < 0) throw new Error(`Cannot reduce inventory below 0. Current quantity: ${existingQty}, you entered: ${quantity}`);
 
+      // Compute location-level weighted average cost
+      const ajVariantKey = normalizeVariant(variant);
+      const ajSourceCost = (unitPrice !== undefined && unitPrice > 0)
+        ? unitPrice
+        : ((variant && Object.keys(variant || {}).length > 0 && itemData.averageCostPerVariant?.[ajVariantKey])
+          ? itemData.averageCostPerVariant[ajVariantKey]
+          : (itemData.averageCost || 0));
+      const existingCost = invDoc.exists() ? (invDoc.data()?.averageCost ?? 0) : 0;
+      const ajNewAvgCost = existingQty > 0 && newQty > 0
+        ? (existingQty * existingCost + quantity * ajSourceCost) / newQty
+        : ajSourceCost;
+
       if (invDoc.exists()) {
-        txn.update(invRef, { quantity: newQty });
+        txn.update(invRef, { quantity: newQty, averageCost: ajNewAvgCost });
       } else {
         txn.set(invRef, {
           itemId,
@@ -3263,6 +3323,7 @@ export const addInventoryToJobsite = async (
           variant: variant && Object.keys(variant).length > 0 ? variant : null,
           ...(customSpec ? { customSpec } : {}),
           quantity: newQty,
+          averageCost: ajNewAvgCost,
         });
       }
 

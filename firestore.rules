@@ -151,7 +151,7 @@ service cloud.firestore {
     // ===============================================================
 
     function isValidItem(data) {
-      return hasOnlyAllowedFields(['id', 'name', 'uomId', 'isTool', 'isActive', 'createdAt', 'updatedAt', 'createdBy', 'updatedBy', 'description', 'categoryId', 'subcategoryId', 'tags', 'variantAttributes', 'requireVariant', 'latestPrice', 'latestPriceDate', 'priceHistory', 'totalQuantity', 'reorderLevel', 'preferredSupplierId', 'variantConfigs', 'components', 'uomConversions', 'requireCustomSpec', 'customSpecLabel']) &&
+      return hasOnlyAllowedFields(['id', 'name', 'uomId', 'isTool', 'isActive', 'createdAt', 'updatedAt', 'createdBy', 'updatedBy', 'description', 'categoryId', 'subcategoryId', 'tags', 'variantAttributes', 'requireVariant', 'latestPrice', 'latestPriceDate', 'priceHistory', 'totalQuantity', 'reorderLevel', 'preferredSupplierId', 'variantConfigs', 'components', 'uomConversions', 'requireCustomSpec', 'customSpecLabel', 'averageCost']) &&
              (!('name' in data) || (data.name is string && data.name.size() > 0 && data.name.size() <= 200)) &&
              (!('description' in data) || data.description == null || (data.description is string && data.description.size() <= 1000)) &&
              (!('uomId' in data) || (data.uomId is string && data.uomId.size() <= 50)) &&

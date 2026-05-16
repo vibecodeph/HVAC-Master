@@ -614,6 +614,8 @@ service cloud.firestore {
       // isManager() includes admin; also allow warehouseman/engineer for HVAC inventory counters
       // and manager/admin for Payroll Master employee number counter
       allow write: if isManager() || isWarehouseman() || isEngineer();
+      // Workers need DR number counter access when bulk-receiving multiple site requests
+      allow write: if counterId == 'dr_number' && isApproved() && request.auth.token.get('role', '') == 'worker';
     }
 
     match /system/{configId} {

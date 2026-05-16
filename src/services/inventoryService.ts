@@ -2676,7 +2676,7 @@ export const bulkUpdateRequests = async (
 
 export const clearInventoryData = async (includeBOQ: boolean = true, includePOs: boolean = false) => {
   try {
-    const collectionsToClear = ['inventory', 'requests', 'transactions', 'unplanned_stock'];
+    const collectionsToClear = ['inventory', 'requests', 'transactions', 'unplanned_stock', 'supplier_pricing'];
     if (includeBOQ) {
       collectionsToClear.push('boq');
     }

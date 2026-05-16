@@ -634,6 +634,9 @@ service cloud.firestore {
       allow read: if isApproved();
       allow create: if isAdmin();
       allow update: if isAdmin() && isValidPurchaseOrder(request.resource.data);
+      // Allow bulk-receive status/items update for field workers (engineer, warehouseman, worker)
+      allow update: if isApproved() && (isEngineer() || isWarehouseman() || request.auth.token.get('role', '') == 'worker')
+                    && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['items', 'status', 'updatedAt', 'updatedBy']);
       allow delete: if isAdmin();
 
       match /items/{itemId} {
@@ -653,6 +656,8 @@ service cloud.firestore {
 
     match /supplier_pricing/{docId} {
       allow read, write: if isAdmin();
+      // Allow creates from bulk-receive for engineer, warehouseman, worker
+      allow create: if isApproved() && (isEngineer() || isWarehouseman() || request.auth.token.get('role', '') == 'worker');
     }
 
     match /suppliers_invoices/{invoiceId} {

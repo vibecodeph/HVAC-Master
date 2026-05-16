@@ -1950,8 +1950,15 @@ export const TransactionForm = ({ items, locations, inventory, uoms, purchaseOrd
                   setSelectedVariant({});
                   setQuantity('');
                   setTotalPrice('');
-                  // Clear bulk quantities
-                  setPoItemQuantities({});
+                  // Pre-populate quantities from remaining PO amounts
+                  const initialQtys: Record<string, number> = {};
+                  (po.items || [])
+                    .filter(poi => (poi.receivedQuantity || 0) < poi.quantity)
+                    .forEach(poi => {
+                      const key = `${poi.itemId}_${JSON.stringify(poi.variant || {})}`;
+                      initialQtys[key] = poi.quantity - (poi.receivedQuantity || 0);
+                    });
+                  setPoItemQuantities(initialQtys);
                   setPoItemSerials({});
                   setPoItemProperties({});
                 }

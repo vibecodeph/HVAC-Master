@@ -1,14 +1,13 @@
 import { Timestamp, collection, getDocs, doc, writeBatch, query, where } from 'firebase/firestore';
 import { db } from '../firebase';
 
-export type MetadataCollection = 'items' | 'categories' | 'uoms' | 'tags' | 'locations' | 'suppliers' | 'users';
+export type MetadataCollection = 'categories' | 'uoms' | 'tags' | 'locations' | 'suppliers' | 'users';
 
 export const METADATA_COLLECTIONS: MetadataCollection[] = [
-  'items', 'categories', 'uoms', 'tags', 'locations', 'suppliers', 'users',
+  'categories', 'uoms', 'tags', 'locations', 'suppliers', 'users',
 ];
 
 export const COLLECTION_LABELS: Record<MetadataCollection, string> = {
-  items: 'Items',
   categories: 'Categories',
   uoms: 'Units of Measure',
   tags: 'Tags',
@@ -105,6 +104,37 @@ export const getExistingCounts = async (
   return Object.fromEntries(entries);
 };
 
+async function getExistingIds(col: MetadataCollection): Promise<Set<string>> {
+  const snap = await getDocs(getFirestoreCollection(col));
+  return new Set(snap.docs.map(d => d.id));
+}
+
+export interface CollectionAnalysis {
+  existing: number;
+  newCount: number;
+  duplicates: number;
+}
+
+export const analyzeImport = async (
+  data: MetadataExport,
+  cols: MetadataCollection[]
+): Promise<Record<string, CollectionAnalysis>> => {
+  const result: Record<string, CollectionAnalysis> = {};
+  await Promise.all(
+    cols.map(async col => {
+      const existingIds = await getExistingIds(col);
+      const incoming = data.metadata[col] || [];
+      const duplicates = incoming.filter((d: any) => d.id && existingIds.has(String(d.id))).length;
+      result[col] = {
+        existing: existingIds.size,
+        newCount: incoming.length - duplicates,
+        duplicates,
+      };
+    })
+  );
+  return result;
+};
+
 export const exportMetadata = async (
   selected: MetadataCollection[],
   onProgress: (msg: string) => void
@@ -139,18 +169,30 @@ export const exportMetadata = async (
 
 export const importMetadata = async (
   data: MetadataExport,
+  selectedCollections: MetadataCollection[],
+  isMerge: boolean,
   onProgress: (msg: string) => void
 ): Promise<{ totalImported: number }> => {
-  const cols = Object.keys(data.metadata) as MetadataCollection[];
+  const available = new Set(Object.keys(data.metadata) as MetadataCollection[]);
+  const cols = selectedCollections.filter(c => available.has(c));
   let totalImported = 0;
 
   for (const col of cols) {
     const docs = data.metadata[col] || [];
-    onProgress(`Clearing ${COLLECTION_LABELS[col] || col}…`);
-    await deleteCol(col);
-    onProgress(`Writing ${COLLECTION_LABELS[col] || col} (${docs.length})…`);
-    await writeCol(col, docs);
-    totalImported += docs.length;
+    if (isMerge) {
+      onProgress(`Analyzing ${COLLECTION_LABELS[col] || col}…`);
+      const existingIds = await getExistingIds(col);
+      const newDocs = docs.filter((d: any) => d.id && !existingIds.has(String(d.id)));
+      onProgress(`Writing ${COLLECTION_LABELS[col] || col} (${newDocs.length} new)…`);
+      await writeCol(col, newDocs);
+      totalImported += newDocs.length;
+    } else {
+      onProgress(`Clearing ${COLLECTION_LABELS[col] || col}…`);
+      await deleteCol(col);
+      onProgress(`Writing ${COLLECTION_LABELS[col] || col} (${docs.length})…`);
+      await writeCol(col, docs);
+      totalImported += docs.length;
+    }
   }
 
   return { totalImported };

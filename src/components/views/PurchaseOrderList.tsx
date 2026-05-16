@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useRef, useEffect } from 'react';
-import { Plus, Search, FileText, Calendar, User, ChevronRight, Filter, MoreVertical, Edit2, Trash2, ExternalLink, Package, Download, Upload, Loader2, AlertCircle, CheckCircle2, Printer, Settings } from 'lucide-react';
+import { Plus, Search, FileText, Calendar, User, ChevronRight, Filter, MoreVertical, Edit2, Trash2, ExternalLink, Package, Download, Upload, Loader2, AlertCircle, CheckCircle2, Printer, Settings, X } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { PurchaseOrder, Location, Item, UOM, UserProfile } from '../../types';
 import { deletePurchaseOrder, getAllPOPayments } from '../../services/inventoryService';
@@ -65,6 +65,43 @@ export const PurchaseOrderList = ({ purchaseOrders, locations, items, uoms, prof
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [isExporting, setIsExporting] = useState(false);
 
+  // Bulk selection
+  const [isSelecting, setIsSelecting] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [confirmBulkDelete, setConfirmBulkDelete] = useState(false);
+  const [isBulkDeleting, setIsBulkDeleting] = useState(false);
+
+  const allFilteredSelected = filteredPOs.length > 0 && filteredPOs.every(po => selectedIds.has(po.id));
+
+  const toggleSelect = (id: string) => {
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  };
+
+  const toggleSelectAll = () => {
+    if (allFilteredSelected) {
+      setSelectedIds(new Set());
+    } else {
+      setSelectedIds(new Set(filteredPOs.map(po => po.id)));
+    }
+  };
+
+  const exitSelectMode = () => {
+    setIsSelecting(false);
+    setSelectedIds(new Set());
+    setConfirmBulkDelete(false);
+  };
+
+  const handleBulkDelete = async () => {
+    setIsBulkDeleting(true);
+    await Promise.all([...selectedIds].map(id => deletePurchaseOrder(id)));
+    setIsBulkDeleting(false);
+    exitSelectMode();
+  };
+
   const handleDelete = async (id: string) => {
     await deletePurchaseOrder(id);
     setDeletingId(null);
@@ -95,7 +132,7 @@ export const PurchaseOrderList = ({ purchaseOrders, locations, items, uoms, prof
     setImportProgress({ current: 0, total: 0 });
 
     try {
-      const result = await importPurchaseOrdersFromCSV(file, items, locations, uoms, (current, total) => {
+      const result = await importPurchaseOrdersFromCSV(file, items, locations, uoms, purchaseOrders, (current, total) => {
         setImportProgress({ current, total });
       });
       setImportResult(result);
@@ -124,8 +161,8 @@ export const PurchaseOrderList = ({ purchaseOrders, locations, items, uoms, prof
           <p className="text-xs font-bold text-gray-400 uppercase tracking-widest mt-2 ml-1">Manage supplier orders & template</p>
         </div>
         <div className="flex items-center space-x-3">
-          {profile?.role === 'admin' && (
-            <button 
+          {profile?.role === 'admin' && !isSelecting && (
+            <button
               onClick={() => navigate('/purchase-orders/template')}
               title="Template Settings"
               className="p-4 bg-white text-gray-600 rounded-2xl shadow-sm border border-gray-100 active:scale-95 transition-transform flex items-center space-x-2"
@@ -134,27 +171,50 @@ export const PurchaseOrderList = ({ purchaseOrders, locations, items, uoms, prof
               <span className="text-[10px] font-black uppercase tracking-widest hidden sm:inline">Template</span>
             </button>
           )}
-          <button
-            onClick={handleExport}
-            disabled={isExporting}
-            title="Export to CSV"
-            className={cn("p-4 bg-white text-gray-600 rounded-2xl shadow-sm border border-gray-100 active:scale-95 transition-transform", isExporting && "opacity-60 cursor-not-allowed")}
-          >
-            {isExporting ? <Loader2 size={24} className="animate-spin" /> : <Download size={24} />}
-          </button>
-          <button 
-            onClick={() => fileInputRef.current?.click()}
-            title="Import from CSV"
-            className="p-4 bg-white text-gray-600 rounded-2xl shadow-sm border border-gray-100 active:scale-95 transition-transform"
-          >
-            <Upload size={24} />
-          </button>
-          <button 
-            onClick={onAdd}
-            className="p-4 bg-blue-600 text-white rounded-2xl shadow-lg shadow-blue-200 active:scale-95 transition-transform"
-          >
-            <Plus size={24} />
-          </button>
+          {!isSelecting && (
+            <>
+              <button
+                onClick={handleExport}
+                disabled={isExporting}
+                title="Export to CSV"
+                className={cn("p-4 bg-white text-gray-600 rounded-2xl shadow-sm border border-gray-100 active:scale-95 transition-transform", isExporting && "opacity-60 cursor-not-allowed")}
+              >
+                {isExporting ? <Loader2 size={24} className="animate-spin" /> : <Download size={24} />}
+              </button>
+              <button
+                onClick={() => fileInputRef.current?.click()}
+                title="Import from CSV"
+                className="p-4 bg-white text-gray-600 rounded-2xl shadow-sm border border-gray-100 active:scale-95 transition-transform"
+              >
+                <Upload size={24} />
+              </button>
+            </>
+          )}
+          {profile?.role === 'admin' && !isSelecting && (
+            <button
+              onClick={() => setIsSelecting(true)}
+              title="Select POs"
+              className="p-4 bg-white text-gray-600 rounded-2xl shadow-sm border border-gray-100 active:scale-95 transition-transform flex items-center space-x-2"
+            >
+              <CheckCircle2 size={20} />
+              <span className="text-[10px] font-black uppercase tracking-widest hidden sm:inline">Select</span>
+            </button>
+          )}
+          {isSelecting ? (
+            <button
+              onClick={exitSelectMode}
+              className="p-4 bg-white text-gray-500 rounded-2xl shadow-sm border border-gray-100 active:scale-95 transition-transform"
+            >
+              <X size={24} />
+            </button>
+          ) : (
+            <button
+              onClick={onAdd}
+              className="p-4 bg-blue-600 text-white rounded-2xl shadow-lg shadow-blue-200 active:scale-95 transition-transform"
+            >
+              <Plus size={24} />
+            </button>
+          )}
         </div>
       </div>
 
@@ -247,16 +307,28 @@ export const PurchaseOrderList = ({ purchaseOrders, locations, items, uoms, prof
         ) : (
           filteredPOs.map(po => {
             const supplier = locations.find(l => l.id === po.supplierId);
+            const isSelected = selectedIds.has(po.id);
             return (
-              <div 
+              <div
                 key={po.id}
-                onClick={() => onEdit(po)}
-                className="bg-white p-5 rounded-[2rem] shadow-sm border border-gray-100 hover:shadow-md transition-shadow group cursor-pointer active:scale-[0.98] transition-transform"
+                onClick={() => isSelecting ? toggleSelect(po.id) : onEdit(po)}
+                className={cn(
+                  "bg-white p-5 rounded-[2rem] shadow-sm border transition-shadow group cursor-pointer active:scale-[0.98] transition-transform",
+                  isSelecting && isSelected ? "border-blue-400 ring-2 ring-blue-200" : "border-gray-100 hover:shadow-md"
+                )}
               >
                 <div className="flex items-start justify-between mb-4">
                   <div className="flex items-center space-x-4">
-                    <div className="w-12 h-12 bg-blue-50 rounded-2xl flex items-center justify-center text-blue-600">
-                      <FileText size={24} />
+                    <div className={cn(
+                      "w-12 h-12 rounded-2xl flex items-center justify-center",
+                      isSelected ? "bg-blue-600 text-white" : "bg-blue-50 text-blue-600"
+                    )}>
+                      {isSelecting
+                        ? isSelected
+                          ? <CheckCircle2 size={24} />
+                          : <div className="w-6 h-6 rounded-full border-2 border-blue-300" />
+                        : <FileText size={24} />
+                      }
                     </div>
                     <div>
                       <h3 className="font-black text-gray-900 leading-none mb-1">{po.poNumber}</h3>
@@ -264,16 +336,18 @@ export const PurchaseOrderList = ({ purchaseOrders, locations, items, uoms, prof
                     </div>
                   </div>
                   <div className="flex items-center space-x-2">
-                    <button 
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        navigate(`/purchase-orders/${po.id}/print`);
-                      }}
-                      className="p-2 text-blue-600 hover:bg-blue-50 rounded-xl transition-colors bg-blue-50/50"
-                      title="View/Print PO"
-                    >
-                      <Printer size={18} />
-                    </button>
+                    {!isSelecting && (
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          navigate(`/purchase-orders/${po.id}/print`);
+                        }}
+                        className="p-2 text-blue-600 hover:bg-blue-50 rounded-xl transition-colors bg-blue-50/50"
+                        title="View/Print PO"
+                      >
+                        <Printer size={18} />
+                      </button>
+                    )}
                     <div className={cn(
                       "px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest",
                       getStatusColor(po.status)
@@ -341,40 +415,33 @@ export const PurchaseOrderList = ({ purchaseOrders, locations, items, uoms, prof
                     <span className="text-sm font-black text-gray-900">
                       {po.totalAmount.toLocaleString()}
                     </span>
-                    <div className="flex space-x-1">
-                      {deletingId === po.id ? (
-                        <div className="flex items-center space-x-1 bg-red-50 p-1 rounded-xl">
-                          <button 
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleDelete(po.id);
-                            }}
-                            className="px-2 py-1 bg-red-600 text-white text-[10px] font-black rounded-lg uppercase tracking-widest"
+                    {!isSelecting && (
+                      <div className="flex space-x-1">
+                        {deletingId === po.id ? (
+                          <div className="flex items-center space-x-1 bg-red-50 p-1 rounded-xl">
+                            <button
+                              onClick={(e) => { e.stopPropagation(); handleDelete(po.id); }}
+                              className="px-2 py-1 bg-red-600 text-white text-[10px] font-black rounded-lg uppercase tracking-widest"
+                            >
+                              Confirm
+                            </button>
+                            <button
+                              onClick={(e) => { e.stopPropagation(); setDeletingId(null); }}
+                              className="px-2 py-1 bg-gray-200 text-gray-600 text-[10px] font-black rounded-lg uppercase tracking-widest"
+                            >
+                              No
+                            </button>
+                          </div>
+                        ) : (
+                          <button
+                            onClick={(e) => { e.stopPropagation(); setDeletingId(po.id); }}
+                            className="p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-xl transition-colors"
                           >
-                            Confirm
+                            <Trash2 size={18} />
                           </button>
-                          <button 
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setDeletingId(null);
-                            }}
-                            className="px-2 py-1 bg-gray-200 text-gray-600 text-[10px] font-black rounded-lg uppercase tracking-widest"
-                          >
-                            No
-                          </button>
-                        </div>
-                      ) : (
-                        <button 
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setDeletingId(po.id);
-                          }}
-                          className="p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-xl transition-colors"
-                        >
-                          <Trash2 size={18} />
-                        </button>
-                      )}
-                    </div>
+                        )}
+                      </div>
+                    )}
                   </div>
                 </div>
               </div>
@@ -382,6 +449,60 @@ export const PurchaseOrderList = ({ purchaseOrders, locations, items, uoms, prof
           })
         )}
       </div>
+
+      {/* Bulk action bar */}
+      {isSelecting && (
+        <div className="fixed bottom-6 left-0 right-0 flex justify-center z-50 px-4 pointer-events-none">
+          <div className="bg-white rounded-3xl shadow-2xl border border-gray-100 p-3 flex items-center space-x-3 pointer-events-auto max-w-lg w-full">
+            <button
+              onClick={toggleSelectAll}
+              className={cn(
+                "flex items-center space-x-2 px-4 py-2 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-colors",
+                allFilteredSelected ? "bg-blue-600 text-white" : "bg-gray-100 text-gray-600 hover:bg-gray-200"
+              )}
+            >
+              <CheckCircle2 size={14} />
+              <span>{allFilteredSelected ? 'Deselect All' : 'Select All'}</span>
+            </button>
+
+            <span className="flex-1 text-xs font-black text-gray-500 text-center">
+              {selectedIds.size} selected
+            </span>
+
+            {confirmBulkDelete ? (
+              <div className="flex items-center space-x-2">
+                <span className="text-[10px] font-black text-red-600 uppercase tracking-widest whitespace-nowrap">
+                  Delete {selectedIds.size}?
+                </span>
+                <button
+                  onClick={handleBulkDelete}
+                  disabled={isBulkDeleting}
+                  className="px-4 py-2 bg-red-600 text-white text-[10px] font-black rounded-2xl uppercase tracking-widest disabled:opacity-50 flex items-center space-x-1"
+                >
+                  {isBulkDeleting && <Loader2 size={12} className="animate-spin" />}
+                  <span>Yes, Delete</span>
+                </button>
+                <button
+                  onClick={() => setConfirmBulkDelete(false)}
+                  disabled={isBulkDeleting}
+                  className="px-4 py-2 bg-gray-100 text-gray-600 text-[10px] font-black rounded-2xl uppercase tracking-widest"
+                >
+                  Cancel
+                </button>
+              </div>
+            ) : (
+              <button
+                onClick={() => setConfirmBulkDelete(true)}
+                disabled={selectedIds.size === 0}
+                className="flex items-center space-x-2 px-4 py-2 bg-red-50 text-red-600 rounded-2xl text-[10px] font-black uppercase tracking-widest disabled:opacity-30 hover:bg-red-100 transition-colors"
+              >
+                <Trash2 size={14} />
+                <span>Delete</span>
+              </button>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 };

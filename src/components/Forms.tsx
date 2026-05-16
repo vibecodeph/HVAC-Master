@@ -1696,12 +1696,17 @@ export const TransactionForm = ({ items, locations, inventory, uoms, purchaseOrd
 
   useEffect(() => {
     if (type === 'delivery' && !initialData) {
-      const mainWarehouse = locations.find(l => l.name.toLowerCase() === 'main warehouse');
-      if (mainWarehouse) {
-        setToLocationId(mainWarehouse.id);
+      const role = profile?.role;
+      if (role === 'worker' || role === 'engineer') {
+        const assignedIds = profile?.assignedLocationIds || [];
+        const firstAssigned = locations.find(l => assignedIds.includes(l.id) && l.type === 'jobsite');
+        if (firstAssigned) setToLocationId(firstAssigned.id);
+      } else {
+        const mainWarehouse = locations.find(l => l.name.toLowerCase() === 'main warehouse');
+        if (mainWarehouse) setToLocationId(mainWarehouse.id);
       }
     }
-  }, [type, locations, initialData]);
+  }, [type, locations, initialData, profile?.role, profile?.assignedLocationIds]);
 
   const selectedItem = items.find(i => i.id === selectedItemId);
 

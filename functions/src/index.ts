@@ -1,4 +1,5 @@
 import { onDocumentWritten } from "firebase-functions/v2/firestore";
+import { onCall, HttpsError } from "firebase-functions/v2/https";
 import { getAuth } from "firebase-admin/auth";
 import { initializeApp } from "firebase-admin/app";
 
@@ -6,6 +7,27 @@ initializeApp();
 
 export { updateRolePermissions, createRole, deleteRole } from "./rbacManager";
 export { archiveOldRequests, manualArchiveRequests } from "./requestArchiver";
+
+export const forceSignOutAllUsers = onCall(async (request) => {
+  if (request.auth?.token?.["role"] !== "admin") {
+    throw new HttpsError("permission-denied", "Only admins can force sign out all users.");
+  }
+
+  let revokedCount = 0;
+  let pageToken: string | undefined;
+  do {
+    const listResult = await getAuth().listUsers(1000, pageToken);
+    await Promise.all(
+      listResult.users.map(async (user) => {
+        await getAuth().revokeRefreshTokens(user.uid);
+        revokedCount++;
+      })
+    );
+    pageToken = listResult.pageToken;
+  } while (pageToken);
+
+  return { revokedCount };
+});
 
 export const syncUserClaims = onDocumentWritten(
   {

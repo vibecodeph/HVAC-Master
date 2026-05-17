@@ -733,5 +733,11 @@ service cloud.firestore {
       allow read, write: if isManager();
       allow delete: if isAdmin();
     }
+
+    match /activeOperations/{opId} {
+      allow read: if isAdmin();
+      allow create: if isApproved() && request.resource.data.uid == request.auth.uid;
+      allow delete: if isApproved() && resource.data.uid == request.auth.uid;
+    }
   }
 }

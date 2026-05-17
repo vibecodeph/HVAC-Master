@@ -25,6 +25,7 @@ import {
 import { db, auth, handleFirestoreError, OperationType } from '../firebase';
 import { Item, Category, Location, Inventory, Transaction, UOM, Tag, UserProfile, Asset, Request, BOQItem, UnplannedStock, SystemConfig, PurchaseOrder, POPayment } from '../types';
 import { normalizeVariant } from '../lib/utils';
+import { startOperation, endOperation } from './activeOperationService';
 
 // --- Generic Helpers ---
 const getCollection = (name: string) => collection(db, name);
@@ -1314,7 +1315,8 @@ export const approveRequest = async (id: string, approvedQty: number, approverId
   }
 };
 
-export const approveBulkRequests = async (requestIds: string[], approverId: string, approverName?: string) => {
+export const approveBulkRequests = async (requestIds: string[], approverId: string, approverName?: string, role?: string) => {
+  const opId = await startOperation(approverId, role || '', 'approve_requests').catch(() => '');
   try {
     await runTransaction(db, async (dbTransaction) => {
       const requestDocs = [];
@@ -1325,7 +1327,7 @@ export const approveBulkRequests = async (requestIds: string[], approverId: stri
           requestDocs.push({ ref: requestRef, data: requestDoc.data() as Request });
         }
       }
-      
+
       for (const { ref, data } of requestDocs) {
         dbTransaction.update(ref, {
           approvedQty: data.requestedQty, // Default to requested quantity for bulk approval
@@ -1338,6 +1340,8 @@ export const approveBulkRequests = async (requestIds: string[], approverId: stri
     });
   } catch (error) {
     handleFirestoreError(error, OperationType.UPDATE, 'requests');
+  } finally {
+    if (opId) await endOperation(opId);
   }
 };
 
@@ -1652,8 +1656,9 @@ export const recordBulkPick = async (
   selections: { requestId: string; deliveredQty: number; sourceLocationId: string; variant?: Record<string, string>; backorder?: boolean; serialNumbers?: string[] }[],
   warehousemanId: string,
   warehousemanName?: string,
-  options?: { customBatchId?: string; customDate?: Date }
+  options?: { customBatchId?: string; customDate?: Date; role?: string }
 ) => {
+  const opId = await startOperation(warehousemanId, options?.role || '', 'bulk_pick').catch(() => '');
   try {
     // If no custom DR is provided, check if we can reuse an existing active batchId
     let reusedBatchId = options?.customBatchId;
@@ -1945,6 +1950,8 @@ export const recordBulkPick = async (
   } catch (error) {
     console.error("Bulk pick failed:", error);
     handleFirestoreError(error, OperationType.WRITE, 'bulk_pick');
+  } finally {
+    if (opId) await endOperation(opId);
   }
 };
 
@@ -2090,7 +2097,8 @@ export const updateDeliveryQuantity = async (requestId: string, newQuantity: num
   }
 };
 
-export const recordBulkReceive = async (requestIds: string[], receiverId: string, receiverName?: string) => {
+export const recordBulkReceive = async (requestIds: string[], receiverId: string, receiverName?: string, role?: string) => {
+  const opId = await startOperation(receiverId, role || '', 'bulk_receive').catch(() => '');
   try {
     // Fetch UOMs first to resolve symbols if needed
     const uomsSnap = await getDocs(query(collection(db, 'uoms'), where('isActive', '==', true)));
@@ -2394,6 +2402,8 @@ export const recordBulkReceive = async (requestIds: string[], receiverId: string
   } catch (error) {
     console.error("Bulk receive failed:", error);
     handleFirestoreError(error, OperationType.WRITE, 'bulk_receive');
+  } finally {
+    if (opId) await endOperation(opId);
   }
 };
 

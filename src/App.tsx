@@ -14,6 +14,7 @@ import {
   subscribeToBOQs, subscribeToUnplannedStock, subscribeToTags, subscribeToAllTags,
   subscribeToPurchaseOrders
 } from './services/inventoryService';
+import { clearStaleOperations } from './services/activeOperationService';
 import { subscribeToRBACConfig } from './services/rbacService';
 import { Layout } from './components/Layout';
 import { SidebarProvider } from './hooks/useApp';
@@ -229,6 +230,8 @@ const AuthProvider = ({ children }: { children: React.ReactNode }) => {
       if (!u) {
         setProfile(null);
         setLoading(false);
+      } else {
+        void clearStaleOperations(u.uid);
       }
     });
     return () => unsubAuth();

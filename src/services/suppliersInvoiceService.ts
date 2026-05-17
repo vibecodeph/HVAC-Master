@@ -10,11 +10,24 @@ import { normalizeVariant } from '../lib/utils';
 
 export type InvoiceFormData = Omit<SuppliersInvoice, 'id' | 'createdAt' | 'createdBy' | 'updatedAt' | 'updatedBy'>;
 
-const getConvFactor = (itemSnap: any, uomId: string): number => {
+type UomEntry = { id: string; symbol: string };
+
+// Resolves a uomId (which may be stored as a doc ID or as a symbol) to its canonical doc ID.
+const normalizeUomId = (uomId: string, uomList: UomEntry[]): string =>
+  uomList.find(u => u.id === uomId || u.symbol === uomId)?.id ?? uomId;
+
+const getConvFactor = (
+  itemSnap: any,
+  uomId: string,
+  uomList: UomEntry[]
+): number => {
   if (!itemSnap?.exists()) return 1;
   const d = itemSnap.data();
-  if (!d || d.uomId === uomId) return 1;
-  const conv = (d.uomConversions || []).find((c: any) => c.uomId === uomId);
+  if (!d) return 1;
+  const norm = (id: string) => normalizeUomId(id, uomList);
+  const normalizedTarget = norm(uomId);
+  if (norm(d.uomId) === normalizedTarget) return 1;
+  const conv = (d.uomConversions || []).find((c: any) => norm(c.uomId) === normalizedTarget);
   return conv?.factor > 0 ? conv.factor : 1;
 };
 
@@ -42,6 +55,11 @@ const cleanItem = (item: SuppliersInvoiceItem): SuppliersInvoiceItem => ({
   totalPrice: item.totalPrice,
 });
 
+const fetchUomList = async (): Promise<UomEntry[]> => {
+  const snap = await getDocs(collection(db, 'uoms'));
+  return snap.docs.map(d => ({ id: d.id, symbol: d.data().symbol as string }));
+};
+
 export const subscribeToSuppliersInvoices = (
   callback: (invoices: SuppliersInvoice[]) => void
 ): () => void => {
@@ -59,6 +77,7 @@ export const createSuppliersInvoice = async (data: InvoiceFormData): Promise<str
   if (!userId) throw new Error('User not authenticated');
 
   try {
+    const uomList = await fetchUomList();
     const invoiceRef = doc(collection(db, 'suppliers_invoices'));
     const linkedPOs = data.linkedPOs || [];
 
@@ -106,7 +125,7 @@ export const createSuppliersInvoice = async (data: InvoiceFormData): Promise<str
         const itemQtyToAdd = new Map<string, number>();
         for (const item of data.items) {
           const path = getInventoryRef(item.itemId, data.locationId, item.variant, undefined, undefined, item.customSpec).path;
-          const convFactor = getConvFactor(itemDocSnaps.get(item.itemId), item.uomId);
+          const convFactor = getConvFactor(itemDocSnaps.get(item.itemId), item.uomId, uomList);
           const baseQty = item.quantity * convFactor;
           invNetDelta.set(path, (invNetDelta.get(path) || 0) + baseQty);
           invUnitCostMap.set(path, item.unitPrice / convFactor);
@@ -168,7 +187,7 @@ export const createSuppliersInvoice = async (data: InvoiceFormData): Promise<str
               const configs: any[] = itemData.variantConfigs ? itemData.variantConfigs.map((c: any) => ({ ...c })) : [];
               for (const [vk, { price, item }] of variantPriceMap) {
                 if (!item.variant || Object.keys(item.variant).length === 0) continue;
-                const convFactor = getConvFactor(snap, item.uomId);
+                const convFactor = getConvFactor(snap, item.uomId, uomList);
                 const unitCostPerBase = price / convFactor;
                 const idx = configs.findIndex((c: any) => normalizeVariant(c.variant) === vk);
                 const prevHistory: any[] = idx >= 0 ? (configs[idx].priceHistory || []) : [];
@@ -184,7 +203,7 @@ export const createSuppliersInvoice = async (data: InvoiceFormData): Promise<str
               // No-variant item: use first row's price
               const firstRow = data.items.find(i => i.itemId === itemId);
               if (firstRow) {
-                const convFactor = getConvFactor(snap, firstRow.uomId);
+                const convFactor = getConvFactor(snap, firstRow.uomId, uomList);
                 const unitCostPerBase = firstRow.unitPrice / convFactor;
                 const prevHistory: any[] = itemData.priceHistory || [];
                 itemUpdate.latestPrice = unitCostPerBase;
@@ -201,6 +220,8 @@ export const createSuppliersInvoice = async (data: InvoiceFormData): Promise<str
       // Per-item records (supplier_pricing + transaction) — these always use new doc refs, no conflict
       for (const item of data.items) {
         if (!itemDocSnaps.get(item.itemId)?.exists()) continue;
+        const convFactor = getConvFactor(itemDocSnaps.get(item.itemId), item.uomId, uomList);
+        const baseQty = item.quantity * convFactor;
 
         // Supplier pricing record
         const spRef = doc(collection(db, 'supplier_pricing'));
@@ -213,10 +234,10 @@ export const createSuppliersInvoice = async (data: InvoiceFormData): Promise<str
           uomId: item.uomId,
           unitPrice: item.unitPrice,
           quantityReceived: item.quantity,
-          baseQuantity: item.quantity,
+          baseQuantity: baseQty,
           totalCost: item.totalPrice,
           receivedDate: data.purchaseDate,
-          conversionFactor: 1,
+          conversionFactor: convFactor,
           poId: invoiceRef.id,
           poNumber: data.billNumber,
         });
@@ -228,8 +249,8 @@ export const createSuppliersInvoice = async (data: InvoiceFormData): Promise<str
           variant: item.variant && Object.keys(item.variant).length > 0 ? item.variant : null,
           quantity: item.quantity,
           uomId: item.uomId,
-          conversionFactor: 1,
-          baseQuantity: item.quantity,
+          conversionFactor: convFactor,
+          baseQuantity: baseQty,
           type: 'supplier_invoice',
           toLocationId: data.locationId,
           unitPrice: item.unitPrice,
@@ -298,6 +319,20 @@ export const updateSuppliersInvoice = async (
   if (!userId) throw new Error('User not authenticated');
 
   try {
+    const uomList = await fetchUomList();
+
+    // Delete stale supplier_pricing records before the transaction (best-effort)
+    try {
+      const spSnap = await getDocs(query(collection(db, 'supplier_pricing'), where('poId', '==', invoice.id)));
+      if (!spSnap.empty) {
+        const batch = writeBatch(db);
+        spSnap.docs.forEach(d => batch.delete(d.ref));
+        await batch.commit();
+      }
+    } catch {
+      // Non-blocking — stale records will be overwritten on next full sync
+    }
+
     await runTransaction(db, async txn => {
       // Collect all unique refs from old and new items
       const invRefMap = new Map<string, DocumentReference>();
@@ -325,32 +360,49 @@ export const updateSuppliersInvoice = async (
       const oldAddsInventory = invoice.addToInventory !== false;
       const newAddsInventory = newData.addToInventory !== false;
 
-      // Compute net inventory delta per ref (new - old), quantities in base UOM
+      // Unit cost per inventory path from the NEW invoice items (for averageCost blending)
+      const newInvUnitCostMap = new Map<string, number>();
+      if (newAddsInventory) {
+        newData.items.forEach(item => {
+          const path = getInventoryRef(item.itemId, newData.locationId, item.variant, undefined, undefined, item.customSpec).path;
+          const cf = getConvFactor(itemDocSnaps.get(item.itemId), item.uomId, uomList);
+          newInvUnitCostMap.set(path, item.unitPrice / cf);
+        });
+      }
+
+      // Net inventory quantity delta per path (new − old), in base UOM
       const invNetDelta = new Map<string, number>();
       if (oldAddsInventory) {
         invoice.items.forEach(item => {
           const path = getInventoryRef(item.itemId, invoice.locationId, item.variant, undefined, undefined, item.customSpec).path;
-          const convFactor = getConvFactor(itemDocSnaps.get(item.itemId), item.uomId);
-          invNetDelta.set(path, (invNetDelta.get(path) || 0) - item.quantity * convFactor);
+          const cf = getConvFactor(itemDocSnaps.get(item.itemId), item.uomId, uomList);
+          invNetDelta.set(path, (invNetDelta.get(path) || 0) - item.quantity * cf);
         });
       }
       if (newAddsInventory) {
         newData.items.forEach(item => {
           const path = getInventoryRef(item.itemId, newData.locationId, item.variant, undefined, undefined, item.customSpec).path;
-          const convFactor = getConvFactor(itemDocSnaps.get(item.itemId), item.uomId);
-          invNetDelta.set(path, (invNetDelta.get(path) || 0) + item.quantity * convFactor);
+          const cf = getConvFactor(itemDocSnaps.get(item.itemId), item.uomId, uomList);
+          invNetDelta.set(path, (invNetDelta.get(path) || 0) + item.quantity * cf);
         });
       }
 
-      // Apply inventory changes + create transaction records
+      // Apply inventory quantity + averageCost changes, and write audit transaction records
       for (const [path, delta] of invNetDelta) {
         if (delta === 0) continue;
         const ref = invRefMap.get(path)!;
         const snap = invSnaps.get(path);
-        const current = snap?.exists() ? (snap.data()?.quantity || 0) : 0;
-        const newQty = current + delta;
+        const existingQty = snap?.exists() ? (snap.data()?.quantity || 0) : 0;
+        const existingCost = snap?.exists() ? (snap.data()?.averageCost ?? 0) : 0;
+        const newQty = existingQty + delta;
+        const unitCostPerBase = newInvUnitCostMap.get(path) ?? existingCost;
+        // Only blend averageCost when adding; removals keep the same per-unit cost
+        const newAvgCost = delta > 0 && newQty > 0
+          ? (existingQty * existingCost + delta * unitCostPerBase) / newQty
+          : existingCost;
+
         if (snap?.exists()) {
-          txn.update(ref, { quantity: newQty });
+          txn.update(ref, { quantity: newQty, averageCost: newAvgCost });
         } else if (newQty > 0) {
           const newItem = newData.items.find(i =>
             getInventoryRef(i.itemId, newData.locationId, i.variant, undefined, undefined, i.customSpec).path === path
@@ -362,23 +414,25 @@ export const updateSuppliersInvoice = async (
               variant: newItem.variant && Object.keys(newItem.variant).length > 0 ? newItem.variant : null,
               ...(newItem.customSpec ? { customSpec: newItem.customSpec } : {}),
               quantity: newQty,
+              averageCost: newAvgCost,
             });
           }
         }
 
-        // Transaction record for audit trail
+        // Audit transaction record
         const isAddition = delta > 0;
         const sourceItem = isAddition
           ? newData.items.find(i => getInventoryRef(i.itemId, newData.locationId, i.variant, undefined, undefined, i.customSpec).path === path)
           : invoice.items.find(i => getInventoryRef(i.itemId, invoice.locationId, i.variant, undefined, undefined, i.customSpec).path === path);
         if (sourceItem) {
+          const srcCf = getConvFactor(itemDocSnaps.get(sourceItem.itemId), sourceItem.uomId, uomList);
           const txnDocRef = doc(collection(db, 'transactions'));
           txn.set(txnDocRef, {
             itemId: sourceItem.itemId,
             variant: sourceItem.variant && Object.keys(sourceItem.variant).length > 0 ? sourceItem.variant : null,
             quantity: delta,
             uomId: sourceItem.uomId,
-            conversionFactor: 1,
+            conversionFactor: srcCf,
             baseQuantity: delta,
             type: 'supplier_invoice',
             toLocationId: isAddition ? newData.locationId : null,
@@ -395,29 +449,133 @@ export const updateSuppliersInvoice = async (
         }
       }
 
-      // Compute net totalQuantity delta per itemId (all quantities in base UOM)
+      // Net totalQuantity delta per itemId, in base UOM
       const itemQtyDelta = new Map<string, number>();
       if (oldAddsInventory) {
         invoice.items.forEach(i => {
-          const convFactor = getConvFactor(itemDocSnaps.get(i.itemId), i.uomId);
-          itemQtyDelta.set(i.itemId, (itemQtyDelta.get(i.itemId) || 0) - i.quantity * convFactor);
+          const cf = getConvFactor(itemDocSnaps.get(i.itemId), i.uomId, uomList);
+          itemQtyDelta.set(i.itemId, (itemQtyDelta.get(i.itemId) || 0) - i.quantity * cf);
         });
       }
       if (newAddsInventory) {
         newData.items.forEach(i => {
-          const convFactor = getConvFactor(itemDocSnaps.get(i.itemId), i.uomId);
-          itemQtyDelta.set(i.itemId, (itemQtyDelta.get(i.itemId) || 0) + i.quantity * convFactor);
+          const cf = getConvFactor(itemDocSnaps.get(i.itemId), i.uomId, uomList);
+          itemQtyDelta.set(i.itemId, (itemQtyDelta.get(i.itemId) || 0) + i.quantity * cf);
         });
       }
 
-      for (const [itemId, delta] of itemQtyDelta) {
-        if (delta === 0) continue;
+      // Timestamps for priceHistory find-and-replace
+      const newInvoiceTimestamp = newData.purchaseDate instanceof Timestamp ? newData.purchaseDate : Timestamp.now();
+      const oldDateMs = invoice.purchaseDate instanceof Timestamp ? invoice.purchaseDate.toMillis() : 0;
+
+      // All itemIds that need a write: quantity-delta items + price-update items
+      const needsPriceUpdate = newData.updateLatestPrice && newAddsInventory;
+      const allItemIds = new Set<string>([
+        ...Array.from(itemQtyDelta.keys()),
+        ...(needsPriceUpdate ? newData.items.map(i => i.itemId) : []),
+      ]);
+
+      for (const itemId of allItemIds) {
         const snap = itemDocSnaps.get(itemId);
         if (!snap?.exists()) continue;
         const itemData = snap.data();
-        const currentTotal = itemData.totalQuantity || 0;
-        const newTotal = Math.max(0, currentTotal + delta);
-        txn.update(doc(db, 'items', itemId), { totalQuantity: newTotal });
+        const itemUpdate: Record<string, any> = {};
+
+        // totalQuantity update
+        const qtyDelta = itemQtyDelta.get(itemId) || 0;
+        if (qtyDelta !== 0) {
+          itemUpdate.totalQuantity = Math.max(0, (itemData.totalQuantity || 0) + qtyDelta);
+        }
+
+        // priceHistory: find-and-replace existing invoice entry, or append if none found
+        if (needsPriceUpdate && newData.items.some(i => i.itemId === itemId)) {
+          const itemRows = newData.items.filter(i => i.itemId === itemId);
+          const variantPriceMap = new Map<string, { price: number; item: SuppliersInvoiceItem }>();
+          for (const row of itemRows) {
+            variantPriceMap.set(normalizeVariant(row.variant), { price: row.unitPrice, item: row });
+          }
+
+          const isVariantItem = itemData.variantAttributes && itemData.variantAttributes.length > 0;
+          if (isVariantItem) {
+            const configs: any[] = itemData.variantConfigs ? itemData.variantConfigs.map((c: any) => ({ ...c })) : [];
+            for (const [vk, { price, item }] of variantPriceMap) {
+              if (!item.variant || Object.keys(item.variant).length === 0) continue;
+              const cf = getConvFactor(snap, item.uomId, uomList);
+              const unitCostPerBase = price / cf;
+              const idx = configs.findIndex((c: any) => normalizeVariant(c.variant) === vk);
+              const prevHistory: any[] = idx >= 0 ? (configs[idx].priceHistory || []) : [];
+
+              // Find the entry originally written by this invoice (match source + old date)
+              let matchIdx = -1;
+              for (let i = prevHistory.length - 1; i >= 0; i--) {
+                const e = prevHistory[i];
+                if (e.source === 'invoice' && e.date?.toMillis?.() === oldDateMs) { matchIdx = i; break; }
+              }
+              const newHistory = matchIdx >= 0
+                ? prevHistory.map((e: any, i: number) =>
+                    i === matchIdx ? { date: newInvoiceTimestamp, price: unitCostPerBase, source: 'invoice' } : e
+                  )
+                : [...prevHistory, { date: newInvoiceTimestamp, price: unitCostPerBase, source: 'invoice' }].slice(-50);
+
+              if (idx >= 0) {
+                configs[idx] = { ...configs[idx], latestPrice: unitCostPerBase, latestPriceDate: newInvoiceTimestamp, priceHistory: newHistory };
+              } else {
+                configs.push({ variant: item.variant, latestPrice: unitCostPerBase, latestPriceDate: newInvoiceTimestamp, priceHistory: newHistory });
+              }
+            }
+            itemUpdate.variantConfigs = configs;
+          } else {
+            const firstRow = newData.items.find(i => i.itemId === itemId);
+            if (firstRow) {
+              const cf = getConvFactor(snap, firstRow.uomId, uomList);
+              const unitCostPerBase = firstRow.unitPrice / cf;
+              const prevHistory: any[] = itemData.priceHistory || [];
+
+              let matchIdx = -1;
+              for (let i = prevHistory.length - 1; i >= 0; i--) {
+                const e = prevHistory[i];
+                if (e.source === 'invoice' && e.date?.toMillis?.() === oldDateMs) { matchIdx = i; break; }
+              }
+              const newHistory = matchIdx >= 0
+                ? prevHistory.map((e: any, i: number) =>
+                    i === matchIdx ? { date: newInvoiceTimestamp, price: unitCostPerBase, source: 'invoice' } : e
+                  )
+                : [...prevHistory, { date: newInvoiceTimestamp, price: unitCostPerBase, source: 'invoice' }].slice(-50);
+
+              itemUpdate.latestPrice = unitCostPerBase;
+              itemUpdate.latestPriceDate = newInvoiceTimestamp;
+              itemUpdate.priceHistory = newHistory;
+            }
+          }
+        }
+
+        if (Object.keys(itemUpdate).length > 0) {
+          txn.update(doc(db, 'items', itemId), itemUpdate);
+        }
+      }
+
+      // Write fresh supplier_pricing records with corrected conversionFactor
+      for (const item of newData.items) {
+        if (!itemDocSnaps.get(item.itemId)?.exists()) continue;
+        const cf = getConvFactor(itemDocSnaps.get(item.itemId), item.uomId, uomList);
+        const baseQty = item.quantity * cf;
+        const spRef = doc(collection(db, 'supplier_pricing'));
+        txn.set(spRef, {
+          id: spRef.id,
+          supplierId: newData.supplierName,
+          supplierName: newData.supplierName,
+          itemId: item.itemId,
+          variant: item.variant && Object.keys(item.variant).length > 0 ? item.variant : null,
+          uomId: item.uomId,
+          unitPrice: item.unitPrice,
+          quantityReceived: item.quantity,
+          baseQuantity: baseQty,
+          totalCost: item.totalPrice,
+          receivedDate: newData.purchaseDate,
+          conversionFactor: cf,
+          poId: invoice.id,
+          poNumber: newData.billNumber,
+        });
       }
 
       // Update invoice doc
@@ -448,6 +606,8 @@ export const deleteSuppliersInvoice = async (invoice: SuppliersInvoice): Promise
   if (!userId) throw new Error('User not authenticated');
 
   try {
+    const uomList = await fetchUomList();
+
     await runTransaction(db, async txn => {
       // Collect unique refs
       const invRefMap = new Map<string, DocumentReference>();
@@ -477,7 +637,7 @@ export const deleteSuppliersInvoice = async (invoice: SuppliersInvoice): Promise
       const invQtyToRemove = new Map<string, number>();
       invoice.items.forEach(item => {
         const path = getInventoryRef(item.itemId, invoice.locationId, item.variant, undefined, undefined, item.customSpec).path;
-        const convFactor = getConvFactor(itemDocSnaps.get(item.itemId), item.uomId);
+        const convFactor = getConvFactor(itemDocSnaps.get(item.itemId), item.uomId, uomList);
         invQtyToRemove.set(path, (invQtyToRemove.get(path) || 0) + item.quantity * convFactor);
       });
 
@@ -493,7 +653,7 @@ export const deleteSuppliersInvoice = async (invoice: SuppliersInvoice): Promise
         // Accumulate totalQuantity to remove per itemId (in base UOM)
         const itemQtyToRemove = new Map<string, number>();
         invoice.items.forEach(i => {
-          const convFactor = getConvFactor(itemDocSnaps.get(i.itemId), i.uomId);
+          const convFactor = getConvFactor(itemDocSnaps.get(i.itemId), i.uomId, uomList);
           itemQtyToRemove.set(i.itemId, (itemQtyToRemove.get(i.itemId) || 0) + i.quantity * convFactor);
         });
 

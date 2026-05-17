@@ -1,8 +1,11 @@
 import React, { useState, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ChevronRight, Package, Filter, MapPin, Box, Users, Shield, Trash2, AlertCircle, Loader2, Check, LogOut, Hammer, UserCheck, Tag, Archive, Database, RotateCcw, Download, Upload } from 'lucide-react';
+import { httpsCallable } from 'firebase/functions';
 import { useAuth, useData } from '../../App';
+import { functions } from '../../firebase';
 import { clearInventoryData, updateSystemConfig } from '../../services/inventoryService';
+import { getActiveOperations, ActiveOperationDoc, ActiveOperationType } from '../../services/activeOperationService';
 import { downloadBackup, restoreFromBackup, validateBackup, backupUndeliveredRequests, restoreUndeliveredRequests, validateUndeliveredRequestsBackup, UndeliveredRequestsBackup } from '../../services/backupService';
 import { exportMetadata, importMetadata, validateMetadataExport, analyzeImport, METADATA_COLLECTIONS, COLLECTION_LABELS, MetadataCollection, MetadataExport, CollectionAnalysis } from '../../services/metadataService';
 import { cn } from '../../lib/utils';
@@ -38,6 +41,12 @@ export const SettingsView = () => {
   const [requestsRestoreSelectedLocs, setRequestsRestoreSelectedLocs] = useState<Set<string>>(new Set());
   const requestsRestoreInputRef = useRef<HTMLInputElement>(null);
 
+  // Force sign out state
+  const [isCheckingOps, setIsCheckingOps] = useState(false);
+  const [isForceSigningOut, setIsForceSigningOut] = useState(false);
+  const [activeOpsWarning, setActiveOpsWarning] = useState<ActiveOperationDoc[] | null>(null);
+  const [forceSignOutMsg, setForceSignOutMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+
   // Metadata management state
   const [metaExportSelected, setMetaExportSelected] = useState<Set<MetadataCollection>>(new Set(METADATA_COLLECTIONS));
   const [isExportingMeta, setIsExportingMeta] = useState(false);
@@ -52,6 +61,48 @@ export const SettingsView = () => {
   const metaImportInputRef = useRef<HTMLInputElement>(null);
 
   const assignedLocations = locations.filter(l => profile?.assignedLocationIds?.includes(l.id));
+
+  const opTypeLabel = (op: ActiveOperationType): string => {
+    if (op === 'bulk_receive') return 'Bulk Receive';
+    if (op === 'bulk_pick') return 'Bulk Pick';
+    if (op === 'approve_requests') return 'Approve Requests';
+    return op;
+  };
+
+  const handleForceSignOut = async () => {
+    setIsForceSigningOut(true);
+    setActiveOpsWarning(null);
+    setForceSignOutMsg(null);
+    try {
+      const fn = httpsCallable<object, { revokedCount: number }>(functions, 'forceSignOutAllUsers');
+      const result = await fn({});
+      setForceSignOutMsg({ type: 'success', text: `Signed out ${result.data.revokedCount} user(s). Active sessions will expire shortly.` });
+    } catch (err) {
+      console.error('Force sign out failed:', err);
+      setForceSignOutMsg({ type: 'error', text: 'Failed to force sign out users.' });
+    } finally {
+      setIsForceSigningOut(false);
+    }
+  };
+
+  const handleForceSignOutCheck = async () => {
+    setIsCheckingOps(true);
+    setActiveOpsWarning(null);
+    setForceSignOutMsg(null);
+    try {
+      const ops = await getActiveOperations();
+      if (ops.length === 0) {
+        await handleForceSignOut();
+      } else {
+        setActiveOpsWarning(ops);
+        setIsCheckingOps(false);
+      }
+    } catch (err) {
+      console.error('Failed to check active operations:', err);
+      setForceSignOutMsg({ type: 'error', text: 'Failed to check active operations.' });
+      setIsCheckingOps(false);
+    }
+  };
 
   const handleClearData = async () => {
     try {
@@ -688,8 +739,82 @@ export const SettingsView = () => {
                     : <><Trash2 size={15} />Purge All Data</>
                   }
                 </button>
+                <button
+                  disabled={isCheckingOps || isForceSigningOut}
+                  onClick={handleForceSignOutCheck}
+                  className={cn(
+                    "rounded-lg border border-red-300 bg-white px-4 py-2 text-sm font-semibold text-red-700 transition hover:bg-red-50 flex items-center gap-2",
+                    (isCheckingOps || isForceSigningOut) && "opacity-60 cursor-not-allowed"
+                  )}
+                >
+                  {isCheckingOps
+                    ? <><Loader2 size={15} className="animate-spin" />Checking…</>
+                    : isForceSigningOut
+                    ? <><Loader2 size={15} className="animate-spin" />Signing Out…</>
+                    : <><LogOut size={15} />Force Sign Out All Users</>
+                  }
+                </button>
               </div>
             </div>
+
+            {activeOpsWarning && (
+              <div className="mt-6 rounded-xl bg-amber-50 border border-amber-200 p-4 space-y-3">
+                <div className="flex items-start gap-2">
+                  <AlertCircle className="text-amber-600 shrink-0 mt-0.5" size={16} />
+                  <div>
+                    <p className="text-sm font-bold text-amber-800">
+                      {activeOpsWarning.length} active operation{activeOpsWarning.length !== 1 ? 's' : ''} in progress
+                    </p>
+                    <p className="text-xs text-amber-700 mt-0.5">
+                      Please wait for all active operations to complete before forcing sign out.
+                    </p>
+                  </div>
+                </div>
+                <div className="space-y-1">
+                  {activeOpsWarning.map(op => (
+                    <div key={op.id} className="flex items-center gap-2 text-xs text-amber-700 bg-amber-100 px-3 py-1.5 rounded-lg">
+                      <span className="font-black uppercase tracking-wider">{op.role}</span>
+                      <span className="text-amber-400">·</span>
+                      <span className="font-medium">{opTypeLabel(op.operationType)}</span>
+                    </div>
+                  ))}
+                </div>
+                <div className="flex gap-2 pt-1">
+                  <button
+                    onClick={handleForceSignOutCheck}
+                    disabled={isCheckingOps}
+                    className={cn(
+                      "flex items-center gap-1.5 px-3 py-2 text-xs font-bold text-amber-700 bg-amber-100 rounded-lg hover:bg-amber-200 transition-colors",
+                      isCheckingOps && "opacity-60 cursor-not-allowed"
+                    )}
+                  >
+                    <RotateCcw size={12} />
+                    Check Again
+                  </button>
+                  <button
+                    onClick={handleForceSignOut}
+                    disabled={isForceSigningOut}
+                    className={cn(
+                      "flex items-center gap-1.5 px-3 py-2 text-xs font-bold text-white bg-red-600 rounded-lg hover:bg-red-700 transition-colors shadow-sm shadow-red-200",
+                      isForceSigningOut && "opacity-60 cursor-not-allowed"
+                    )}
+                  >
+                    {isForceSigningOut ? <Loader2 size={12} className="animate-spin" /> : <LogOut size={12} />}
+                    Force Anyway
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {forceSignOutMsg && (
+              <div className={cn(
+                "mt-4 p-3 rounded-xl text-xs font-bold flex items-center gap-2",
+                forceSignOutMsg.type === 'success' ? "bg-green-100 text-green-700" : "bg-red-100 text-red-700"
+              )}>
+                {forceSignOutMsg.type === 'success' ? <Check size={14} /> : <AlertCircle size={14} />}
+                <span>{forceSignOutMsg.text}</span>
+              </div>
+            )}
           </section>
         )}
 

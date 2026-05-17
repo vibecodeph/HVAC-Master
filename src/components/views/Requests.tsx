@@ -235,7 +235,7 @@ export const RequestsView = () => {
     setIsProcessing(true);
     setError(null);
     try {
-      await recordBulkPick(selections, profile?.uid || 'unknown', profile?.displayName, options);
+      await recordBulkPick(selections, profile?.uid || 'unknown', profile?.displayName, { ...options, role: profile?.role || '' });
       setIsPickingModalOpen(false);
       setPickingRequests([]);
     } catch (error: any) {
@@ -249,7 +249,7 @@ export const RequestsView = () => {
     setIsProcessing(true);
     setError(null);
     try {
-      await recordBulkReceive(requestIds, profile?.uid || 'unknown', profile?.displayName);
+      await recordBulkReceive(requestIds, profile?.uid || 'unknown', profile?.displayName, profile?.role || '');
     } catch (error: any) {
       console.error(error);
       setError(error.message || 'Failed to receive items');
@@ -262,7 +262,7 @@ export const RequestsView = () => {
     setIsProcessing(true);
     setError(null);
     try {
-      await approveBulkRequests(requestIds, profile?.uid || 'unknown', profile?.displayName);
+      await approveBulkRequests(requestIds, profile?.uid || 'unknown', profile?.displayName, profile?.role || '');
     } catch (error: any) {
       console.error(error);
       setError(error.message || 'Failed to approve requests');

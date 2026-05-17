@@ -281,7 +281,9 @@ export const SuppliersInvoiceView = () => {
     } else {
       setEnablePayment(resolvedStatus !== 'for_processing');
       setPaymentMethod('cash');
-      setPaymentAmount('');
+      setPaymentAmount(resolvedStatus !== 'for_processing' && (invoice.totalAmount || 0) > 0
+        ? (invoice.totalAmount).toFixed(2)
+        : '');
       setPaymentDate(todayStr());
       setChequeNumber('');
       setChequeDate(todayStr());
@@ -717,7 +719,7 @@ export const SuppliersInvoiceView = () => {
                 const itemUomIds = itemDef
                   ? [itemDef.uomId, ...((itemDef.uomConversions || []) as { uomId: string }[]).map(c => c.uomId)].filter(Boolean)
                   : [];
-                const itemAvailableUoms = uoms.filter(u => itemUomIds.includes(u.id));
+                const itemAvailableUoms = uoms.filter(u => itemUomIds.includes(u.id) || itemUomIds.includes(u.symbol));
                 const matchingItems = fi.itemSearch
                   ? items.filter(i => i.isActive && i.name.toLowerCase().includes(fi.itemSearch.toLowerCase())).slice(0, 8)
                   : [];
@@ -837,7 +839,7 @@ export const SuppliersInvoiceView = () => {
                         <label className="text-[9px] font-bold text-gray-400 uppercase tracking-widest">UOM</label>
                         {itemDef && itemAvailableUoms.length > 0 ? (
                           <select
-                            value={effectiveUomId}
+                            value={uom?.id || effectiveUomId}
                             onChange={e => updateFormItem(idx, { uomId: e.target.value })}
                             className="w-full p-2 bg-white rounded-xl text-xs outline-none focus:ring-2 focus:ring-blue-500 border border-gray-200"
                           >
@@ -895,7 +897,11 @@ export const SuppliersInvoiceView = () => {
                 onChange={e => {
                   const s = e.target.value as typeof invoiceStatus;
                   setInvoiceStatus(s);
-                  setEnablePayment(s !== 'for_processing');
+                  const shouldEnable = s !== 'for_processing';
+                  setEnablePayment(shouldEnable);
+                  if (shouldEnable && !paymentAmount && computedTotal > 0) {
+                    setPaymentAmount(computedTotal.toFixed(2));
+                  }
                 }}
                 className="w-full p-2.5 bg-gray-100 rounded-xl text-sm outline-none focus:ring-2 focus:ring-blue-500"
               >

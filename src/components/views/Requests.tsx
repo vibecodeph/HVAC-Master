@@ -49,7 +49,6 @@ export const RequestsView = () => {
   const [editCustomSpec, setEditCustomSpec] = useState('');
   const [editQty, setEditQty] = useState(1);
   const [editNote, setEditNote] = useState('');
-  const [editSourceLocationId, setEditSourceLocationId] = useState('');
   const [editItemSearch, setEditItemSearch] = useState('');
   const [editShowItemSearch, setEditShowItemSearch] = useState(false);
   const [deletingRequest, setDeletingRequest] = useState<Request | null>(null);
@@ -295,7 +294,6 @@ export const RequestsView = () => {
     setEditCustomSpec(r.customSpec || '');
     setEditQty(r.requestedQty);
     setEditNote(r.workerNote || '');
-    setEditSourceLocationId(r.sourceLocationId || '');
     setEditItemSearch('');
     setEditShowItemSearch(false);
   };
@@ -330,7 +328,6 @@ export const RequestsView = () => {
         requestedQty: editQty,
         uomId: editItem?.uomId || editRequestForm.uomId,
         workerNote: editNote || undefined,
-        sourceLocationId: editSourceLocationId || undefined,
       });
       closeEditModal();
       setSuccessMsg('Request updated successfully.');
@@ -882,7 +879,6 @@ export const RequestsView = () => {
       <Modal isOpen={!!editRequestForm} onClose={closeEditModal} title="Edit Request">
         {editRequestForm && (() => {
           const editItem = items.find(i => i.id === editItemId);
-          const warehouses = locations.filter(l => l.type === 'warehouse' && l.isActive);
           const matchingItems = editItemSearch
             ? items.filter(i => i.isActive && i.name.toLowerCase().includes(editItemSearch.toLowerCase())).slice(0, 8)
             : [];
@@ -989,19 +985,6 @@ export const RequestsView = () => {
                   className="w-full p-2 bg-gray-100 rounded-xl text-sm outline-none focus:ring-2 focus:ring-blue-500 resize-none"
                 />
               </div>
-              {warehouses.length > 0 && (
-                <div className="space-y-1">
-                  <label className="text-xs font-bold text-gray-400 uppercase tracking-wider">Preferred Source (optional)</label>
-                  <select
-                    value={editSourceLocationId}
-                    onChange={e => setEditSourceLocationId(e.target.value)}
-                    className="w-full p-2 bg-gray-100 rounded-xl text-sm outline-none focus:ring-2 focus:ring-blue-500"
-                  >
-                    <option value="">Any warehouse</option>
-                    {warehouses.map(w => <option key={w.id} value={w.id}>{w.name}</option>)}
-                  </select>
-                </div>
-              )}
               <div className="flex space-x-3">
                 <button onClick={closeEditModal} className="flex-1 py-4 bg-gray-100 text-gray-900 rounded-2xl font-bold uppercase tracking-widest text-xs active:scale-95 transition-transform">
                   Cancel

@@ -73,6 +73,20 @@ const ItemCard = ({
                 </motion.div>
               </button>
             </div>
+            {entries.length === 1 && (() => {
+              const headerVariant = entries[0]?.boq?.variant || entries[0]?.inv?.variant;
+              const headerCustomSpec = entries[0]?.inv?.customSpec;
+              return (
+                <>
+                  {headerVariant && Object.keys(headerVariant).length > 0 && (
+                    <p className="text-xs text-gray-500 uppercase font-bold">{Object.values(headerVariant).join(', ')}</p>
+                  )}
+                  {headerCustomSpec && (
+                    <p className="text-[10px] text-purple-600 uppercase font-bold">{headerCustomSpec}</p>
+                  )}
+                </>
+              );
+            })()}
           </div>
         </div>
 

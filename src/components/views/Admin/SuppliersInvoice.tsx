@@ -279,7 +279,7 @@ export const SuppliersInvoiceView = () => {
         amount: String(d.amount),
       })));
     } else {
-      setEnablePayment(false);
+      setEnablePayment(resolvedStatus !== 'for_processing');
       setPaymentMethod('cash');
       setPaymentAmount('');
       setPaymentDate(todayStr());
@@ -714,6 +714,10 @@ export const SuppliersInvoiceView = () => {
                 const effectiveUomId = fi.uomId || itemDef?.uomId || '';
                 const uom = effectiveUomId ? uoms.find(u => u.id === effectiveUomId || u.symbol === effectiveUomId) : null;
                 const lineTotal = (parseFloat(fi.quantity) || 0) * (parseFloat(fi.unitPrice) || 0);
+                const itemUomIds = itemDef
+                  ? [itemDef.uomId, ...((itemDef.uomConversions || []) as { uomId: string }[]).map(c => c.uomId)].filter(Boolean)
+                  : [];
+                const itemAvailableUoms = uoms.filter(u => itemUomIds.includes(u.id));
                 const matchingItems = fi.itemSearch
                   ? items.filter(i => i.isActive && i.name.toLowerCase().includes(fi.itemSearch.toLowerCase())).slice(0, 8)
                   : [];
@@ -831,9 +835,21 @@ export const SuppliersInvoiceView = () => {
                       </div>
                       <div className="space-y-1">
                         <label className="text-[9px] font-bold text-gray-400 uppercase tracking-widest">UOM</label>
-                        <div className="p-2 bg-gray-100 rounded-xl text-sm text-gray-500 font-medium">
-                          {uom?.symbol || effectiveUomId || '—'}
-                        </div>
+                        {itemDef && itemAvailableUoms.length > 0 ? (
+                          <select
+                            value={effectiveUomId}
+                            onChange={e => updateFormItem(idx, { uomId: e.target.value })}
+                            className="w-full p-2 bg-white rounded-xl text-xs outline-none focus:ring-2 focus:ring-blue-500 border border-gray-200"
+                          >
+                            {itemAvailableUoms.map(u => (
+                              <option key={u.id} value={u.id}>{u.symbol}</option>
+                            ))}
+                          </select>
+                        ) : (
+                          <div className="p-2 bg-gray-100 rounded-xl text-sm text-gray-500 font-medium">
+                            {uom?.symbol || effectiveUomId || '—'}
+                          </div>
+                        )}
                       </div>
                     </div>
 
@@ -879,7 +895,7 @@ export const SuppliersInvoiceView = () => {
                 onChange={e => {
                   const s = e.target.value as typeof invoiceStatus;
                   setInvoiceStatus(s);
-                  if (s === 'for_processing') setEnablePayment(false);
+                  setEnablePayment(s !== 'for_processing');
                 }}
                 className="w-full p-2.5 bg-gray-100 rounded-xl text-sm outline-none focus:ring-2 focus:ring-blue-500"
               >

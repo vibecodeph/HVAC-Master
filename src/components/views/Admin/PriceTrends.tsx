@@ -100,7 +100,7 @@ export const PriceTrends = () => {
         <p className="text-xs font-bold text-gray-400 uppercase tracking-widest mt-1">Item price history analysis</p>
       </div>
 
-      <Card className="p-4 space-y-4">
+      <Card className="p-4 space-y-4 overflow-visible">
         <div className="space-y-1">
           <label className="text-xs font-bold text-gray-400 uppercase tracking-wider pl-1">Select Item</label>
           {isDropdownOpen && (

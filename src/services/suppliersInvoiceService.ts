@@ -370,6 +370,26 @@ export const updateSuppliersInvoice = async (
         });
       }
 
+      // Old unit cost per path — needed to un-blend the old price when quantity is unchanged
+      const oldInvUnitCostMap = new Map<string, number>();
+      if (oldAddsInventory) {
+        invoice.items.forEach(item => {
+          const path = getInventoryRef(item.itemId, invoice.locationId, item.variant, undefined, undefined, item.customSpec).path;
+          const cf = getConvFactor(itemDocSnaps.get(item.itemId), item.uomId, uomList);
+          oldInvUnitCostMap.set(path, item.unitPrice / cf);
+        });
+      }
+
+      // Absolute base qty per path for the new invoice (needed for price-correction formula)
+      const newInvAbsQtyMap = new Map<string, number>();
+      if (newAddsInventory) {
+        newData.items.forEach(item => {
+          const path = getInventoryRef(item.itemId, newData.locationId, item.variant, undefined, undefined, item.customSpec).path;
+          const cf = getConvFactor(itemDocSnaps.get(item.itemId), item.uomId, uomList);
+          newInvAbsQtyMap.set(path, (newInvAbsQtyMap.get(path) || 0) + item.quantity * cf);
+        });
+      }
+
       // Net inventory quantity delta per path (new − old), in base UOM
       const invNetDelta = new Map<string, number>();
       if (oldAddsInventory) {
@@ -389,11 +409,24 @@ export const updateSuppliersInvoice = async (
 
       // Apply inventory quantity + averageCost changes, and write audit transaction records
       for (const [path, delta] of invNetDelta) {
-        if (delta === 0) continue;
         const ref = invRefMap.get(path)!;
         const snap = invSnaps.get(path);
         const existingQty = snap?.exists() ? (snap.data()?.quantity || 0) : 0;
         const existingCost = snap?.exists() ? (snap.data()?.averageCost ?? 0) : 0;
+
+        if (delta === 0) {
+          // Price-only edit: quantity unchanged but cost may have changed.
+          // Correct the weighted average: newAvg = oldAvg + (newUnit - oldUnit) * invoiceQty / existingQty
+          const newUnitCostPerBase = newInvUnitCostMap.get(path);
+          if (newUnitCostPerBase !== undefined && snap?.exists() && existingQty > 0) {
+            const oldUnitCostPerBase = oldInvUnitCostMap.get(path) ?? existingCost;
+            const invoiceBaseQty = newInvAbsQtyMap.get(path) ?? 0;
+            const correctedAvgCost = existingCost + (newUnitCostPerBase - oldUnitCostPerBase) * invoiceBaseQty / existingQty;
+            txn.update(ref, { averageCost: correctedAvgCost });
+          }
+          continue;
+        }
+
         const newQty = existingQty + delta;
         const unitCostPerBase = newInvUnitCostMap.get(path) ?? existingCost;
         // Only blend averageCost when adding; removals keep the same per-unit cost

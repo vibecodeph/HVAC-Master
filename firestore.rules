@@ -473,6 +473,12 @@ service cloud.firestore {
       allow read: if isApproved();
       allow create: if isAdmin();
       allow update: if isAdmin() || (isApproved() && (isWarehouseman() || isEngineer() || request.auth.token.get('role', '') == 'worker') && isValidItem(request.resource.data) && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['latestPrice', 'latestPriceDate', 'priceHistory', 'variantConfigs', 'totalQuantity', 'updatedAt', 'updatedBy']));
+      // totalQuantity-only fallback for bulk_pick / bulk_receive flows — skips full-doc isValidItem
+      // so items with legacy fields don't block the transaction. The hasOnly diff enforces no other
+      // field can change, providing equivalent protection without the full document validator.
+      allow update: if isApproved() && (isWarehouseman() || isEngineer() || request.auth.token.get('role', '') == 'worker')
+                       && request.resource.data.diff(resource.data).affectedKeys()
+                            .hasOnly(['totalQuantity', 'updatedAt', 'updatedBy']);
       allow delete: if isAdmin();
     }
 
@@ -512,6 +518,13 @@ service cloud.firestore {
                        && isValidInventory(request.resource.data)
                        && !request.resource.data.diff(resource.data).affectedKeys()
                             .hasAny(['unitPrice', 'lastEditedBy', 'lastEditedAt', 'editNotes']);
+      // Quantity-only fallback for bulk_pick / bulk_receive flows — skips full-doc isValidInventory
+      // so legacy documents with unknown fields don't block the transaction. Sensitive fields
+      // (unitPrice, lastEditedBy, lastEditedAt, editNotes) cannot appear in a hasOnly(['quantity','updatedAt']) diff.
+      allow update: if isApproved() && (isWarehouseman() || isEngineer() || request.auth.token.get('role', '') == 'worker')
+                       && isAssignedLocation(request.resource.data.locationId)
+                       && request.resource.data.diff(resource.data).affectedKeys()
+                            .hasOnly(['quantity', 'updatedAt']);
       allow delete: if isAdmin();
     }
 

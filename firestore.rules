@@ -146,6 +146,11 @@ service cloud.firestore {
         email.matches("^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$");
     }
 
+    // Returns lst unchanged if it is a list; returns [] otherwise (guards against null).
+    function safeList(lst) {
+      return lst is list ? lst : [];
+    }
+
     // ===============================================================
     // Domain Validators
     // ===============================================================
@@ -571,14 +576,26 @@ service cloud.firestore {
                      request.resource.data.diff(resource.data).affectedKeys().hasOnly(['lastLoginAt', 'lastLogoutAt'])
                     ) ||
                     (isEngineer() &&
-                     userId != request.auth.uid && // Engineers cannot edit themselves through this rule
-                     resource.data.role == 'worker' && // Engineers can only edit workers
+                     userId != request.auth.uid &&
+                     resource.data.role == 'worker' &&
                      isValidUser(request.resource.data) &&
                      request.resource.data.diff(resource.data).affectedKeys().hasOnly(['assignedLocationIds', 'updatedAt', 'updatedBy']) &&
-                     // Ensure locations outside the engineer's scope are unchanged
-                     request.resource.data.get('assignedLocationIds', []).removeAll(request.auth.token.get('assignedLocationIds', [])) ==
-                     resource.data.get('assignedLocationIds', []).removeAll(request.auth.token.get('assignedLocationIds', []))
+                     // safeList guards against null assignedLocationIds crashing removeAll
+                     safeList(request.resource.data.get('assignedLocationIds', null)).removeAll(request.auth.token.get('assignedLocationIds', [])) ==
+                     safeList(resource.data.get('assignedLocationIds', null)).removeAll(request.auth.token.get('assignedLocationIds', []))
                     );
+      // Location-only fallback for engineer→worker — skips isValidUser to handle
+      // legacy documents with extra fields. diff.hasOnly is the security boundary;
+      // the scope check ensures engineers cannot assign workers outside their sites.
+      allow update: if isEngineer() &&
+                       userId != request.auth.uid &&
+                       resource.data.role == 'worker' &&
+                       request.resource.data.diff(resource.data).affectedKeys()
+                          .hasOnly(['assignedLocationIds', 'updatedAt', 'updatedBy']) &&
+                       safeList(request.resource.data.get('assignedLocationIds', null))
+                          .removeAll(request.auth.token.get('assignedLocationIds', [])) ==
+                       safeList(resource.data.get('assignedLocationIds', null))
+                          .removeAll(request.auth.token.get('assignedLocationIds', []));
       allow delete: if isAdmin();
     }
 

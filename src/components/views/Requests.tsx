@@ -26,6 +26,8 @@ export const RequestsView = () => {
         setFilter('for delivery');
       } else if (tabParam === 'pending') {
         setFilter('pending');
+      } else if (tabParam === 'approved') {
+        setFilter('approved');
       } else if (profile.role === 'warehouseman') {
         setFilter('approved');
       } else if (profile.role === 'worker' || profile.role === 'engineer') {

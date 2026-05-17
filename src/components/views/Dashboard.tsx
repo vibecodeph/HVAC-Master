@@ -170,7 +170,10 @@ export const Dashboard = () => {
       siteRequests.filter(r => r.status === 'pending' || r.status === 'approved').map(uniqueKey)
     ).size;
 
-    return { readyForReceipt, pendingApproval };
+    const hasPending = siteRequests.some(r => r.status === 'pending');
+    const hasApproved = siteRequests.some(r => r.status === 'approved');
+
+    return { readyForReceipt, pendingApproval, hasPending, hasApproved };
   }, [requests, selectedLocationId, isWorkerDashboard]);
 
   if (isWorkerDashboard) {
@@ -246,7 +249,14 @@ export const Dashboard = () => {
 
           {/* Metric: Pending Approval */}
           <Card
-            onClick={() => navigate('/requests?tab=pending')}
+            onClick={() => {
+              const tab = workerMetrics?.hasPending
+                ? 'pending'
+                : workerMetrics?.hasApproved
+                ? 'approved'
+                : 'pending';
+              navigate(`/requests?tab=${tab}`);
+            }}
             className="p-4 bg-blue-50 border-blue-100 flex items-center space-x-4 group hover:bg-blue-100 active:scale-[0.97] transition-all cursor-pointer"
           >
             <div className="w-10 h-10 rounded-xl bg-blue-500 flex items-center justify-center text-white shadow-lg shadow-blue-500/20 group-hover:scale-110 transition-transform flex-shrink-0">

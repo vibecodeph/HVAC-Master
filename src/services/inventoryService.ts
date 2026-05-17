@@ -3609,6 +3609,103 @@ export const subscribeToPurchaseOrders = (callback: (data: PurchaseOrder[]) => v
   });
 };
 
+// Migrate priceHistory arrays from item/variantConfig docs to price_history collection
+export const migratePriceHistoryToCollection = async (
+  phase: 'copy' | 'cleanup'
+): Promise<{ written: number; updated: number }> => {
+  const BATCH_SIZE = 400;
+  const itemsSnap = await getDocs(collection(db, 'items'));
+  let written = 0;
+  let updated = 0;
+
+  if (phase === 'copy') {
+    let batch = writeBatch(db);
+    let batchCount = 0;
+
+    const flush = async () => {
+      if (batchCount === 0) return;
+      await batch.commit();
+      written += batchCount;
+      batch = writeBatch(db);
+      batchCount = 0;
+    };
+
+    for (const itemDoc of itemsSnap.docs) {
+      const item = itemDoc.data();
+      const itemId = itemDoc.id;
+
+      if (item.priceHistory && Array.isArray(item.priceHistory)) {
+        for (const entry of item.priceHistory) {
+          const phRef = doc(collection(db, 'price_history'));
+          batch.set(phRef, {
+            id: phRef.id, itemId, variantKey: null, variant: null,
+            date: entry.date, price: entry.price, source: entry.source || 'manual',
+            sourceId: null, sourceRef: null,
+          });
+          batchCount++;
+          if (batchCount >= BATCH_SIZE) await flush();
+        }
+      }
+
+      if (item.variantConfigs && Array.isArray(item.variantConfigs)) {
+        for (const vc of item.variantConfigs) {
+          if (!vc.priceHistory || !Array.isArray(vc.priceHistory) || vc.priceHistory.length === 0) continue;
+          const vk = vc.variant && Object.keys(vc.variant).length > 0 ? normalizeVariant(vc.variant) : null;
+          for (const entry of vc.priceHistory) {
+            const phRef = doc(collection(db, 'price_history'));
+            batch.set(phRef, {
+              id: phRef.id, itemId, variantKey: vk, variant: vc.variant || null,
+              date: entry.date, price: entry.price, source: entry.source || 'manual',
+              sourceId: null, sourceRef: null,
+            });
+            batchCount++;
+            if (batchCount >= BATCH_SIZE) await flush();
+          }
+        }
+      }
+    }
+
+    await flush();
+    return { written, updated: 0 };
+  } else {
+    let batch = writeBatch(db);
+    let batchCount = 0;
+
+    const flush = async () => {
+      if (batchCount === 0) return;
+      await batch.commit();
+      updated += batchCount;
+      batch = writeBatch(db);
+      batchCount = 0;
+    };
+
+    for (const itemDoc of itemsSnap.docs) {
+      const item = itemDoc.data();
+      const hasBaseHistory = item.priceHistory && Array.isArray(item.priceHistory);
+      const hasVariantHistory = Array.isArray(item.variantConfigs) &&
+        item.variantConfigs.some((vc: any) => Array.isArray(vc.priceHistory) && vc.priceHistory.length > 0);
+
+      if (!hasBaseHistory && !hasVariantHistory) continue;
+
+      const update: Record<string, any> = {};
+      if (hasBaseHistory) update.priceHistory = deleteField();
+      if (hasVariantHistory) {
+        update.variantConfigs = item.variantConfigs.map((vc: any) => {
+          const { priceHistory: _ph, ...rest } = vc;
+          return rest;
+        });
+      }
+
+      batch.update(itemDoc.ref, update);
+      batchCount++;
+      if (batchCount >= BATCH_SIZE) await flush();
+    }
+
+    await flush();
+    return { written: 0, updated };
+  }
+};
+
 // Migrate averageCost → latestPrice for existing items (one-time admin utility)
 export const migrateAverageCostToLatestPrice = async (): Promise<{ migrated: number; skipped: number }> => {
   const itemsSnap = await getDocs(collection(db, 'items'));

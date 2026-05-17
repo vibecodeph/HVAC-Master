@@ -260,8 +260,9 @@ export const SuppliersInvoiceView = () => {
     setSelectedPOId(invoice.linkedPOs?.[0]?.poId || '');
     setAddToInventory(invoice.addToInventory !== false);
     const existing = invoice.invoiceStatus;
-    setInvoiceStatus(existing === 'paid' ? 'paid' : existing === 'with_cheque' ? 'with_cheque' : 'for_processing');
-    if (invoice.payment) {
+    const resolvedStatus = existing === 'paid' ? 'paid' : existing === 'with_cheque' ? 'with_cheque' : 'for_processing';
+    setInvoiceStatus(resolvedStatus);
+    if (invoice.payment && resolvedStatus !== 'for_processing') {
       setEnablePayment(true);
       setPaymentMethod(invoice.payment.method);
       setPaymentAmount(String(invoice.payment.amount));
@@ -377,7 +378,7 @@ export const SuppliersInvoiceView = () => {
       }
     }
 
-    if (enablePayment) {
+    if (enablePayment && (invoiceStatus === 'with_cheque' || invoiceStatus === 'paid')) {
       const amt = parseFloat(paymentAmount);
       if (!amt || amt <= 0) { setFormError('Payment amount must be greater than 0'); return; }
       if (paymentMethod === 'check') {
@@ -422,7 +423,7 @@ export const SuppliersInvoiceView = () => {
       : [];
 
     let paymentData: SuppliersInvoice['payment'] | undefined;
-    if (enablePayment) {
+    if (enablePayment && (invoiceStatus === 'with_cheque' || invoiceStatus === 'paid')) {
       const amt = parseFloat(paymentAmount);
       const tax = parseFloat(taxAmount) || 0;
       const others = otherDeductions.reduce((s, d) => s + (parseFloat(d.amount) || 0), 0);
@@ -875,7 +876,11 @@ export const SuppliersInvoiceView = () => {
               <label className="text-xs font-bold text-gray-400 uppercase tracking-wider">Invoice Status</label>
               <select
                 value={invoiceStatus}
-                onChange={e => setInvoiceStatus(e.target.value as typeof invoiceStatus)}
+                onChange={e => {
+                  const s = e.target.value as typeof invoiceStatus;
+                  setInvoiceStatus(s);
+                  if (s === 'for_processing') setEnablePayment(false);
+                }}
                 className="w-full p-2.5 bg-gray-100 rounded-xl text-sm outline-none focus:ring-2 focus:ring-blue-500"
               >
                 <option value="for_processing">For Processing</option>
@@ -884,6 +889,8 @@ export const SuppliersInvoiceView = () => {
               </select>
             </div>
 
+            {(invoiceStatus === 'with_cheque' || invoiceStatus === 'paid') && (
+            <>
             <label className="flex items-center gap-3 cursor-pointer">
               <input
                 type="checkbox"
@@ -1058,6 +1065,8 @@ export const SuppliersInvoiceView = () => {
                   </span>
                 </div>
               </div>
+            )}
+            </>
             )}
           </Card>
 

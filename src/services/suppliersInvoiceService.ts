@@ -174,13 +174,10 @@ export const createSuppliersInvoice = async (data: InvoiceFormData): Promise<str
           };
 
           if (data.updateLatestPrice) {
-            // Group items by variant to determine latest price per variant
             const itemRows = data.items.filter(i => i.itemId === itemId);
-            // Use the last row per variant as the latest price (invoice is treated as one event)
             const variantPriceMap = new Map<string, { price: number; item: SuppliersInvoiceItem }>();
             for (const row of itemRows) {
-              const vk = normalizeVariant(row.variant);
-              variantPriceMap.set(vk, { price: row.unitPrice, item: row });
+              variantPriceMap.set(normalizeVariant(row.variant), { price: row.unitPrice, item: row });
             }
             const isVariantItem = itemData.variantAttributes && itemData.variantAttributes.length > 0;
             if (isVariantItem) {
@@ -190,25 +187,44 @@ export const createSuppliersInvoice = async (data: InvoiceFormData): Promise<str
                 const convFactor = getConvFactor(snap, item.uomId, uomList);
                 const unitCostPerBase = price / convFactor;
                 const idx = configs.findIndex((c: any) => normalizeVariant(c.variant) === vk);
-                const prevHistory: any[] = idx >= 0 ? (configs[idx].priceHistory || []) : [];
-                const newHistory = [...prevHistory, { date: invoiceTimestamp, price: unitCostPerBase, source: 'invoice' }].slice(-50);
                 if (idx >= 0) {
-                  configs[idx] = { ...configs[idx], latestPrice: unitCostPerBase, latestPriceDate: invoiceTimestamp, priceHistory: newHistory };
+                  configs[idx] = { ...configs[idx], latestPrice: unitCostPerBase, latestPriceDate: invoiceTimestamp };
                 } else {
-                  configs.push({ variant: item.variant, latestPrice: unitCostPerBase, latestPriceDate: invoiceTimestamp, priceHistory: newHistory });
+                  configs.push({ variant: item.variant, latestPrice: unitCostPerBase, latestPriceDate: invoiceTimestamp });
                 }
+                const phRef = doc(collection(db, 'price_history'));
+                txn.set(phRef, {
+                  id: phRef.id,
+                  itemId,
+                  variantKey: vk === '{}' ? null : vk,
+                  variant: item.variant,
+                  date: invoiceTimestamp,
+                  price: unitCostPerBase,
+                  source: 'invoice',
+                  sourceId: invoiceRef.id,
+                  sourceRef: data.billNumber,
+                });
               }
               itemUpdate.variantConfigs = configs;
             } else {
-              // No-variant item: use first row's price
               const firstRow = data.items.find(i => i.itemId === itemId);
               if (firstRow) {
                 const convFactor = getConvFactor(snap, firstRow.uomId, uomList);
                 const unitCostPerBase = firstRow.unitPrice / convFactor;
-                const prevHistory: any[] = itemData.priceHistory || [];
                 itemUpdate.latestPrice = unitCostPerBase;
                 itemUpdate.latestPriceDate = invoiceTimestamp;
-                itemUpdate.priceHistory = [...prevHistory, { date: invoiceTimestamp, price: unitCostPerBase, source: 'invoice' }].slice(-50);
+                const phRef = doc(collection(db, 'price_history'));
+                txn.set(phRef, {
+                  id: phRef.id,
+                  itemId,
+                  variantKey: null,
+                  variant: null,
+                  date: invoiceTimestamp,
+                  price: unitCostPerBase,
+                  source: 'invoice',
+                  sourceId: invoiceRef.id,
+                  sourceRef: data.billNumber,
+                });
               }
             }
           }
@@ -331,6 +347,18 @@ export const updateSuppliersInvoice = async (
       }
     } catch {
       // Non-blocking — stale records will be overwritten on next full sync
+    }
+
+    // Delete stale price_history records before the transaction (best-effort)
+    try {
+      const phSnap = await getDocs(query(collection(db, 'price_history'), where('sourceId', '==', invoice.id)));
+      if (!phSnap.empty) {
+        const batch = writeBatch(db);
+        phSnap.docs.forEach(d => batch.delete(d.ref));
+        await batch.commit();
+      }
+    } catch {
+      // Non-blocking
     }
 
     await runTransaction(db, async txn => {
@@ -497,9 +525,8 @@ export const updateSuppliersInvoice = async (
         });
       }
 
-      // Timestamps for priceHistory find-and-replace
+      // Invoice timestamp for new price_history docs
       const newInvoiceTimestamp = newData.purchaseDate instanceof Timestamp ? newData.purchaseDate : Timestamp.now();
-      const oldDateMs = invoice.purchaseDate instanceof Timestamp ? invoice.purchaseDate.toMillis() : 0;
 
       // All itemIds that need a write: quantity-delta items + price-update items
       const needsPriceUpdate = newData.updateLatestPrice && newAddsInventory;
@@ -520,7 +547,7 @@ export const updateSuppliersInvoice = async (
           itemUpdate.totalQuantity = Math.max(0, (itemData.totalQuantity || 0) + qtyDelta);
         }
 
-        // priceHistory: find-and-replace existing invoice entry, or append if none found
+        // Price update: write fresh price_history docs (old ones deleted pre-transaction)
         if (needsPriceUpdate && newData.items.some(i => i.itemId === itemId)) {
           const itemRows = newData.items.filter(i => i.itemId === itemId);
           const variantPriceMap = new Map<string, { price: number; item: SuppliersInvoiceItem }>();
@@ -536,25 +563,23 @@ export const updateSuppliersInvoice = async (
               const cf = getConvFactor(snap, item.uomId, uomList);
               const unitCostPerBase = price / cf;
               const idx = configs.findIndex((c: any) => normalizeVariant(c.variant) === vk);
-              const prevHistory: any[] = idx >= 0 ? (configs[idx].priceHistory || []) : [];
-
-              // Find the entry originally written by this invoice (match source + old date)
-              let matchIdx = -1;
-              for (let i = prevHistory.length - 1; i >= 0; i--) {
-                const e = prevHistory[i];
-                if (e.source === 'invoice' && e.date?.toMillis?.() === oldDateMs) { matchIdx = i; break; }
-              }
-              const newHistory = matchIdx >= 0
-                ? prevHistory.map((e: any, i: number) =>
-                    i === matchIdx ? { date: newInvoiceTimestamp, price: unitCostPerBase, source: 'invoice' } : e
-                  )
-                : [...prevHistory, { date: newInvoiceTimestamp, price: unitCostPerBase, source: 'invoice' }].slice(-50);
-
               if (idx >= 0) {
-                configs[idx] = { ...configs[idx], latestPrice: unitCostPerBase, latestPriceDate: newInvoiceTimestamp, priceHistory: newHistory };
+                configs[idx] = { ...configs[idx], latestPrice: unitCostPerBase, latestPriceDate: newInvoiceTimestamp };
               } else {
-                configs.push({ variant: item.variant, latestPrice: unitCostPerBase, latestPriceDate: newInvoiceTimestamp, priceHistory: newHistory });
+                configs.push({ variant: item.variant, latestPrice: unitCostPerBase, latestPriceDate: newInvoiceTimestamp });
               }
+              const phRef = doc(collection(db, 'price_history'));
+              txn.set(phRef, {
+                id: phRef.id,
+                itemId,
+                variantKey: vk === '{}' ? null : vk,
+                variant: item.variant,
+                date: newInvoiceTimestamp,
+                price: unitCostPerBase,
+                source: 'invoice',
+                sourceId: invoice.id,
+                sourceRef: newData.billNumber,
+              });
             }
             itemUpdate.variantConfigs = configs;
           } else {
@@ -562,22 +587,20 @@ export const updateSuppliersInvoice = async (
             if (firstRow) {
               const cf = getConvFactor(snap, firstRow.uomId, uomList);
               const unitCostPerBase = firstRow.unitPrice / cf;
-              const prevHistory: any[] = itemData.priceHistory || [];
-
-              let matchIdx = -1;
-              for (let i = prevHistory.length - 1; i >= 0; i--) {
-                const e = prevHistory[i];
-                if (e.source === 'invoice' && e.date?.toMillis?.() === oldDateMs) { matchIdx = i; break; }
-              }
-              const newHistory = matchIdx >= 0
-                ? prevHistory.map((e: any, i: number) =>
-                    i === matchIdx ? { date: newInvoiceTimestamp, price: unitCostPerBase, source: 'invoice' } : e
-                  )
-                : [...prevHistory, { date: newInvoiceTimestamp, price: unitCostPerBase, source: 'invoice' }].slice(-50);
-
               itemUpdate.latestPrice = unitCostPerBase;
               itemUpdate.latestPriceDate = newInvoiceTimestamp;
-              itemUpdate.priceHistory = newHistory;
+              const phRef = doc(collection(db, 'price_history'));
+              txn.set(phRef, {
+                id: phRef.id,
+                itemId,
+                variantKey: null,
+                variant: null,
+                date: newInvoiceTimestamp,
+                price: unitCostPerBase,
+                source: 'invoice',
+                sourceId: invoice.id,
+                sourceRef: newData.billNumber,
+              });
             }
           }
         }
@@ -760,6 +783,18 @@ export const deleteSuppliersInvoice = async (invoice: SuppliersInvoice): Promise
       }
     } catch {
       // Non-blocking — transaction records may be left as historical data
+    }
+
+    // Best-effort cleanup of price_history records linked to this invoice
+    try {
+      const phSnap = await getDocs(query(collection(db, 'price_history'), where('sourceId', '==', invoice.id)));
+      if (!phSnap.empty) {
+        const batch = writeBatch(db);
+        phSnap.docs.forEach(d => batch.delete(d.ref));
+        await batch.commit();
+      }
+    } catch {
+      // Non-blocking — price history records may be left as historical data
     }
   } catch (error) {
     handleFirestoreError(error, OperationType.DELETE, `suppliers_invoices/${invoice.id}`);

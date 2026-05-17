@@ -14,7 +14,7 @@ export type ProgressCallback = (message: string, current: number, total: number)
 const FLAT_COLLECTIONS = [
   'items', 'categories', 'uoms', 'tags', 'locations', 'users',
   'inventory', 'requests', 'transactions', 'boq', 'unplanned_stock',
-  'assets', 'suppliers_invoices', 'supplier_pricing',
+  'assets', 'suppliers_invoices', 'supplier_pricing', 'price_history',
   'po_templates', 'counters', 'system',
   // rbac_config: admin can read but write is Cloud Functions only — backed up, not restored
   'rbac_config',

@@ -46,12 +46,23 @@ export interface PriceHistoryEntry {
   source: string; // e.g., 'po_receive', 'invoice', 'manual'
 }
 
+export interface PriceHistoryDoc {
+  id: string;
+  itemId: string;
+  variantKey: string | null;
+  variant: Record<string, string> | null;
+  date: Timestamp;
+  price: number;
+  source: 'po_receive' | 'invoice' | 'manual';
+  sourceId: string | null;
+  sourceRef: string | null;
+}
+
 export interface VariantConfig {
   variant: Record<string, string>;
   reorderLevel?: number;
   latestPrice?: number;
   latestPriceDate?: Timestamp;
-  priceHistory?: PriceHistoryEntry[];
   isRequired?: boolean; // per-combination override; undefined/true = required, false = optional
   dimensionRequirements?: { [key: string]: boolean }; // per-dimension; undefined/true = required, false = optional
 }
@@ -74,7 +85,6 @@ export interface Item {
   isActive: boolean;
   latestPrice?: number;
   latestPriceDate?: Timestamp;
-  priceHistory?: PriceHistoryEntry[];
   totalQuantity?: number; // Total quantity across all locations
   reorderLevel?: number; // Default reorder level in base UOM
   preferredSupplierId?: string; // Optional preferred supplier

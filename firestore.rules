@@ -156,7 +156,7 @@ service cloud.firestore {
     // ===============================================================
 
     function isValidItem(data) {
-      return hasOnlyAllowedFields(['id', 'name', 'uomId', 'isTool', 'isActive', 'createdAt', 'updatedAt', 'createdBy', 'updatedBy', 'description', 'categoryId', 'subcategoryId', 'tags', 'variantAttributes', 'requireVariant', 'latestPrice', 'latestPriceDate', 'priceHistory', 'totalQuantity', 'reorderLevel', 'preferredSupplierId', 'variantConfigs', 'components', 'uomConversions', 'requireCustomSpec', 'customSpecLabel', 'averageCost']) &&
+      return hasOnlyAllowedFields(['id', 'name', 'uomId', 'isTool', 'isActive', 'createdAt', 'updatedAt', 'createdBy', 'updatedBy', 'description', 'categoryId', 'subcategoryId', 'tags', 'variantAttributes', 'requireVariant', 'latestPrice', 'latestPriceDate', 'totalQuantity', 'reorderLevel', 'preferredSupplierId', 'variantConfigs', 'components', 'uomConversions', 'requireCustomSpec', 'customSpecLabel', 'averageCost']) &&
              (!('name' in data) || (data.name is string && data.name.size() > 0 && data.name.size() <= 200)) &&
              (!('description' in data) || data.description == null || (data.description is string && data.description.size() <= 1000)) &&
              (!('uomId' in data) || (data.uomId is string && data.uomId.size() <= 50)) &&
@@ -170,7 +170,6 @@ service cloud.firestore {
              (!('requireVariant' in data) || data.requireVariant is bool) &&
              (!('latestPrice' in data) || data.latestPrice == null || (data.latestPrice is number && data.latestPrice >= 0)) &&
              (!('latestPriceDate' in data) || data.latestPriceDate == null || data.latestPriceDate is timestamp) &&
-             (!('priceHistory' in data) || data.priceHistory == null || (data.priceHistory is list && data.priceHistory.size() <= 50)) &&
              (!('totalQuantity' in data) || data.totalQuantity == null || (data.totalQuantity is number)) &&
              (!('reorderLevel' in data) || data.reorderLevel == null || (data.reorderLevel is number && data.reorderLevel >= 0)) &&
              (!('preferredSupplierId' in data) || data.preferredSupplierId == null || (data.preferredSupplierId is string && data.preferredSupplierId.size() <= 50)) &&
@@ -477,7 +476,7 @@ service cloud.firestore {
     match /items/{itemId} {
       allow read: if isApproved();
       allow create: if isAdmin();
-      allow update: if isAdmin() || (isApproved() && (isWarehouseman() || isEngineer() || request.auth.token.get('role', '') == 'worker') && isValidItem(request.resource.data) && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['latestPrice', 'latestPriceDate', 'priceHistory', 'variantConfigs', 'totalQuantity', 'updatedAt', 'updatedBy']));
+      allow update: if isAdmin() || (isApproved() && (isWarehouseman() || isEngineer() || request.auth.token.get('role', '') == 'worker') && isValidItem(request.resource.data) && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['latestPrice', 'latestPriceDate', 'variantConfigs', 'totalQuantity', 'updatedAt', 'updatedBy']));
       // totalQuantity-only fallback for bulk_pick / bulk_receive flows — skips full-doc isValidItem
       // so items with legacy fields don't block the transaction. The hasOnly diff enforces no other
       // field can change, providing equivalent protection without the full document validator.
@@ -687,6 +686,12 @@ service cloud.firestore {
 
     match /suppliers_invoices/{invoiceId} {
       allow read, write: if isAdmin();
+    }
+
+    match /price_history/{docId} {
+      allow read: if isAdmin();
+      allow create: if isApproved() && (isAdmin() || isEngineer() || isWarehouseman() || request.auth.token.get('role', '') == 'worker');
+      allow update, delete: if isAdmin();
     }
 
     match /po_templates/{templateId} {

@@ -1420,7 +1420,7 @@ export const recordBulkReceivePO = async (
       const updatedPoItems = [...poData.items];
       
       // Track item state changes for multiple lines of the same item
-      const rollingItemState: Record<string, { totalQuantity: number; latestPricePerVariant: Record<string, { price: number; date: Timestamp; history: any[] }> }> = {};
+      const rollingItemState: Record<string, { totalQuantity: number; latestPricePerVariant: Record<string, { price: number; date: Timestamp }> }> = {};
       const receiveTimestamp = Timestamp.fromDate(options.date);
       for (const id in itemDataMap) {
         rollingItemState[id] = {
@@ -1525,43 +1525,36 @@ export const recordBulkReceivePO = async (
             const isVariant = receive.variant && Object.keys(receive.variant).length > 0;
 
             if (isVariant) {
-              // Update per-variant latestPrice in variantConfigs
               const configs: any[] = itemData.variantConfigs ? itemData.variantConfigs.map(c => ({ ...c })) : [];
               const existingIdx = configs.findIndex(c => {
                 const ck = Object.keys(c.variant).sort().map(k => `${k}:${c.variant[k]}`).join('|');
                 return ck === vKey;
               });
-              const prevHistory: any[] = existingIdx >= 0 ? (configs[existingIdx].priceHistory || []) : [];
-              const newHistory = [...prevHistory, { date: receiveTimestamp, price: newUnitPricePerBase, source: 'po_receive' }].slice(-50);
               if (existingIdx >= 0) {
-                configs[existingIdx] = { ...configs[existingIdx], latestPrice: newUnitPricePerBase, latestPriceDate: receiveTimestamp, priceHistory: newHistory };
+                configs[existingIdx] = { ...configs[existingIdx], latestPrice: newUnitPricePerBase, latestPriceDate: receiveTimestamp };
               } else {
-                configs.push({ variant: receive.variant, latestPrice: newUnitPricePerBase, latestPriceDate: receiveTimestamp, priceHistory: newHistory });
+                configs.push({ variant: receive.variant, latestPrice: newUnitPricePerBase, latestPriceDate: receiveTimestamp });
               }
-              // Track for this run
-              state.latestPricePerVariant[vKey] = { price: newUnitPricePerBase, date: receiveTimestamp, history: newHistory };
+              state.latestPricePerVariant[vKey] = { price: newUnitPricePerBase, date: receiveTimestamp };
               itemUpdate.variantConfigs = configs;
             } else {
-              // Base (no variant) — update item-level latestPrice
-              if (!state.latestPricePerVariant['_base']) {
-                const prevHistory: any[] = itemData.priceHistory || [];
-                state.latestPricePerVariant['_base'] = {
-                  price: newUnitPricePerBase,
-                  date: receiveTimestamp,
-                  history: [...prevHistory, { date: receiveTimestamp, price: newUnitPricePerBase, source: 'po_receive' }].slice(-50)
-                };
-              } else {
-                const prev = state.latestPricePerVariant['_base'];
-                state.latestPricePerVariant['_base'] = {
-                  price: newUnitPricePerBase,
-                  date: receiveTimestamp,
-                  history: [...prev.history, { date: receiveTimestamp, price: newUnitPricePerBase, source: 'po_receive' }].slice(-50)
-                };
-              }
-              itemUpdate.latestPrice = state.latestPricePerVariant['_base'].price;
+              itemUpdate.latestPrice = newUnitPricePerBase;
               itemUpdate.latestPriceDate = receiveTimestamp;
-              itemUpdate.priceHistory = state.latestPricePerVariant['_base'].history;
+              state.latestPricePerVariant['_base'] = { price: newUnitPricePerBase, date: receiveTimestamp };
             }
+
+            const phRef = doc(collection(db, 'price_history'));
+            dbTransaction.set(phRef, {
+              id: phRef.id,
+              itemId: receive.itemId,
+              variantKey: isVariant ? normalizeVariant(receive.variant) : null,
+              variant: isVariant ? (receive.variant || null) : null,
+              date: receiveTimestamp,
+              price: newUnitPricePerBase,
+              source: 'po_receive',
+              sourceId: poData.id,
+              sourceRef: poData.poNumber,
+            });
           }
 
           dbTransaction.update(doc(db, 'items', receive.itemId), itemUpdate);
@@ -2686,7 +2679,7 @@ export const bulkUpdateRequests = async (
 
 export const clearInventoryData = async (includeBOQ: boolean = true, includePOs: boolean = false) => {
   try {
-    const collectionsToClear = ['inventory', 'requests', 'transactions', 'unplanned_stock', 'supplier_pricing', 'suppliers_invoices'];
+    const collectionsToClear = ['inventory', 'requests', 'transactions', 'unplanned_stock', 'supplier_pricing', 'suppliers_invoices', 'price_history'];
     if (includeBOQ) {
       collectionsToClear.push('boq');
     }
@@ -3191,20 +3184,28 @@ export const manualEditInventory = async (
         const varKey = normalizeVariant(variant!);
         const configs = [...(currentItem.variantConfigs || [])];
         const idx = configs.findIndex(vc => normalizeVariant(vc.variant) === varKey);
-        const prevHistory: any[] = idx >= 0 ? (configs[idx].priceHistory || []) : [];
-        const newHistory = [...prevHistory, { date: manualTimestamp, price: updates.unitPrice, source: 'manual' }].slice(-50);
         if (idx >= 0) {
-          configs[idx] = { ...configs[idx], latestPrice: updates.unitPrice, latestPriceDate: manualTimestamp, priceHistory: newHistory };
+          configs[idx] = { ...configs[idx], latestPrice: updates.unitPrice, latestPriceDate: manualTimestamp };
         } else {
-          configs.push({ variant: variant!, latestPrice: updates.unitPrice, latestPriceDate: manualTimestamp, priceHistory: newHistory });
+          configs.push({ variant: variant!, latestPrice: updates.unitPrice, latestPriceDate: manualTimestamp });
         }
         itemUpdate.variantConfigs = configs;
       } else {
-        const prevHistory: any[] = currentItem.priceHistory || [];
         itemUpdate.latestPrice = updates.unitPrice;
         itemUpdate.latestPriceDate = manualTimestamp;
-        itemUpdate.priceHistory = [...prevHistory, { date: manualTimestamp, price: updates.unitPrice, source: 'manual' }].slice(-50);
       }
+      const phRef = doc(collection(db, 'price_history'));
+      txn.set(phRef, {
+        id: phRef.id,
+        itemId,
+        variantKey: hasVariant ? normalizeVariant(variant!) : null,
+        variant: hasVariant ? variant! : null,
+        date: manualTimestamp,
+        price: updates.unitPrice,
+        source: 'manual',
+        sourceId: null,
+        sourceRef: null,
+      });
     }
 
     txn.update(itemRef, itemUpdate);
@@ -3368,24 +3369,32 @@ export const addInventoryToJobsite = async (
 
       if (unitPrice !== undefined && unitPrice > 0) {
         const ajTimestamp = Timestamp.now();
-        const prevHistory: any[] = (variant && Object.keys(variant || {}).length > 0)
-          ? (ajVariantConfig?.priceHistory || [])
-          : (itemData.priceHistory || []);
-        const newHistory = [...prevHistory, { date: ajTimestamp, price: unitPrice, source: 'manual' }].slice(-50);
-        if (variant && Object.keys(variant || {}).length > 0) {
+        const ajHasVariant = !!(variant && Object.keys(variant || {}).length > 0);
+        if (ajHasVariant) {
           const configs = [...(itemData.variantConfigs || [])];
           const idx = configs.findIndex(c => normalizeVariant(c.variant) === ajVariantKey);
           if (idx >= 0) {
-            configs[idx] = { ...configs[idx], latestPrice: unitPrice, latestPriceDate: ajTimestamp, priceHistory: newHistory };
+            configs[idx] = { ...configs[idx], latestPrice: unitPrice, latestPriceDate: ajTimestamp };
           } else {
-            configs.push({ variant: variant!, latestPrice: unitPrice, latestPriceDate: ajTimestamp, priceHistory: newHistory });
+            configs.push({ variant: variant!, latestPrice: unitPrice, latestPriceDate: ajTimestamp });
           }
           itemUpdate.variantConfigs = configs;
         } else {
           itemUpdate.latestPrice = unitPrice;
           itemUpdate.latestPriceDate = ajTimestamp;
-          itemUpdate.priceHistory = newHistory;
         }
+        const phRef = doc(collection(db, 'price_history'));
+        txn.set(phRef, {
+          id: phRef.id,
+          itemId,
+          variantKey: ajHasVariant ? ajVariantKey : null,
+          variant: ajHasVariant ? variant! : null,
+          date: ajTimestamp,
+          price: unitPrice,
+          source: 'manual',
+          sourceId: null,
+          sourceRef: null,
+        });
       }
 
       txn.update(itemRef, itemUpdate);

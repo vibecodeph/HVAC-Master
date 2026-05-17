@@ -1,9 +1,10 @@
-import { useState, useMemo } from 'react';
-import { TrendingUp, ChevronDown, ChevronUp, Search, Package } from 'lucide-react';
+import { useState, useMemo, useEffect } from 'react';
+import { TrendingUp, Search, Package } from 'lucide-react';
+import { collection, getDocs, query, where, orderBy, Timestamp } from 'firebase/firestore';
+import { db } from '../../../firebase';
 import { useData } from '../../../App';
 import { normalizeVariant } from '../../../lib/utils';
-import { Item, VariantConfig, PriceHistoryEntry } from '../../../types';
-import { Timestamp } from 'firebase/firestore';
+import { Item, VariantConfig, PriceHistoryDoc } from '../../../types';
 import { Card } from '../../common/Card';
 import { cn } from '../../../lib/utils';
 
@@ -25,9 +26,10 @@ export const PriceTrends = () => {
   const { items } = useData();
   const [selectedItemId, setSelectedItemId] = useState('');
   const [selectedVariantKey, setSelectedVariantKey] = useState('_base');
-  const [expandedSource, setExpandedSource] = useState<string | null>(null);
   const [itemSearch, setItemSearch] = useState('');
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
+  const [fetchedHistory, setFetchedHistory] = useState<PriceHistoryDoc[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
 
   const filteredItems = useMemo(() => {
     const base = items.filter(i => i.isActive);
@@ -40,11 +42,31 @@ export const PriceTrends = () => {
 
   const selectedItem = items.find(i => i.id === selectedItemId) as Item | undefined;
 
+  useEffect(() => {
+    if (!selectedItemId) {
+      setFetchedHistory([]);
+      return;
+    }
+    setHistoryLoading(true);
+    getDocs(query(
+      collection(db, 'price_history'),
+      where('itemId', '==', selectedItemId),
+      orderBy('date', 'asc')
+    )).then(snap => {
+      setFetchedHistory(snap.docs.map(d => ({ ...d.data(), id: d.id } as PriceHistoryDoc)));
+    }).catch(e => {
+      console.error('price_history fetch error:', e);
+      setFetchedHistory([]);
+    }).finally(() => {
+      setHistoryLoading(false);
+    });
+  }, [selectedItemId]);
+
   const variantOptions = useMemo(() => {
     if (!selectedItem) return [];
     if (!selectedItem.variantAttributes || selectedItem.variantAttributes.length === 0) return [];
     return (selectedItem.variantConfigs || [])
-      .filter(vc => vc.latestPrice !== undefined || (vc.priceHistory && vc.priceHistory.length > 0))
+      .filter(vc => vc.latestPrice !== undefined)
       .map(vc => ({
         key: normalizeVariant(vc.variant),
         label: Object.values(vc.variant).join(' / '),
@@ -54,15 +76,19 @@ export const PriceTrends = () => {
 
   const priceHistory: PriceRow[] = useMemo(() => {
     if (!selectedItem) return [];
-    if (selectedItem.variantAttributes && selectedItem.variantAttributes.length > 0) {
+    const isVariantItem = selectedItem.variantAttributes && selectedItem.variantAttributes.length > 0;
+    if (isVariantItem) {
       if (selectedVariantKey === '_base') return [];
-      const config = selectedItem.variantConfigs?.find(
-        vc => normalizeVariant(vc.variant) === selectedVariantKey
-      ) as VariantConfig | undefined;
-      return (config?.priceHistory || []).slice().reverse();
+      return fetchedHistory
+        .filter(d => d.variantKey === selectedVariantKey)
+        .slice()
+        .reverse();
     }
-    return (selectedItem.priceHistory || []).slice().reverse();
-  }, [selectedItem, selectedVariantKey]);
+    return fetchedHistory
+      .filter(d => d.variantKey === null)
+      .slice()
+      .reverse();
+  }, [selectedItem, selectedVariantKey, fetchedHistory]);
 
   const latestPrice = useMemo(() => {
     if (!selectedItem) return undefined;
@@ -193,7 +219,11 @@ export const PriceTrends = () => {
             </Card>
           )}
 
-          {priceHistory.length > 0 ? (
+          {historyLoading ? (
+            <Card className="p-4">
+              <p className="text-sm text-gray-400 font-medium">Loading history...</p>
+            </Card>
+          ) : priceHistory.length > 0 ? (
             <Card className="overflow-hidden">
               <div className="p-4 border-b border-gray-50">
                 <p className="text-[10px] font-black text-gray-400 uppercase tracking-[0.2em]">

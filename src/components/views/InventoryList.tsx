@@ -395,6 +395,11 @@ export const InventoryList = () => {
   const [currentPage, setCurrentPage] = useState(1);
   const [showRequestButton, setShowRequestButton] = useState(false);
   const [consumingItem, setConsumingItem] = useState<{ item: Item; entries: any[] } | null>(null);
+
+  const isWarehouseSelected = useMemo(
+    () => !!selectedJobsiteId && locations.find(l => l.id === selectedJobsiteId)?.type === 'warehouse',
+    [selectedJobsiteId, locations]
+  );
   const [isExportModalOpen, setIsExportModalOpen] = useState(false);
   const [exportCategoryId, setExportCategoryId] = useState<string>('all');
 
@@ -813,20 +818,22 @@ export const InventoryList = () => {
         </div>
 
         <div className="flex items-center justify-between px-1">
-          <label className="flex items-center space-x-2 cursor-pointer">
+          <label className={cn("flex items-center space-x-2", isWarehouseSelected ? "opacity-40 cursor-not-allowed" : "cursor-pointer")}>
             <div
-              onClick={() => setShowRequestButton(!showRequestButton)}
+              onClick={() => !isWarehouseSelected && setShowRequestButton(!showRequestButton)}
               className={cn(
                 "w-8 h-4 rounded-full transition-colors relative",
-                showRequestButton ? "bg-blue-600" : "bg-gray-300"
+                isWarehouseSelected ? "bg-gray-300 cursor-not-allowed" : showRequestButton ? "bg-blue-600" : "bg-gray-300"
               )}
             >
               <div className={cn(
                 "absolute top-0.5 w-3 h-3 rounded-full bg-white transition-transform",
-                showRequestButton ? "translate-x-4" : "translate-x-0.5"
+                showRequestButton && !isWarehouseSelected ? "translate-x-4" : "translate-x-0.5"
               )} />
             </div>
-            <span className="text-[10px] font-bold text-gray-500 uppercase tracking-wider">Show Request Button</span>
+            <span className="text-[10px] font-bold text-gray-500 uppercase tracking-wider">
+              {isWarehouseSelected ? "Requests N/A at Warehouse" : "Show Request Button"}
+            </span>
           </label>
         </div>
 
@@ -899,7 +906,7 @@ export const InventoryList = () => {
                                     setViewingTransactions={setViewingTransactions}
                                     setEditingInventory={setEditingInventory}
                                     setFilter={setFilter}
-                                    showRequestButton={showRequestButton}
+                                    showRequestButton={showRequestButton && !isWarehouseSelected}
                                     setConsumingItem={setConsumingItem}
                                   />
                                 </motion.div>
@@ -945,7 +952,7 @@ export const InventoryList = () => {
                                       </p>
                                     </div>
                                   </div>
-                                  {showRequestButton && (
+                                  {showRequestButton && !isWarehouseSelected && (
                                     <button
                                       onClick={(e) => {
                                         e.stopPropagation();

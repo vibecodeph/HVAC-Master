@@ -1,5 +1,5 @@
 import { useState, useMemo } from 'react';
-import { TrendingUp, ChevronDown, ChevronUp } from 'lucide-react';
+import { TrendingUp, ChevronDown, ChevronUp, Search, Package } from 'lucide-react';
 import { useData } from '../../../App';
 import { normalizeVariant } from '../../../lib/utils';
 import { Item, VariantConfig, PriceHistoryEntry } from '../../../types';
@@ -26,11 +26,17 @@ export const PriceTrends = () => {
   const [selectedItemId, setSelectedItemId] = useState('');
   const [selectedVariantKey, setSelectedVariantKey] = useState('_base');
   const [expandedSource, setExpandedSource] = useState<string | null>(null);
+  const [itemSearch, setItemSearch] = useState('');
+  const [isDropdownOpen, setIsDropdownOpen] = useState(false);
 
-  const activeItems = useMemo(() =>
-    [...items].filter(i => i.isActive).sort((a, b) => a.name.localeCompare(b.name)),
-    [items]
-  );
+  const filteredItems = useMemo(() => {
+    const base = items.filter(i => i.isActive);
+    if (!itemSearch.trim()) return [...base].sort((a, b) => a.name.localeCompare(b.name));
+    const s = itemSearch.toLowerCase();
+    return base
+      .filter(i => i.name.toLowerCase().includes(s) || i.tags?.some(t => t.toLowerCase().includes(s)))
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }, [items, itemSearch]);
 
   const selectedItem = items.find(i => i.id === selectedItemId) as Item | undefined;
 
@@ -97,19 +103,60 @@ export const PriceTrends = () => {
       <Card className="p-4 space-y-4">
         <div className="space-y-1">
           <label className="text-xs font-bold text-gray-400 uppercase tracking-wider pl-1">Select Item</label>
-          <select
-            value={selectedItemId}
-            onChange={e => {
-              setSelectedItemId(e.target.value);
-              setSelectedVariantKey('_base');
-            }}
-            className="w-full p-4 bg-gray-100 rounded-2xl text-sm font-medium outline-none focus:ring-2 focus:ring-blue-500 appearance-none"
-          >
-            <option value="">Choose an item...</option>
-            {activeItems.map(item => (
-              <option key={item.id} value={item.id}>{item.name}</option>
-            ))}
-          </select>
+          {isDropdownOpen && (
+            <div className="fixed inset-0 z-[90]" onClick={() => setIsDropdownOpen(false)} />
+          )}
+          <div className="relative group z-[95]">
+            <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400 group-focus-within:text-blue-500 transition-colors z-10" size={18} />
+            <input
+              type="text"
+              placeholder="Search items..."
+              value={selectedItemId ? (selectedItem?.name || '') : itemSearch}
+              onFocus={() => {
+                setIsDropdownOpen(true);
+                if (selectedItemId) {
+                  setItemSearch('');
+                  setSelectedItemId('');
+                  setSelectedVariantKey('_base');
+                }
+              }}
+              onChange={e => {
+                setItemSearch(e.target.value);
+                setSelectedItemId('');
+                setSelectedVariantKey('_base');
+                setIsDropdownOpen(true);
+              }}
+              className="w-full pl-12 pr-4 py-4 bg-gray-100 rounded-2xl text-sm font-medium outline-none focus:ring-2 focus:ring-blue-500 transition-all placeholder:text-gray-400"
+            />
+            {isDropdownOpen && (
+              <div className="absolute top-full left-0 right-0 mt-2 bg-white rounded-2xl shadow-2xl border border-gray-100 overflow-hidden z-[100] max-h-[250px] overflow-y-auto no-scrollbar">
+                {filteredItems.length > 0 ? (
+                  <div className="p-2 space-y-1">
+                    {filteredItems.map(i => (
+                      <button
+                        key={i.id}
+                        type="button"
+                        onClick={() => {
+                          setSelectedItemId(i.id);
+                          setSelectedVariantKey('_base');
+                          setItemSearch('');
+                          setIsDropdownOpen(false);
+                        }}
+                        className="w-full p-3 text-left text-sm font-bold text-gray-900 hover:bg-blue-50 hover:text-blue-700 rounded-xl transition-colors"
+                      >
+                        {i.name}
+                      </button>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="p-8 text-center text-gray-400">
+                    <Package className="mx-auto mb-2 opacity-20" size={32} />
+                    <p className="text-xs font-bold uppercase tracking-widest">No items found</p>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
         </div>
 
         {selectedItem && variantOptions.length > 0 && (

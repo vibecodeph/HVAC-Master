@@ -284,7 +284,7 @@ export const WorkerRequestForm = ({ items, locations, uoms, inventory, profile, 
     if (mode === 'pullout' && jobsiteId) {
       const initial: Record<string, number> = {};
       inventory.filter(inv => inv.locationId === jobsiteId && inv.quantity > 0).forEach(inv => {
-        initial[inv.id] = inv.quantity;
+        initial[inv.id] = 0;
       });
       setPulloutQuantities(initial);
     }

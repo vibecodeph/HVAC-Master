@@ -1,7 +1,8 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.syncUserClaims = exports.manualArchiveRequests = exports.archiveOldRequests = exports.deleteRole = exports.createRole = exports.updateRolePermissions = void 0;
+exports.syncUserClaims = exports.forceSignOutAllUsers = exports.manualArchiveRequests = exports.archiveOldRequests = exports.deleteRole = exports.createRole = exports.updateRolePermissions = void 0;
 const firestore_1 = require("firebase-functions/v2/firestore");
+const https_1 = require("firebase-functions/v2/https");
 const auth_1 = require("firebase-admin/auth");
 const app_1 = require("firebase-admin/app");
 (0, app_1.initializeApp)();
@@ -12,6 +13,22 @@ Object.defineProperty(exports, "deleteRole", { enumerable: true, get: function (
 var requestArchiver_1 = require("./requestArchiver");
 Object.defineProperty(exports, "archiveOldRequests", { enumerable: true, get: function () { return requestArchiver_1.archiveOldRequests; } });
 Object.defineProperty(exports, "manualArchiveRequests", { enumerable: true, get: function () { return requestArchiver_1.manualArchiveRequests; } });
+exports.forceSignOutAllUsers = (0, https_1.onCall)(async (request) => {
+    if (request.auth?.token?.["role"] !== "admin") {
+        throw new https_1.HttpsError("permission-denied", "Only admins can force sign out all users.");
+    }
+    let revokedCount = 0;
+    let pageToken;
+    do {
+        const listResult = await (0, auth_1.getAuth)().listUsers(1000, pageToken);
+        await Promise.all(listResult.users.map(async (user) => {
+            await (0, auth_1.getAuth)().revokeRefreshTokens(user.uid);
+            revokedCount++;
+        }));
+        pageToken = listResult.pageToken;
+    } while (pageToken);
+    return { revokedCount };
+});
 exports.syncUserClaims = (0, firestore_1.onDocumentWritten)({
     document: "users/{userId}",
     database: "ai-studio-bd36edda-8fe9-4e09-b9a3-dfe452f56d22",

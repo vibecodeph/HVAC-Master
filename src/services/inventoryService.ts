@@ -2676,7 +2676,7 @@ export const bulkUpdateRequests = async (
 
 export const clearInventoryData = async (includeBOQ: boolean = true, includePOs: boolean = false) => {
   try {
-    const collectionsToClear = ['inventory', 'requests', 'transactions', 'unplanned_stock', 'supplier_pricing'];
+    const collectionsToClear = ['inventory', 'requests', 'transactions', 'unplanned_stock', 'supplier_pricing', 'suppliers_invoices'];
     if (includeBOQ) {
       collectionsToClear.push('boq');
     }
@@ -2710,6 +2710,8 @@ export const clearInventoryData = async (includeBOQ: boolean = true, includePOs:
           return updateDoc(d.ref, {
             items: resetItems,
             status: 'sent',
+            amountPaid: 0,
+            paymentStatus: 'unpaid',
             updatedAt: serverTimestamp(),
             updatedBy: auth.currentUser?.uid || 'system'
           });

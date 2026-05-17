@@ -817,25 +817,25 @@ export const InventoryList = () => {
           </div>
         </div>
 
-        <div className="flex items-center justify-between px-1">
-          <label className={cn("flex items-center space-x-2", isWarehouseSelected ? "opacity-40 cursor-not-allowed" : "cursor-pointer")}>
-            <div
-              onClick={() => !isWarehouseSelected && setShowRequestButton(!showRequestButton)}
-              className={cn(
-                "w-8 h-4 rounded-full transition-colors relative",
-                isWarehouseSelected ? "bg-gray-300 cursor-not-allowed" : showRequestButton ? "bg-blue-600" : "bg-gray-300"
-              )}
-            >
-              <div className={cn(
-                "absolute top-0.5 w-3 h-3 rounded-full bg-white transition-transform",
-                showRequestButton && !isWarehouseSelected ? "translate-x-4" : "translate-x-0.5"
-              )} />
-            </div>
-            <span className="text-[10px] font-bold text-gray-500 uppercase tracking-wider">
-              {isWarehouseSelected ? "Requests N/A at Warehouse" : "Show Request Button"}
-            </span>
-          </label>
-        </div>
+        {!isWarehouseSelected && (
+          <div className="flex items-center justify-between px-1">
+            <label className="flex items-center space-x-2 cursor-pointer">
+              <div
+                onClick={() => setShowRequestButton(!showRequestButton)}
+                className={cn(
+                  "w-8 h-4 rounded-full transition-colors relative",
+                  showRequestButton ? "bg-blue-600" : "bg-gray-300"
+                )}
+              >
+                <div className={cn(
+                  "absolute top-0.5 w-3 h-3 rounded-full bg-white transition-transform",
+                  showRequestButton ? "translate-x-4" : "translate-x-0.5"
+                )} />
+              </div>
+              <span className="text-[10px] font-bold text-gray-500 uppercase tracking-wider">Show Request Button</span>
+            </label>
+          </div>
+        )}
 
         <div className="space-y-6">
           <AnimatePresence mode="popLayout">

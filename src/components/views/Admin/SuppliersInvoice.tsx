@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { Navigate } from 'react-router-dom';
 import { Search, Plus, X, ChevronLeft, Loader2, Trash2, Pencil, Receipt, CreditCard } from 'lucide-react';
 import { Timestamp } from 'firebase/firestore';
@@ -87,6 +87,7 @@ export const SuppliersInvoiceView = () => {
   const [formNotes, setFormNotes] = useState('');
   const [formItems, setFormItems] = useState<FormItemState[]>([emptyFormItem()]);
   const [formSubmitting, setFormSubmitting] = useState(false);
+  const submittingRef = useRef(false);
   const [formError, setFormError] = useState<string | null>(null);
   const [pendingInvoiceData, setPendingInvoiceData] = useState<any | null>(null);
 
@@ -479,6 +480,8 @@ export const SuppliersInvoiceView = () => {
       return;
     }
 
+    if (submittingRef.current) return;
+    submittingRef.current = true;
     setFormSubmitting(true);
     try {
       if (editingInvoice) {
@@ -491,12 +494,14 @@ export const SuppliersInvoiceView = () => {
     } catch (e: any) {
       setFormError(e.message || 'Failed to save invoice');
     } finally {
+      submittingRef.current = false;
       setFormSubmitting(false);
     }
   };
 
   const executeInvoiceSubmit = async (updateLatestPrice: boolean) => {
-    if (!pendingInvoiceData) return;
+    if (!pendingInvoiceData || submittingRef.current) return;
+    submittingRef.current = true;
     const data = { ...pendingInvoiceData, updateLatestPrice };
     setPendingInvoiceData(null);
     setFormSubmitting(true);
@@ -507,6 +512,7 @@ export const SuppliersInvoiceView = () => {
     } catch (e: any) {
       setFormError(e.message || 'Failed to save invoice');
     } finally {
+      submittingRef.current = false;
       setFormSubmitting(false);
     }
   };

@@ -42,8 +42,8 @@ export const UsersManagementView = () => {
     // For non-admins (e.g. Engineers), filter out inactive users
     if (!u.isActive) return false;
 
-    // Engineers only see workers
-    if (isEngineer && u.role !== 'worker') return false;
+    // Engineers see all workers and engineers
+    if (isEngineer && u.role !== 'worker' && u.role !== 'engineer') return false;
 
     return true;
   });

@@ -396,10 +396,12 @@ export const InventoryList = () => {
   const [showRequestButton, setShowRequestButton] = useState(false);
   const [consumingItem, setConsumingItem] = useState<{ item: Item; entries: any[] } | null>(null);
 
-  const isWarehouseSelected = useMemo(
-    () => !!selectedJobsiteId && locations.find(l => l.id === selectedJobsiteId)?.type === 'warehouse',
-    [selectedJobsiteId, locations]
-  );
+  const isMainWarehouseSelected = useMemo(() => {
+    if (!selectedJobsiteId) return false;
+    const mainWarehouse = locations.find(l => l.isActive && l.name.toLowerCase() === 'main warehouse')
+      || locations.find(l => l.type === 'warehouse' && l.isActive && !l.parentId);
+    return !!mainWarehouse && mainWarehouse.id === selectedJobsiteId;
+  }, [selectedJobsiteId, locations]);
   const [isExportModalOpen, setIsExportModalOpen] = useState(false);
   const [exportCategoryId, setExportCategoryId] = useState<string>('all');
 
@@ -817,7 +819,7 @@ export const InventoryList = () => {
           </div>
         </div>
 
-        {!isWarehouseSelected && (
+        {!isMainWarehouseSelected && (
           <div className="flex items-center justify-between px-1">
             <label className="flex items-center space-x-2 cursor-pointer">
               <div
@@ -906,7 +908,7 @@ export const InventoryList = () => {
                                     setViewingTransactions={setViewingTransactions}
                                     setEditingInventory={setEditingInventory}
                                     setFilter={setFilter}
-                                    showRequestButton={showRequestButton && !isWarehouseSelected}
+                                    showRequestButton={showRequestButton && !isMainWarehouseSelected}
                                     setConsumingItem={setConsumingItem}
                                   />
                                 </motion.div>
@@ -952,7 +954,7 @@ export const InventoryList = () => {
                                       </p>
                                     </div>
                                   </div>
-                                  {showRequestButton && !isWarehouseSelected && (
+                                  {showRequestButton && !isMainWarehouseSelected && (
                                     <button
                                       onClick={(e) => {
                                         e.stopPropagation();

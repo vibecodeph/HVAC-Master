@@ -474,6 +474,20 @@ export const SuppliersInvoiceView = () => {
       addToInventory,
     };
 
+    if (!editingInvoice) {
+      const normalizedBill = formBillNumber.trim().toLowerCase();
+      const duplicate = invoices.some(inv =>
+        inv.billNumber.toLowerCase() === normalizedBill &&
+        (formSupplierId
+          ? inv.supplierId === formSupplierId
+          : inv.supplierName.toLowerCase().trim() === formSupplierName.trim().toLowerCase())
+      );
+      if (duplicate) {
+        setFormError('An invoice with this bill number already exists for this supplier.');
+        return;
+      }
+    }
+
     if (!editingInvoice && addToInventory !== false) {
       // For new invoices that add to inventory, ask whether to update latest price
       setPendingInvoiceData(formData);
@@ -557,10 +571,14 @@ export const SuppliersInvoiceView = () => {
             <h3 className="text-[10px] font-black text-gray-400 uppercase tracking-[0.2em]">Invoice Details</h3>
 
             <div className="grid grid-cols-2 gap-3">
-              {/* Supplier — searchable dropdown */}
+              {/* Supplier — searchable dropdown (locked on edit) */}
               <div className="col-span-2 space-y-1.5">
                 <label className="text-xs font-bold text-gray-400 uppercase tracking-wider">Supplier Name *</label>
-                {formSupplierId ? (
+                {editingInvoice ? (
+                  <div className="p-2.5 bg-gray-100 rounded-xl border border-gray-200 flex items-center">
+                    <span className="text-sm font-bold text-gray-500">{formSupplierName}</span>
+                  </div>
+                ) : formSupplierId ? (
                   <div className="p-2.5 bg-blue-50 rounded-xl border border-blue-100 flex items-center justify-between">
                     <span className="text-sm font-bold text-gray-900">{formSupplierName}</span>
                     <button
@@ -612,13 +630,19 @@ export const SuppliersInvoiceView = () => {
 
               <div className="space-y-1.5">
                 <label className="text-xs font-bold text-gray-400 uppercase tracking-wider">Bill Number *</label>
-                <input
-                  type="text"
-                  value={formBillNumber}
-                  onChange={e => setFormBillNumber(e.target.value)}
-                  placeholder="e.g. INV-2025-001"
-                  className="w-full p-2.5 bg-gray-100 rounded-xl text-sm outline-none focus:ring-2 focus:ring-blue-500"
-                />
+                {editingInvoice ? (
+                  <div className="p-2.5 bg-gray-100 rounded-xl border border-gray-200">
+                    <span className="text-sm font-bold text-gray-500">{formBillNumber}</span>
+                  </div>
+                ) : (
+                  <input
+                    type="text"
+                    value={formBillNumber}
+                    onChange={e => setFormBillNumber(e.target.value)}
+                    placeholder="e.g. INV-2025-001"
+                    className="w-full p-2.5 bg-gray-100 rounded-xl text-sm outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                )}
               </div>
 
               <div className="space-y-1.5">

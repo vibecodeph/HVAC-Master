@@ -48,7 +48,14 @@
       "Bash(Get-Process -Name \"node\" -ErrorAction SilentlyContinue)",
       "Bash(Select-Object Id, ProcessName, CPU)",
       "Bash(pkill -f \"vite\")",
-      "Bash(pkill -f \"node\")"
+      "Bash(pkill -f \"node\")",
+      "Bash(node scripts/generate-pwa-icons.js)",
+      "Bash(mv scripts/generate-pwa-icons.js scripts/generate-pwa-icons.cjs)",
+      "Bash(copy scripts\\\\generate-pwa-icons.js scripts\\\\generate-pwa-icons.cjs)",
+      "PowerShell(Copy-Item *)",
+      "Bash(node scripts/generate-pwa-icons.cjs)",
+      "Bash(node -e \"require\\('firebase-admin'\\)\")",
+      "Bash(node -e \"require\\('C:/Users/Edwin/Documents/PROJECTS/HVAC-Master/functions/node_modules/firebase-admin'\\)\")"
     ]
   }
 }

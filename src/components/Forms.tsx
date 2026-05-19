@@ -3761,6 +3761,14 @@ export const PurchaseOrderForm = ({ items, locations, uoms, profile, initialData
               </span>
             </div>
           )}
+          {status === 'received' && poItems.some(pi => (pi.receivedQuantity || 0) < pi.quantity) && (
+            <div className="p-4 bg-amber-50 border border-amber-200 rounded-2xl text-xs font-bold text-amber-700 flex items-center gap-2">
+              <span>⚠</span>
+              <span>
+                {poItems.filter(pi => (pi.receivedQuantity || 0) < pi.quantity).length} item(s) have not been fully received. Double-check before saving as Received.
+              </span>
+            </div>
+          )}
           {errorMsg && (
             <div className="flex items-center justify-between p-3 bg-red-50 border border-red-200 rounded-2xl text-sm text-red-700">
               <span>{errorMsg}</span>

@@ -20,7 +20,7 @@ import { deleteField } from 'firebase/firestore';
 export const MetadataAdminView = () => {
   const { type } = useParams<{ type: string }>();
   const navigate = useNavigate();
-  const { profile } = useAuth();
+  const { profile, isOnline } = useAuth();
   const { categories, locations, uoms, tags, items, inventory, transactions, assets } = useData();
   const [showInactive, setShowInactive] = useState(false);
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
@@ -560,9 +560,10 @@ export const MetadataAdminView = () => {
               />
             </div>
 
-            <button 
-              type="submit" 
-              disabled={isSubmitting}
+            <button
+              type="submit"
+              disabled={isSubmitting || !isOnline}
+              title={!isOnline ? 'You are offline' : undefined}
               className="w-full py-4 bg-blue-600 text-white rounded-2xl font-bold flex items-center justify-center space-x-2 disabled:opacity-50"
             >
               {isSubmitting ? <Loader2 className="animate-spin" size={20} /> : <Check size={20} />}

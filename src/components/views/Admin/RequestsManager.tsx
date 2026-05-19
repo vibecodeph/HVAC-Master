@@ -86,7 +86,7 @@ interface DeleteState {
 }
 
 export const RequestsManager = () => {
-  const { profile } = useAuth();
+  const { profile, isOnline } = useAuth();
   const { items, locations, uoms, categories, users } = useData();
 
   const [records, setRecords] = useState<Request[]>([]);
@@ -432,7 +432,8 @@ export const RequestsManager = () => {
             <div className="flex gap-1.5">
               <button
                 onClick={saveEdit}
-                disabled={edit.saving}
+                disabled={edit.saving || !isOnline}
+                title={!isOnline ? 'You are offline' : undefined}
                 className="flex items-center gap-1 px-2.5 py-1 bg-gray-900 text-white rounded-lg text-[10px] font-bold active:scale-95 transition-transform disabled:opacity-50"
               >
                 {edit.saving ? <Loader2 size={9} className="animate-spin" /> : <CheckCircle size={9} />}
@@ -781,7 +782,8 @@ export const RequestsManager = () => {
 
               <button
                 onClick={handleBulkUpdate}
-                disabled={!bulkValue || bulkApplying}
+                disabled={!bulkValue || bulkApplying || !isOnline}
+                title={!isOnline ? 'You are offline' : undefined}
                 className="flex items-center gap-1.5 px-3 py-1.5 bg-amber-600 text-white rounded-xl text-[10px] font-black uppercase tracking-widest active:scale-95 transition-transform disabled:opacity-40"
               >
                 {bulkApplying && <Loader2 size={10} className="animate-spin" />}
@@ -971,7 +973,8 @@ export const RequestsManager = () => {
                         <div className="flex gap-2">
                           <button
                             onClick={confirmDelete}
-                            disabled={del.deleting}
+                            disabled={del.deleting || !isOnline}
+                            title={!isOnline ? 'You are offline' : undefined}
                             className="flex items-center gap-1 px-3 py-1.5 bg-red-600 text-white rounded-xl text-[10px] font-black uppercase tracking-widest active:scale-95 transition-transform disabled:opacity-50"
                           >
                             {del.deleting ? <Loader2 size={10} className="animate-spin" /> : <Trash2 size={10} />}

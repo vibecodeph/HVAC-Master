@@ -13,7 +13,7 @@ import { PickingModal, RequestApprovalModal, DeliveryQuantityEditModal } from '.
 import { Request } from '../../types';
 
 export const RequestsView = () => {
-  const { profile } = useAuth();
+  const { profile, isOnline } = useAuth();
   const { items, locations, uoms, users, inventory, requests, loadMoreRequests, requestsHasMore } = useData();
   const [searchParams] = useSearchParams();
   const tabParam = searchParams.get('tab');
@@ -591,7 +591,8 @@ export const RequestsView = () => {
                   </div>
                   {filter === 'approved' && (profile?.role === 'warehouseman' || profile?.role === 'admin') && jobsiteRequests.length > 0 && (
                     <button
-                      disabled={isProcessing}
+                      disabled={isProcessing || !isOnline}
+                      title={!isOnline ? 'You are offline' : undefined}
                       onClick={() => {
                         setPickingRequests(jobsiteRequests);
                         setIsPickingModalOpen(true);
@@ -603,7 +604,8 @@ export const RequestsView = () => {
                   )}
                   {filter === 'pending' && (profile?.role === 'admin' || profile?.role === 'manager' || profile?.role === 'warehouseman' || profile?.role === 'engineer') && jobsiteRequests.length > 0 && (
                     <button
-                      disabled={isProcessing}
+                      disabled={isProcessing || !isOnline}
+                      title={!isOnline ? 'You are offline' : undefined}
                       onClick={() => handleApproveBulk(jobsiteRequests.map(r => r.id))}
                       className="text-[10px] font-black text-blue-600 uppercase tracking-widest hover:underline active:scale-95 transition-transform disabled:opacity-50"
                     >
@@ -612,7 +614,8 @@ export const RequestsView = () => {
                   )}
                   {filter === 'for delivery' && profile?.role !== 'warehouseman' && jobsiteRequests.length > 0 && (
                     <button
-                      disabled={isProcessing}
+                      disabled={isProcessing || !isOnline}
+                      title={!isOnline ? 'You are offline' : undefined}
                       onClick={() => handleReceive(jobsiteRequests.map(r => r.id))}
                       className="text-[10px] font-black text-blue-600 uppercase tracking-widest hover:underline active:scale-95 transition-transform disabled:opacity-50"
                     >
@@ -701,44 +704,46 @@ export const RequestsView = () => {
                         <div className="flex space-x-2 self-end shrink-0">
                           {filter === 'pending' && (profile?.role === 'admin' || profile?.role === 'manager' || profile?.role === 'warehouseman' || profile?.role === 'engineer') && (
                             <>
-                              <button onClick={() => setRejectingRequest(r)} className="w-10 h-10 flex items-center justify-center text-red-600 bg-red-50 rounded-xl active:scale-95 transition-transform">
+                              <button disabled={!isOnline} title={!isOnline ? 'You are offline' : 'Reject'} onClick={() => setRejectingRequest(r)} className="w-10 h-10 flex items-center justify-center text-red-600 bg-red-50 rounded-xl active:scale-95 transition-transform disabled:opacity-50">
                                 <X size={16} />
                               </button>
-                              <button onClick={() => setEditingRequest(r)} className="w-10 h-10 flex items-center justify-center text-blue-600 bg-blue-50 rounded-xl active:scale-95 transition-transform">
+                              <button disabled={!isOnline} title={!isOnline ? 'You are offline' : 'Approve'} onClick={() => setEditingRequest(r)} className="w-10 h-10 flex items-center justify-center text-blue-600 bg-blue-50 rounded-xl active:scale-95 transition-transform disabled:opacity-50">
                                 <Check size={16} />
                               </button>
                             </>
                           )}
                           {filter === 'approved' && (profile?.role === 'warehouseman' || profile?.role === 'admin') && (
                             <button
+                              disabled={!isOnline}
+                              title={!isOnline ? 'You are offline' : undefined}
                               onClick={() => { setPickingRequests([r]); setIsPickingModalOpen(true); }}
-                              className="px-4 h-10 bg-blue-600 text-white rounded-xl text-xs font-black uppercase tracking-widest active:scale-95 transition-transform"
+                              className="px-4 h-10 bg-blue-600 text-white rounded-xl text-xs font-black uppercase tracking-widest active:scale-95 transition-transform disabled:opacity-50"
                             >
                               Pick
                             </button>
                           )}
                           {canCancelApproval(r) && (
-                            <button onClick={() => handleCancelApproval(r.id)} title="Cancel Approval" className="w-9 h-9 flex items-center justify-center text-gray-400 bg-gray-50 rounded-xl active:scale-95 transition-transform hover:text-amber-500 hover:bg-amber-50">
+                            <button disabled={!isOnline} title={!isOnline ? 'You are offline' : 'Cancel Approval'} onClick={() => handleCancelApproval(r.id)} className="w-9 h-9 flex items-center justify-center text-gray-400 bg-gray-50 rounded-xl active:scale-95 transition-transform hover:text-amber-500 hover:bg-amber-50 disabled:opacity-50">
                               <RotateCcw size={14} />
                             </button>
                           )}
                           {filter === 'for delivery' && profile?.role !== 'warehouseman' && (
-                            <button onClick={() => handleReceive([r.id])} className="px-4 h-10 bg-blue-600 text-white rounded-xl text-xs font-black uppercase tracking-widest active:scale-95 transition-transform">
+                            <button disabled={!isOnline} title={!isOnline ? 'You are offline' : undefined} onClick={() => handleReceive([r.id])} className="px-4 h-10 bg-blue-600 text-white rounded-xl text-xs font-black uppercase tracking-widest active:scale-95 transition-transform disabled:opacity-50">
                               Receive
                             </button>
                           )}
                           {canUnpick(r) && (
-                            <button onClick={() => handleUnpick(r.id)} title="Unpick" className="w-9 h-9 flex items-center justify-center text-gray-400 bg-gray-50 rounded-xl active:scale-95 transition-transform hover:text-amber-500 hover:bg-amber-50">
+                            <button disabled={!isOnline} title={!isOnline ? 'You are offline' : 'Unpick'} onClick={() => handleUnpick(r.id)} className="w-9 h-9 flex items-center justify-center text-gray-400 bg-gray-50 rounded-xl active:scale-95 transition-transform hover:text-amber-500 hover:bg-amber-50 disabled:opacity-50">
                               <RotateCcw size={14} />
                             </button>
                           )}
                           {canEditRequest(r) && (
-                            <button onClick={() => openEditModal(r)} title="Edit request" className="w-9 h-9 flex items-center justify-center text-gray-400 bg-gray-50 rounded-xl active:scale-95 transition-transform hover:text-blue-500 hover:bg-blue-50">
+                            <button disabled={!isOnline} title={!isOnline ? 'You are offline' : 'Edit request'} onClick={() => openEditModal(r)} className="w-9 h-9 flex items-center justify-center text-gray-400 bg-gray-50 rounded-xl active:scale-95 transition-transform hover:text-blue-500 hover:bg-blue-50 disabled:opacity-50">
                               <Pencil size={14} />
                             </button>
                           )}
                           {canDeleteRequest(r) && (
-                            <button onClick={() => setDeletingRequest(r)} title="Delete request" className="w-9 h-9 flex items-center justify-center text-gray-400 bg-gray-50 rounded-xl active:scale-95 transition-transform hover:text-red-500 hover:bg-red-50">
+                            <button disabled={!isOnline} title={!isOnline ? 'You are offline' : 'Delete request'} onClick={() => setDeletingRequest(r)} className="w-9 h-9 flex items-center justify-center text-gray-400 bg-gray-50 rounded-xl active:scale-95 transition-transform hover:text-red-500 hover:bg-red-50 disabled:opacity-50">
                               <Trash2 size={14} />
                             </button>
                           )}
@@ -829,9 +834,11 @@ export const RequestsView = () => {
               <button onClick={() => setRejectingRequest(null)} className="flex-1 py-4 bg-gray-100 text-gray-900 rounded-2xl font-bold uppercase tracking-widest text-xs active:scale-95 transition-transform">
                 Cancel
               </button>
-              <button 
+              <button
                 onClick={() => handleReject(rejectingRequest)}
-                className="flex-1 py-4 bg-red-600 text-white rounded-2xl font-bold uppercase tracking-widest text-xs active:scale-95 transition-transform"
+                disabled={!isOnline}
+                title={!isOnline ? 'You are offline' : undefined}
+                className="flex-1 py-4 bg-red-600 text-white rounded-2xl font-bold uppercase tracking-widest text-xs active:scale-95 transition-transform disabled:opacity-50"
               >
                 Yes, Reject
               </button>
@@ -1018,7 +1025,7 @@ export const RequestsView = () => {
                   Cancel
                 </button>
                 <button
-                  disabled={editQty <= 0 || !editItemId || (() => {
+                  disabled={!isOnline || editQty <= 0 || !editItemId || (() => {
                     if (!editItem?.variantAttributes?.length) return false;
                     const dimReqs = editItem.variantConfigs?.[0]?.dimensionRequirements;
                     return editItem.variantAttributes.some(attr => {
@@ -1026,6 +1033,7 @@ export const RequestsView = () => {
                       return isRequired && !editVariant[attr.name];
                     });
                   })()}
+                  title={!isOnline ? 'You are offline' : undefined}
                   onClick={handleEditSave}
                   className="flex-1 py-4 bg-blue-600 text-white rounded-2xl font-bold uppercase tracking-widest text-xs active:scale-95 transition-transform disabled:opacity-50"
                 >
@@ -1063,7 +1071,9 @@ export const RequestsView = () => {
               {!deletingRequest.batchId && (
                 <button
                   onClick={handleDeleteRequest}
-                  className="flex-1 py-4 bg-red-600 text-white rounded-2xl font-bold uppercase tracking-widest text-xs active:scale-95 transition-transform"
+                  disabled={!isOnline}
+                  title={!isOnline ? 'You are offline' : undefined}
+                  className="flex-1 py-4 bg-red-600 text-white rounded-2xl font-bold uppercase tracking-widest text-xs active:scale-95 transition-transform disabled:opacity-50"
                 >
                   Yes, Delete
                 </button>

@@ -109,16 +109,18 @@ interface AuthContextType {
   loading: boolean;
   isSigningIn: boolean;
   authError: string | null;
+  isOnline: boolean;
   signIn: (method?: 'popup' | 'redirect') => Promise<void>;
   logout: () => Promise<void>;
 }
 
-const AuthContext = createContext<AuthContextType>({ 
-  user: null, 
-  profile: null, 
+const AuthContext = createContext<AuthContextType>({
+  user: null,
+  profile: null,
   loading: true,
   isSigningIn: false,
   authError: null,
+  isOnline: true,
   signIn: async (method?: 'popup' | 'redirect') => {},
   logout: async () => {}
 });
@@ -165,7 +167,19 @@ const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   const [loading, setLoading] = useState(true);
   const [isSigningIn, setIsSigningIn] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
+  const [isOnline, setIsOnline] = useState(navigator.onLine);
   const prevClaimsRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    const handleOnline = () => setIsOnline(true);
+    const handleOffline = () => setIsOnline(false);
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
+  }, []);
 
   const signIn = async (method: 'popup' | 'redirect' = 'popup') => {
     if (isSigningIn) return;
@@ -282,7 +296,7 @@ const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   }, [user]);
 
   return (
-    <AuthContext.Provider value={{ user, profile, loading, isSigningIn, authError, signIn, logout }}>
+    <AuthContext.Provider value={{ user, profile, loading, isSigningIn, authError, isOnline, signIn, logout }}>
       {children}
     </AuthContext.Provider>
   );

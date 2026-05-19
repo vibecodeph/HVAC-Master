@@ -12,7 +12,7 @@ import { cn } from '../../lib/utils';
 import { Modal } from '../common/Modal';
 
 export const SettingsView = () => {
-  const { profile, logout } = useAuth();
+  const { profile, logout, isOnline } = useAuth();
   const { locations, systemConfig } = useData();
   const navigate = useNavigate();
   const [isClearingData, setIsClearingData] = useState(false);
@@ -484,12 +484,13 @@ export const SettingsView = () => {
                     <p className="text-sm text-slate-500">Restrict access for non-admin users</p>
                   </div>
                   <button
-                    disabled={isUpdatingConfig}
+                    disabled={isUpdatingConfig || !isOnline}
+                    title={!isOnline ? 'You are offline' : undefined}
                     onClick={handleToggleMaintenance}
                     className={cn(
                       "w-12 h-6 rounded-full transition-colors relative shrink-0",
                       systemConfig?.maintenanceMode ? "bg-blue-600" : "bg-gray-200",
-                      isUpdatingConfig && "opacity-50 cursor-not-allowed"
+                      (isUpdatingConfig || !isOnline) && "opacity-50 cursor-not-allowed"
                     )}
                   >
                     <div className={cn(
@@ -505,12 +506,13 @@ export const SettingsView = () => {
                     <p className="text-sm text-slate-500">Skip approval for new sign-ups</p>
                   </div>
                   <button
-                    disabled={isUpdatingConfig}
+                    disabled={isUpdatingConfig || !isOnline}
+                    title={!isOnline ? 'You are offline' : undefined}
                     onClick={handleToggleAutoApprove}
                     className={cn(
                       "w-12 h-6 rounded-full transition-colors relative shrink-0",
                       systemConfig?.autoApproveNewUsers ? "bg-green-500" : "bg-gray-200",
-                      isUpdatingConfig && "opacity-50 cursor-not-allowed"
+                      (isUpdatingConfig || !isOnline) && "opacity-50 cursor-not-allowed"
                     )}
                   >
                     <div className={cn(
@@ -584,10 +586,11 @@ export const SettingsView = () => {
                     <input ref={restoreInputRef} type="file" accept=".json" className="hidden" onChange={handleRestoreFileSelect} />
                     <button
                       onClick={() => restoreInputRef.current?.click()}
-                      disabled={isBackingUp || isRestoring}
+                      disabled={isBackingUp || isRestoring || !isOnline}
+                      title={!isOnline ? 'You are offline' : undefined}
                       className={cn(
                         'flex-1 rounded-lg border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50 transition-colors flex items-center justify-center gap-1.5',
-                        (isBackingUp || isRestoring) && 'opacity-60 cursor-not-allowed',
+                        (isBackingUp || isRestoring || !isOnline) && 'opacity-60 cursor-not-allowed',
                       )}
                     >
                       {isRestoring ? <Loader2 size={14} className="animate-spin" /> : <Upload size={14} />}
@@ -616,10 +619,11 @@ export const SettingsView = () => {
                     <input ref={requestsRestoreInputRef} type="file" accept=".json" className="hidden" onChange={handleRequestsRestoreFileSelect} />
                     <button
                       onClick={() => requestsRestoreInputRef.current?.click()}
-                      disabled={isBackingUpRequests || isRestoringRequests}
+                      disabled={isBackingUpRequests || isRestoringRequests || !isOnline}
+                      title={!isOnline ? 'You are offline' : undefined}
                       className={cn(
                         'flex-1 rounded-lg border border-orange-200 bg-orange-50 px-4 py-2.5 text-sm font-semibold text-orange-700 hover:bg-orange-100 transition-colors flex items-center justify-center gap-1.5',
-                        (isBackingUpRequests || isRestoringRequests) && 'opacity-60 cursor-not-allowed',
+                        (isBackingUpRequests || isRestoringRequests || !isOnline) && 'opacity-60 cursor-not-allowed',
                       )}
                     >
                       {isRestoringRequests ? <Loader2 size={14} className="animate-spin" /> : <Upload size={14} />}
@@ -756,10 +760,11 @@ export const SettingsView = () => {
                 <div className="flex gap-3">
                   <button
                     onClick={() => handleMigratePriceHistory('copy')}
-                    disabled={isMigratingPH}
+                    disabled={isMigratingPH || !isOnline}
+                    title={!isOnline ? 'You are offline' : undefined}
                     className={cn(
                       'rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-blue-700 transition-colors shadow-sm flex items-center gap-1.5',
-                      isMigratingPH && 'opacity-60 cursor-not-allowed',
+                      (isMigratingPH || !isOnline) && 'opacity-60 cursor-not-allowed',
                     )}
                   >
                     {isMigratingPH && !phCopied ? <Loader2 size={14} className="animate-spin" /> : <Database size={14} />}
@@ -767,10 +772,11 @@ export const SettingsView = () => {
                   </button>
                   <button
                     onClick={() => handleMigratePriceHistory('cleanup')}
-                    disabled={isMigratingPH || !phCopied}
+                    disabled={isMigratingPH || !phCopied || !isOnline}
+                    title={!isOnline ? 'You are offline' : undefined}
                     className={cn(
                       'rounded-lg border border-amber-200 bg-amber-50 px-4 py-2.5 text-sm font-semibold text-amber-700 hover:bg-amber-100 transition-colors flex items-center gap-1.5',
-                      (isMigratingPH || !phCopied) && 'opacity-50 cursor-not-allowed',
+                      (isMigratingPH || !phCopied || !isOnline) && 'opacity-50 cursor-not-allowed',
                     )}
                   >
                     {isMigratingPH && phCopied ? <Loader2 size={14} className="animate-spin" /> : <Trash2 size={14} />}
@@ -807,11 +813,12 @@ export const SettingsView = () => {
                   Clear Location Inventory
                 </button>
                 <button
-                  disabled={isClearingData}
+                  disabled={isClearingData || !isOnline}
+                  title={!isOnline ? 'You are offline' : undefined}
                   onClick={() => setIsConfirmModalOpen(true)}
                   className={cn(
                     "rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-red-700 shadow-lg shadow-red-200 flex items-center gap-2",
-                    isClearingData && "opacity-70 cursor-not-allowed"
+                    (isClearingData || !isOnline) && "opacity-70 cursor-not-allowed"
                   )}
                 >
                   {isClearingData
@@ -820,11 +827,12 @@ export const SettingsView = () => {
                   }
                 </button>
                 <button
-                  disabled={isCheckingOps || isForceSigningOut}
+                  disabled={isCheckingOps || isForceSigningOut || !isOnline}
+                  title={!isOnline ? 'You are offline' : undefined}
                   onClick={handleForceSignOutCheck}
                   className={cn(
                     "rounded-lg border border-red-300 bg-white px-4 py-2 text-sm font-semibold text-red-700 transition hover:bg-red-50 flex items-center gap-2",
-                    (isCheckingOps || isForceSigningOut) && "opacity-60 cursor-not-allowed"
+                    (isCheckingOps || isForceSigningOut || !isOnline) && "opacity-60 cursor-not-allowed"
                   )}
                 >
                   {isCheckingOps

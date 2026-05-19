@@ -2,8 +2,10 @@ import React, { useState, useEffect } from 'react';
 import { Save, Building2, UserCheck, Phone, Mail, MapPin, Hash } from 'lucide-react';
 import { getPOTemplate, savePOTemplate } from '../../../services/purchaseOrderService';
 import { POTemplate } from '../../../types';
+import { useAuth } from '../../../App';
 
 export const POTemplateSettings = () => {
+  const { isOnline } = useAuth();
   const [template, setTemplate] = useState<Omit<POTemplate, 'updatedAt' | 'updatedBy'>>({
     id: 'default',
     companyName: '',
@@ -59,7 +61,8 @@ export const POTemplateSettings = () => {
         </div>
         <button
           onClick={handleSave}
-          disabled={saving}
+          disabled={saving || !isOnline}
+          title={!isOnline ? 'You are offline' : undefined}
           className="flex items-center space-x-2 px-6 py-3 bg-blue-600 text-white rounded-2xl font-bold uppercase tracking-widest hover:bg-blue-700 transition-colors disabled:opacity-50 shadow-lg shadow-blue-200"
         >
           <Save size={18} />

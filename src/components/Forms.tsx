@@ -17,7 +17,7 @@ import {
   UserProfile, Asset, VariantConfig, ItemComponent,
   PurchaseOrder, PurchaseOrderItem, POPayment
 } from '../types';
-import { useData } from '../App';
+import { useData, useAuth } from '../App';
 import { Timestamp, serverTimestamp, getDocs, collection, where, query as fsQuery } from 'firebase/firestore';
 import { db } from '../firebase';
 import { format } from 'date-fns';
@@ -40,6 +40,7 @@ export const RequestForm = ({
   onComplete
 }: RequestFormProps) => {
   const { inventory } = useData();
+  const { isOnline } = useAuth();
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [selectedVariant, setSelectedVariant] = useState<Record<string, string>>(initialVariant || {});
@@ -245,7 +246,8 @@ export const RequestForm = ({
       )}
       <button
         type="submit"
-        disabled={isSubmitting || !isVariantComplete}
+        disabled={isSubmitting || !isVariantComplete || !isOnline}
+        title={!isOnline ? 'You are offline' : undefined}
         className="w-full py-4 bg-blue-600 text-white rounded-2xl font-bold flex items-center justify-center space-x-2 disabled:opacity-50"
       >
         {isSubmitting ? <Loader2 className="animate-spin" size={20} /> : <Check size={20} />}
@@ -267,6 +269,7 @@ interface WorkerRequestFormProps {
 }
 
 export const WorkerRequestForm = ({ items, locations, uoms, inventory, profile, mode, defaultJobsiteId, onComplete }: WorkerRequestFormProps) => {
+  const { isOnline } = useAuth();
   const [selectedItemId, setSelectedItemId] = useState('');
   const [itemSearch, setItemSearch] = useState('');
   const [quantity, setQuantity] = useState<number | ''>('');
@@ -685,7 +688,8 @@ export const WorkerRequestForm = ({ items, locations, uoms, inventory, profile, 
       )}
       <button
         type="submit"
-        disabled={isSubmitting || (mode === 'material' ? (!selectedItemId || !quantity) : (Object.values(pulloutQuantities).every(q => !q || q === 0))) || !jobsiteId}
+        title={!isOnline ? 'You are offline' : undefined}
+        disabled={isSubmitting || !isOnline || (mode === 'material' ? (!selectedItemId || !quantity) : (Object.values(pulloutQuantities).every(q => !q || q === 0))) || !jobsiteId}
         className={cn(
           "w-full py-4 text-white rounded-2xl font-bold flex items-center justify-center space-x-2 disabled:opacity-50 shadow-lg transition-all active:scale-95",
           mode === 'material' ? "bg-blue-600 shadow-blue-100" : "bg-purple-600 shadow-purple-100"
@@ -705,7 +709,9 @@ interface POPaymentFormProps {
 }
 
 export const POPaymentForm = ({ po, onComplete, onCancel }: POPaymentFormProps) => {
+  const { isOnline } = useAuth();
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [paymentError, setPaymentError] = useState<string | null>(null);
   const [amount, setAmount] = useState<number | string>('');
   const [grossAmount, setGrossAmount] = useState<number | string>(po.totalAmount);
   const [cvNumber, setCvNumber] = useState('');
@@ -739,6 +745,7 @@ export const POPaymentForm = ({ po, onComplete, onCancel }: POPaymentFormProps) 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsSubmitting(true);
+    setPaymentError(null);
     try {
       await addPOPayment(po.id, {
         poId: po.id,
@@ -752,8 +759,9 @@ export const POPaymentForm = ({ po, onComplete, onCancel }: POPaymentFormProps) 
         notes: notes || undefined,
       } as any);
       onComplete();
-    } catch (error) {
+    } catch (error: any) {
       console.error(error);
+      setPaymentError(error.message || 'Failed to save payment');
     } finally {
       setIsSubmitting(false);
     }
@@ -886,17 +894,24 @@ export const POPaymentForm = ({ po, onComplete, onCancel }: POPaymentFormProps) 
         </div>
       </div>
 
+      {paymentError && (
+        <div className="flex items-center justify-between p-3 bg-red-50 border border-red-200 rounded-2xl text-sm text-red-700">
+          <span>{paymentError}</span>
+          <button type="button" onClick={() => setPaymentError(null)} className="ml-2 text-red-400 hover:text-red-600"><X size={16} /></button>
+        </div>
+      )}
       <div className="flex space-x-3">
-        <button 
+        <button
           type="button"
           onClick={onCancel}
           className="flex-1 py-4 bg-gray-100 text-gray-600 rounded-2xl font-bold active:scale-95 transition-transform"
         >
           Cancel
         </button>
-        <button 
-          type="submit" 
-          disabled={isSubmitting}
+        <button
+          type="submit"
+          disabled={isSubmitting || !isOnline}
+          title={!isOnline ? 'You are offline' : undefined}
           className="flex-[2] py-4 bg-blue-600 text-white rounded-2xl font-bold flex items-center justify-center space-x-2 shadow-lg shadow-blue-200 disabled:opacity-50 active:scale-95 transition-transform"
         >
           {isSubmitting ? <Loader2 className="animate-spin" size={20} /> : <Check size={20} />}
@@ -918,6 +933,7 @@ interface ItemFormProps {
 }
 
 export const ItemForm = ({ uoms, categories, locations, items, initialData, isDuplicate, onComplete }: ItemFormProps) => {
+  const { isOnline } = useAuth();
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [isTool, setIsTool] = useState(initialData?.isTool || false);
@@ -1882,7 +1898,8 @@ export const ItemForm = ({ uoms, categories, locations, items, initialData, isDu
 
       <button
         type="submit"
-        disabled={isSubmitting}
+        disabled={isSubmitting || !isOnline}
+        title={!isOnline ? 'You are offline' : undefined}
         className="w-full py-4 bg-blue-600 text-white rounded-2xl font-bold flex items-center justify-center space-x-2 disabled:opacity-50"
       >
         {isSubmitting ? <Loader2 className="animate-spin" size={20} /> : <Check size={20} />}
@@ -1921,6 +1938,7 @@ const groupLocations = (locations: Location[]) => {
 };
 
 export const TransactionForm = ({ items, locations, inventory, uoms, purchaseOrders = [], profile, initialType, initialData, onComplete }: TransactionFormProps) => {
+  const { isOnline } = useAuth();
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [selectedItemId, setSelectedItemId] = useState(initialData?.itemId || '');
   const [type, setType] = useState<'delivery' | 'usage' | 'return' | 'adjustment'>(initialType || (initialData?.type as any) || 'delivery');
@@ -2680,9 +2698,10 @@ export const TransactionForm = ({ items, locations, inventory, uoms, purchaseOrd
         </div>
       </div>
 
-      <button 
-        type="submit" 
-        disabled={isSubmitting}
+      <button
+        type="submit"
+        disabled={isSubmitting || !isOnline}
+        title={!isOnline ? 'You are offline' : undefined}
         className="w-full py-4 bg-blue-600 text-white rounded-2xl font-bold flex items-center justify-center space-x-2 disabled:opacity-50"
       >
         {isSubmitting ? <Loader2 className="animate-spin" size={20} /> : <Check size={20} />}
@@ -2712,6 +2731,7 @@ const normalizeDR = (val: string): string => {
 };
 
 export const PickingModal = ({ requests, items, locations, inventory, uoms, onDeliver, onClose }: PickingModalProps) => {
+  const { isOnline } = useAuth();
   const [customBatchId, setCustomBatchId] = useState('');
   const [foundDR, setFoundDR] = useState<string | null>(null);
   const [drLookupDone, setDrLookupDone] = useState(false);
@@ -2963,7 +2983,7 @@ export const PickingModal = ({ requests, items, locations, inventory, uoms, onDe
         <button type="button" onClick={onClose} className="flex-1 py-4 bg-gray-100 text-gray-900 rounded-2xl font-bold uppercase tracking-widest text-xs active:scale-95 transition-transform">
           Cancel
         </button>
-        <button type="submit" className="flex-2 py-4 bg-blue-600 text-white rounded-2xl font-bold uppercase tracking-widest text-xs active:scale-95 transition-transform">
+        <button type="submit" disabled={!isOnline} title={!isOnline ? 'You are offline' : undefined} className="flex-2 py-4 bg-blue-600 text-white rounded-2xl font-bold uppercase tracking-widest text-xs active:scale-95 transition-transform disabled:opacity-50">
           Schedule for Delivery
         </button>
       </div>
@@ -2980,6 +3000,7 @@ interface RequestApprovalModalProps {
 }
 
 export const RequestApprovalModal = ({ request, items, uoms, onApprove, onClose }: RequestApprovalModalProps) => {
+  const { isOnline } = useAuth();
   const [approvedQty, setApprovedQty] = useState(request.requestedQty);
   const [note, setNote] = useState('');
   const item = items.find(i => i.id === request.itemId);
@@ -3049,7 +3070,9 @@ export const RequestApprovalModal = ({ request, items, uoms, onApprove, onClose 
         </button>
         <button
           onClick={() => onApprove(request, approvedQty, note)}
-          className="flex-2 py-4 bg-blue-600 text-white rounded-2xl font-bold uppercase tracking-widest text-xs active:scale-95 transition-transform"
+          disabled={!isOnline}
+          title={!isOnline ? 'You are offline' : undefined}
+          className="flex-2 py-4 bg-blue-600 text-white rounded-2xl font-bold uppercase tracking-widest text-xs active:scale-95 transition-transform disabled:opacity-50"
         >
           Approve Request
         </button>
@@ -3153,6 +3176,7 @@ interface PurchaseOrderFormProps {
 
 export const PurchaseOrderForm = ({ items, locations, uoms, profile, initialData, onComplete }: PurchaseOrderFormProps) => {
   const { purchaseOrders, loading, categories } = useData();
+  const { isOnline } = useAuth();
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [isAddingNewItem, setIsAddingNewItem] = useState(false);
@@ -3909,7 +3933,7 @@ export const PurchaseOrderForm = ({ items, locations, uoms, profile, initialData
             </div>
           )}
 
-          <button type="submit" onClick={() => handleSubmit()} disabled={isSubmitting} className="w-full relative group">
+          <button type="submit" onClick={() => handleSubmit()} disabled={isSubmitting || !isOnline} title={!isOnline ? 'You are offline' : undefined} className="w-full relative group">
             <div className="absolute -inset-0.5 bg-gradient-to-r from-blue-600 to-indigo-600 rounded-2xl blur opacity-30 group-hover:opacity-100 transition duration-1000 group-hover:duration-200"></div>
             <div className="relative w-full p-4 bg-blue-600 text-white rounded-2xl font-bold flex items-center justify-between overflow-hidden shadow-lg">
               <span className="text-xs uppercase tracking-[0.2em] relative z-10">Total Amount</span>
@@ -3979,7 +4003,8 @@ export const PurchaseOrderForm = ({ items, locations, uoms, profile, initialData
             <button
               type="button"
               onClick={() => handleSubmit()}
-              disabled={isSubmitting}
+              disabled={isSubmitting || !isOnline}
+              title={!isOnline ? 'You are offline' : undefined}
               className="flex-1 py-4 bg-blue-600 text-white rounded-2xl font-bold flex items-center justify-center space-x-2 shadow-lg shadow-blue-200 disabled:opacity-50"
             >
               {isSubmitting ? <Loader2 className="animate-spin" size={20} /> : <Check size={20} />}

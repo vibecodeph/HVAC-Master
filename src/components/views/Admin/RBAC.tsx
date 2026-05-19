@@ -62,7 +62,7 @@ const DEFAULT_CONFIG: Record<string, { permissions: string[]; description: strin
 };
 
 export const RBACDashboard = () => {
-  const { profile } = useAuth();
+  const { profile, isOnline } = useAuth();
   const { rbacConfig } = useData();
 
   const [pendingToggle, setPendingToggle] = useState<string | null>(null);
@@ -453,7 +453,8 @@ export const RBACDashboard = () => {
               </button>
               <button
                 onClick={handleDeleteRole}
-                disabled={isDeletingRole}
+                disabled={isDeletingRole || !isOnline}
+                title={!isOnline ? 'You are offline' : undefined}
                 className="flex-1 py-3 bg-red-600 text-white rounded-2xl font-bold text-sm flex items-center justify-center space-x-2 disabled:opacity-50"
               >
                 {isDeletingRole ? <Loader2 size={16} className="animate-spin" /> : <Trash2 size={16} />}

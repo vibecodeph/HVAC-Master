@@ -197,7 +197,7 @@ function deriveStatus(
 }
 
 export const TransactionsManager = () => {
-  const { profile } = useAuth();
+  const { profile, isOnline } = useAuth();
   const { items, locations, uoms, categories, requests } = useData();
 
   const [records, setRecords] = useState<Transaction[]>([]);
@@ -708,7 +708,7 @@ export const TransactionsManager = () => {
                         />
                         {edit.error && <p className="text-[9px] text-red-600 font-semibold">{edit.error}</p>}
                         <div className="flex gap-1.5">
-                          <button onClick={saveEdit} disabled={edit.saving}
+                          <button onClick={saveEdit} disabled={edit.saving || !isOnline} title={!isOnline ? 'You are offline' : undefined}
                             className="flex items-center gap-1 px-2.5 py-1 bg-gray-900 text-white rounded-lg text-[10px] font-bold active:scale-95 transition-transform disabled:opacity-50">
                             {edit.saving ? <Loader2 size={9} className="animate-spin" /> : <CheckCircle size={9} />}
                             Save
@@ -737,7 +737,7 @@ export const TransactionsManager = () => {
                         </div>
                         {del.error && <p className="text-[10px] font-semibold text-red-600">{del.error}</p>}
                         <div className="flex gap-2">
-                          <button onClick={confirmDelete} disabled={del.deleting}
+                          <button onClick={confirmDelete} disabled={del.deleting || !isOnline} title={!isOnline ? 'You are offline' : undefined}
                             className="flex items-center gap-1 px-3 py-1.5 bg-red-600 text-white rounded-xl text-[10px] font-black uppercase tracking-widest active:scale-95 transition-transform disabled:opacity-50">
                             {del.deleting ? <Loader2 size={10} className="animate-spin" /> : <Trash2 size={10} />}
                             Delete
@@ -768,7 +768,7 @@ export const TransactionsManager = () => {
                         </div>
                         {rev.error && <p className="text-[10px] font-semibold text-red-600">{rev.error}</p>}
                         <div className="flex gap-2">
-                          <button onClick={confirmReverse} disabled={rev.reversing}
+                          <button onClick={confirmReverse} disabled={rev.reversing || !isOnline} title={!isOnline ? 'You are offline' : undefined}
                             className="flex items-center gap-1 px-3 py-1.5 bg-purple-600 text-white rounded-xl text-[10px] font-black uppercase tracking-widest active:scale-95 transition-transform disabled:opacity-50">
                             {rev.reversing ? <Loader2 size={10} className="animate-spin" /> : <RotateCcw size={10} />}
                             Reverse

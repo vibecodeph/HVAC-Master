@@ -59,7 +59,7 @@ const PAYMENT_METHOD_LABELS: Record<PaymentMethod, string> = {
 };
 
 export const SuppliersInvoiceView = () => {
-  const { profile } = useAuth();
+  const { profile, isOnline } = useAuth();
   const { items, locations, uoms, purchaseOrders } = useData();
 
   const [invoices, setInvoices] = useState<SuppliersInvoice[]>([]);
@@ -1153,14 +1153,16 @@ export const SuppliersInvoiceView = () => {
               <div className="flex gap-3">
                 <button
                   onClick={() => executeInvoiceSubmit(true)}
-                  disabled={formSubmitting}
+                  disabled={formSubmitting || !isOnline}
+                  title={!isOnline ? 'You are offline' : undefined}
                   className="flex-1 py-3 bg-blue-600 text-white rounded-2xl text-xs font-black uppercase tracking-widest disabled:opacity-50"
                 >
                   {formSubmitting ? <Loader2 className="animate-spin mx-auto" size={14} /> : 'Yes, Update'}
                 </button>
                 <button
                   onClick={() => executeInvoiceSubmit(false)}
-                  disabled={formSubmitting}
+                  disabled={formSubmitting || !isOnline}
+                  title={!isOnline ? 'You are offline' : undefined}
                   className="flex-1 py-3 bg-gray-200 text-gray-700 rounded-2xl text-xs font-black uppercase tracking-widest disabled:opacity-50"
                 >
                   {formSubmitting ? <Loader2 className="animate-spin mx-auto" size={14} /> : 'No, Keep'}
@@ -1176,7 +1178,8 @@ export const SuppliersInvoiceView = () => {
           ) : (
             <button
               onClick={handleSubmit}
-              disabled={formSubmitting}
+              disabled={formSubmitting || !isOnline}
+              title={!isOnline ? 'You are offline' : undefined}
               className="w-full py-4 bg-blue-600 text-white rounded-2xl font-black uppercase tracking-widest text-xs active:scale-95 transition-transform disabled:opacity-50 flex items-center justify-center gap-2"
             >
               {formSubmitting ? <Loader2 className="animate-spin" size={16} /> : (editingInvoice ? 'Save Changes' : 'Save Invoice')}
@@ -1350,7 +1353,8 @@ export const SuppliersInvoiceView = () => {
                       <div className="flex space-x-2">
                         <button
                           onClick={() => handleDelete(inv)}
-                          disabled={isDeleting}
+                          disabled={isDeleting || !isOnline}
+                          title={!isOnline ? 'You are offline' : undefined}
                           className="flex-1 py-2 bg-red-600 text-white rounded-xl text-xs font-black uppercase tracking-widest disabled:opacity-50 flex items-center justify-center gap-2"
                         >
                           {isDeleting ? <Loader2 className="animate-spin" size={12} /> : 'Delete'}

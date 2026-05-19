@@ -287,7 +287,7 @@ const BOQItemGroup = ({ itemId, boqItems, items, uoms, inventory, jobsiteId }: {
 export const JobsiteBOQView = () => {
   const { jobsiteId } = useParams<{ jobsiteId: string }>();
   const navigate = useNavigate();
-  const { user, profile } = useAuth();
+  const { user, profile, isOnline } = useAuth();
   const { items, boqs, uoms, inventory, locations, categories } = useData();
   const [searchTerm, setSearchTerm] = useState('');
   const debouncedSearchTerm = useDebounce(searchTerm, 300);
@@ -515,7 +515,8 @@ export const JobsiteBOQView = () => {
                               e.stopPropagation();
                               setSelectedItemForVariant(isSelecting ? null : item.id);
                             }}
-                            disabled={isSubmitting}
+                            disabled={isSubmitting || !isOnline}
+                            title={!isOnline ? 'You are offline' : undefined}
                             className="p-2 bg-blue-50 text-blue-600 rounded-xl hover:bg-blue-100 transition-colors mr-2"
                           >
                             <ChevronDown size={18} className={cn("transition-transform", isSelecting && "rotate-180")} />
@@ -523,7 +524,8 @@ export const JobsiteBOQView = () => {
                         )}
                         <button
                           onClick={() => handleAdd(item.id)}
-                          disabled={isSubmitting || hasGenericInBOQ}
+                          disabled={isSubmitting || hasGenericInBOQ || !isOnline}
+                          title={!isOnline ? 'You are offline' : undefined}
                           className="p-2 bg-blue-50 text-blue-600 rounded-xl hover:bg-blue-100 transition-colors"
                         >
                           <Plus size={18} />
@@ -675,7 +677,9 @@ export const JobsiteBOQView = () => {
                       setError(err.message || "Failed to clear BOQ");
                     }
                   }}
-                  className="flex-[2] py-4 bg-red-600 text-white rounded-2xl text-[11px] font-black uppercase tracking-[0.2em] shadow-lg shadow-red-200 active:scale-[0.98] transition-all"
+                  disabled={!isOnline}
+                  title={!isOnline ? 'You are offline' : undefined}
+                  className="flex-[2] py-4 bg-red-600 text-white rounded-2xl text-[11px] font-black uppercase tracking-[0.2em] shadow-lg shadow-red-200 active:scale-[0.98] transition-all disabled:opacity-50"
                 >
                   Confirm Clear
                 </button>
@@ -720,7 +724,8 @@ export const JobsiteBOQView = () => {
               <div className="flex items-center space-x-4">
                 <button
                   onClick={confirmImport}
-                  disabled={isSubmitting}
+                  disabled={isSubmitting || !isOnline}
+                  title={!isOnline ? 'You are offline' : undefined}
                   className="flex-[2] py-4 bg-gradient-to-r from-orange-500 to-amber-600 text-white rounded-2xl text-[11px] font-black uppercase tracking-[0.2em] shadow-lg shadow-orange-200 disabled:opacity-50 active:scale-[0.98] transition-all"
                 >
                   {isSubmitting ? 'Processing...' : 'Confirm & Replace'}

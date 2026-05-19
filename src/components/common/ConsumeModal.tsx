@@ -3,6 +3,7 @@ import { ChevronDown, Flame, CheckCircle, Loader2 } from 'lucide-react';
 import { Item, UOM, UserProfile } from '../../types';
 import { consumeInventory } from '../../services/inventoryService';
 import { cn } from '../../lib/utils';
+import { useAuth } from '../../App';
 
 interface ConsumeModalProps {
   item: Item;
@@ -23,6 +24,7 @@ export const ConsumeModal = ({
   onClose,
   onSuccess,
 }: ConsumeModalProps) => {
+  const { isOnline } = useAuth();
   const locationKey = `lastConsumeLocation_${selectedJobsiteId}`;
   const [floor, setFloor] = useState(() => localStorage.getItem(`${locationKey}_floor`) || '');
   const [room, setRoom] = useState(() => localStorage.getItem(`${locationKey}_room`) || '');
@@ -229,7 +231,8 @@ export const ConsumeModal = ({
       <div className="flex gap-3 pt-1">
         <button
           onClick={handleConsume}
-          disabled={isSubmitting}
+          disabled={isSubmitting || !isOnline}
+          title={!isOnline ? 'You are offline' : undefined}
           className="flex-1 py-3.5 bg-gray-900 text-white rounded-xl text-[11px] font-black uppercase tracking-widest active:scale-95 transition-all flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
         >
           {isSubmitting ? (

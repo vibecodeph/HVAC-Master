@@ -18,7 +18,7 @@ interface ArchivedRequest extends Request {
 const PAGE_SIZE = 100;
 
 export const ArchivedRequestsView = () => {
-  const { profile } = useAuth();
+  const { profile, isOnline } = useAuth();
   const { items, locations, uoms } = useData();
   const [records, setRecords] = useState<ArchivedRequest[]>([]);
   const [loading, setLoading] = useState(true);
@@ -123,10 +123,11 @@ export const ArchivedRequestsView = () => {
             </div>
             <button
               onClick={handleRunArchive}
-              disabled={isArchiving}
+              disabled={isArchiving || !isOnline}
+              title={!isOnline ? 'You are offline' : undefined}
               className={cn(
                 "shrink-0 flex items-center gap-1.5 px-3 py-2 bg-blue-600 text-white text-xs font-bold rounded-xl active:scale-95 transition-transform",
-                isArchiving && "opacity-60 cursor-not-allowed"
+                (isArchiving || !isOnline) && "opacity-60 cursor-not-allowed"
               )}
             >
               {isArchiving ? <Loader2 size={13} className="animate-spin" /> : <Archive size={13} />}

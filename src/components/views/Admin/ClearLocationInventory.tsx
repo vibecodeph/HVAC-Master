@@ -7,7 +7,7 @@ import { Header } from '../../common/Header';
 import { Card } from '../../common/Card';
 
 export const ClearLocationInventoryView = () => {
-  const { profile } = useAuth();
+  const { profile, isOnline } = useAuth();
   const { locations, inventory } = useData();
 
   const [selectedLocationId, setSelectedLocationId] = useState('');
@@ -137,7 +137,8 @@ export const ClearLocationInventoryView = () => {
         {selectedLocation && !isConfirming && !result && (
           <button
             onClick={() => setIsConfirming(true)}
-            disabled={isProcessing}
+            disabled={isProcessing || !isOnline}
+            title={!isOnline ? 'You are offline' : undefined}
             className="w-full py-3 bg-red-600 text-white rounded-xl font-bold flex items-center justify-center space-x-2 active:scale-95 transition-transform disabled:opacity-50"
           >
             <AlertTriangle size={18} />
@@ -164,7 +165,8 @@ export const ClearLocationInventoryView = () => {
             <div className="flex flex-col space-y-2">
               <button
                 onClick={handleClear}
-                disabled={isProcessing}
+                disabled={isProcessing || !isOnline}
+                title={!isOnline ? 'You are offline' : undefined}
                 className={cn(
                   'w-full py-3 bg-red-600 text-white rounded-xl font-bold flex items-center justify-center space-x-2 active:scale-95 transition-transform',
                   isProcessing && 'opacity-70 cursor-not-allowed'

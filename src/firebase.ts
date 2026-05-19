@@ -1,4 +1,4 @@
-import { initializeApp } from 'firebase/app';
+import { initializeApp, FirebaseError } from 'firebase/app';
 import { getAuth, setPersistence, browserLocalPersistence } from 'firebase/auth';
 import { getFirestore, doc, getDocFromServer } from 'firebase/firestore';
 import { getFunctions } from 'firebase/functions';
@@ -43,6 +43,26 @@ export interface FirestoreErrorInfo {
   }
 }
 
+function getReadableFirestoreError(error: unknown): string {
+  if (error instanceof FirebaseError) {
+    const codeKey = error.code.includes('/') ? error.code.split('/')[1] : error.code;
+    switch (codeKey) {
+      case 'unavailable': return 'You appear to be offline. Please check your connection and try again.';
+      case 'permission-denied': return "You don't have permission to perform this action.";
+      case 'not-found': return 'The requested data was not found.';
+      case 'already-exists': return 'This record already exists.';
+      case 'deadline-exceeded': return 'The request timed out. Please try again.';
+      case 'resource-exhausted': return 'Too many requests. Please wait a moment and try again.';
+      case 'cancelled': return 'The operation was cancelled.';
+      case 'unauthenticated': return 'Your session has expired. Please sign in again.';
+    }
+  }
+  if (error instanceof Error && error.message.includes('the client is offline')) {
+    return 'You appear to be offline. Please check your connection and try again.';
+  }
+  return 'An unexpected error occurred. Please try again.';
+}
+
 export function handleFirestoreError(error: unknown, operationType: OperationType, path: string | null, shouldThrow: boolean = true) {
   const errInfo: FirestoreErrorInfo = {
     error: error instanceof Error ? error.message : String(error),
@@ -64,7 +84,7 @@ export function handleFirestoreError(error: unknown, operationType: OperationTyp
   }
   console.error('Firestore Error: ', JSON.stringify(errInfo));
   if (shouldThrow) {
-    throw new Error(JSON.stringify(errInfo));
+    throw new Error(getReadableFirestoreError(error));
   }
 }
 

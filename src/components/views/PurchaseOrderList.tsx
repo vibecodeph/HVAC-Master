@@ -331,7 +331,9 @@ export const PurchaseOrderList = ({ purchaseOrders, locations, items, uoms, prof
                       }
                     </div>
                     <div>
-                      <h3 className="font-black text-gray-900 leading-none mb-1">{po.poNumber}</h3>
+                      <h3 className={cn('font-black leading-none mb-1', po.poNumber ? 'text-gray-900' : 'text-gray-400 italic font-medium')}>
+                        {po.poNumber || 'DRAFT'}
+                      </h3>
                       <p className="text-xs font-bold text-gray-400 uppercase tracking-widest">{supplier?.name || po.supplierId || 'Unknown Supplier'}</p>
                     </div>
                   </div>

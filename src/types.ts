@@ -258,6 +258,7 @@ export interface PurchaseOrderItem {
   id?: string;
   itemId: string;
   variant?: Record<string, string>;
+  customSpec?: string;
   quantity: number;
   uomId: string;
   srp?: number; // Added SRP field
@@ -305,6 +306,8 @@ export interface PurchaseOrder {
   attention?: string;
   contactNo?: string;
   project?: string;
+  destinationLocationId?: string;
+  destinationLocationName?: string;
   terms?: string;
   deliverTo?: string;
   status: 'draft' | 'sent' | 'partially_received' | 'received' | 'cancelled';

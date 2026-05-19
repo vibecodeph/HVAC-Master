@@ -1746,13 +1746,14 @@ export const TransactionForm = ({ items, locations, inventory, uoms, purchaseOrd
       // Bulk PO Receiving
       const itemsToReceive = selectedPO.items
         .map(poi => {
-          const key = `${poi.itemId}_${JSON.stringify(poi.variant || {})}`;
+          const key = `${poi.itemId}_${JSON.stringify(poi.variant || {})}_${poi.customSpec || ''}`;
           const qty = poItemQuantities[key] || 0;
           if (qty <= 0) return null;
-          
+
           return {
             itemId: poi.itemId,
             variant: poi.variant,
+            customSpec: poi.customSpec || undefined,
             quantity: qty,
             uomId: poi.uomId,
             unitPrice: poi.unitPrice,
@@ -1786,6 +1787,10 @@ export const TransactionForm = ({ items, locations, inventory, uoms, purchaseOrd
 
     if (isTool && !isToolValid) {
       setError('Tools require either a Serial Number or Property Number.');
+      return;
+    }
+    if (!fromLocationId && !toLocationId) {
+      setError('Please select at least one location (From or To).');
       return;
     }
     setIsSubmitting(true);
@@ -1960,12 +1965,15 @@ export const TransactionForm = ({ items, locations, inventory, uoms, purchaseOrd
                   (po.items || [])
                     .filter(poi => (poi.receivedQuantity || 0) < poi.quantity)
                     .forEach(poi => {
-                      const key = `${poi.itemId}_${JSON.stringify(poi.variant || {})}`;
+                      const key = `${poi.itemId}_${JSON.stringify(poi.variant || {})}_${poi.customSpec || ''}`;
                       initialQtys[key] = poi.quantity - (poi.receivedQuantity || 0);
                     });
                   setPoItemQuantities(initialQtys);
                   setPoItemSerials({});
                   setPoItemProperties({});
+                  if (po.destinationLocationId) {
+                    setToLocationId(po.destinationLocationId);
+                  }
                 }
               }}
               className="w-full p-4 bg-gray-100 rounded-2xl text-sm font-medium outline-none focus:ring-2 focus:ring-blue-500 appearance-none"
@@ -2021,9 +2029,9 @@ export const TransactionForm = ({ items, locations, inventory, uoms, purchaseOrd
                 .filter(poi => (poi.receivedQuantity || 0) < poi.quantity)
                 .map((poi, idx) => {
                   const item = items.find(i => i.id === poi.itemId);
-                  const key = `${poi.itemId}_${JSON.stringify(poi.variant || {})}`;
+                  const key = `${poi.itemId}_${JSON.stringify(poi.variant || {})}_${poi.customSpec || ''}`;
                   const remaining = poi.quantity - (poi.receivedQuantity || 0);
-                  
+
                   return (
                     <div key={key} className="bg-white p-5 rounded-[2rem] shadow-sm border border-blue-100 hover:border-blue-200 transition-colors space-y-4">
                       <div className="flex justify-between items-start">
@@ -2032,6 +2040,9 @@ export const TransactionForm = ({ items, locations, inventory, uoms, purchaseOrd
                           {poi.variant && Object.entries(poi.variant).map(([k, v]) => (
                             <span key={k} className="inline-block px-2 py-0.5 bg-gray-100 rounded-lg text-[9px] font-bold text-gray-500 uppercase mr-1">{k}: {v}</span>
                           ))}
+                          {poi.customSpec && (
+                            <span className="inline-block px-2 py-0.5 bg-purple-50 rounded-lg text-[9px] font-bold text-purple-600 uppercase mr-1">{poi.customSpec}</span>
+                          )}
                         </div>
                         <div className="text-right">
                           <p className="text-[10px] font-black text-blue-600 uppercase tracking-[0.1em]">{poi.receivedQuantity || 0} / {poi.quantity} RECEIVED</p>
@@ -2361,6 +2372,11 @@ export const TransactionForm = ({ items, locations, inventory, uoms, purchaseOrd
                 </optgroup>
               ))}
             </select>
+            {type === 'delivery' && selectedPO?.destinationLocationId && toLocationId && toLocationId !== selectedPO.destinationLocationId && (
+              <p className="text-[10px] font-bold text-amber-600 pl-1 pt-1">
+                ⚠ Differs from PO destination ({selectedPO.destinationLocationName || locations.find(l => l.id === selectedPO.destinationLocationId)?.name || 'unknown'})
+              </p>
+            )}
           </div>
         </div>
 
@@ -2895,10 +2911,10 @@ export const PurchaseOrderForm = ({ items, locations, uoms, profile, initialData
   const [poNumber, setPoNumber] = useState(initialData?.poNumber || '');
   
   useEffect(() => {
-    if (!initialData && !poNumber && !loading) {
-      setPoNumber(generatePONumber());
+    if (initialData?.poNumber && !poNumber) {
+      setPoNumber(initialData.poNumber);
     }
-  }, [purchaseOrders, loading, initialData]);
+  }, [initialData]);
 
   const [date, setDate] = useState(() => {
     if (initialData?.date) {
@@ -2914,6 +2930,7 @@ export const PurchaseOrderForm = ({ items, locations, uoms, profile, initialData
   const [notes, setNotes] = useState(initialData?.notes || '');
   const [generalNotes, setGeneralNotes] = useState(initialData?.generalNotes || '');
   const [project, setProject] = useState(initialData?.project || '');
+  const [destinationLocationId, setDestinationLocationId] = useState(initialData?.destinationLocationId || '');
   const [terms, setTerms] = useState(initialData?.terms || '');
   const [deliverTo, setDeliverTo] = useState(initialData?.deliverTo || '');
   const [requestedBy, setRequestedBy] = useState(initialData?.requestedBy || '');
@@ -2955,7 +2972,7 @@ export const PurchaseOrderForm = ({ items, locations, uoms, profile, initialData
     if (!supplierId) { setErrorMsg('Please select a supplier'); return; }
     if (poItems.length === 0) { setErrorMsg('Please add at least one item'); return; }
 
-    // Check for required variants
+    // Check for required variants and custom spec
     for (const poItem of poItems) {
       const item = items.find(i => i.id === poItem.itemId);
       if (item?.requireVariant && item.variantAttributes) {
@@ -2968,13 +2985,32 @@ export const PurchaseOrderForm = ({ items, locations, uoms, profile, initialData
           }
         }
       }
+      if (item?.requireCustomSpec && !poItem.customSpec?.trim()) {
+        setErrorMsg(`${item.name} requires a ${item.customSpecLabel || 'specification'}`);
+        return;
+      }
+    }
+
+    // Check for duplicate line items (same item + variant + customSpec)
+    const lineKeys = poItems.map(pi => `${pi.itemId}_${JSON.stringify(pi.variant || {})}_${pi.customSpec || ''}`);
+    const dupKey = lineKeys.find((k, i) => lineKeys.indexOf(k) !== i);
+    if (dupKey) {
+      const dupItem = items.find(i => i.id === poItems[lineKeys.indexOf(dupKey)].itemId);
+      setErrorMsg(`${dupItem?.name || 'An item'} appears more than once. Merge duplicates before saving.`);
+      return;
+    }
+
+    let finalPoNumber = poNumber;
+    if (status !== 'draft' && !poNumber) {
+      finalPoNumber = generatePONumber();
+      setPoNumber(finalPoNumber);
     }
 
     setIsSubmitting(true);
     try {
       const supplier = suppliers.find(s => s.id === supplierId);
       const data = {
-        poNumber,
+        poNumber: finalPoNumber,
         supplierId,
         supplierName: supplier?.name || '',
         supplierLongName: supplier?.longName || supplier?.name || '',
@@ -2986,6 +3022,10 @@ export const PurchaseOrderForm = ({ items, locations, uoms, profile, initialData
         attention: supplier?.contactPerson || '',
         contactNo: supplier?.contactNumber || '',
         project,
+        destinationLocationId: destinationLocationId || undefined,
+        destinationLocationName: destinationLocationId
+          ? locations.find(l => l.id === destinationLocationId)?.name
+          : undefined,
         terms,
         deliverTo,
         discount,
@@ -3007,6 +3047,7 @@ export const PurchaseOrderForm = ({ items, locations, uoms, profile, initialData
             const variantStr = Object.values(pi.variant).join(', ');
             if (variantStr) desc += ` [${variantStr}]`;
           }
+          if (pi.customSpec) desc += ` (${pi.customSpec})`;
 
           return {
             ...pi,
@@ -3023,6 +3064,7 @@ export const PurchaseOrderForm = ({ items, locations, uoms, profile, initialData
             const variantStr = Object.values(pi.variant).join(', ');
             if (variantStr) desc += ` [${variantStr}]`;
           }
+          if (pi.customSpec) desc += ` (${pi.customSpec})`;
 
           return {
             ...pi,
@@ -3055,7 +3097,7 @@ export const PurchaseOrderForm = ({ items, locations, uoms, profile, initialData
       ? item.uomConversions.reduce((best, curr) => curr.factor > best.factor ? curr : best)
       : null;
     const baseCost = item.latestPrice && item.latestPrice > 0 ? item.latestPrice : undefined;
-    const jobsiteLoc = project ? locations.find(l => l.type === 'jobsite' && l.name === project && l.isActive) : null;
+    const destLoc = destinationLocationId ? locations.find(l => l.id === destinationLocationId) : null;
     const newItem: PurchaseOrderItem = {
       itemId: item.id,
       quantity: 1,
@@ -3068,7 +3110,7 @@ export const PurchaseOrderForm = ({ items, locations, uoms, profile, initialData
       totalPrice: baseCost || 0,
       receivedQuantity: 0,
       note: '',
-      ...(jobsiteLoc ? { assignedJobsiteId: jobsiteLoc.id, assignedJobsiteName: project } : {})
+      ...(destLoc ? { assignedJobsiteId: destLoc.id, assignedJobsiteName: destLoc.name } : {})
     };
     setPoItems([...poItems, newItem]);
     setItemSearch('');
@@ -3134,12 +3176,15 @@ export const PurchaseOrderForm = ({ items, locations, uoms, profile, initialData
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           <div className="space-y-1">
             <label className="text-xs font-bold text-gray-400 uppercase tracking-wider pl-1">PO Number</label>
-            <input 
+            <input
               value={poNumber}
               onChange={e => setPoNumber(e.target.value)}
-              required
-              placeholder="PO 26-001"
-              className="w-full p-4 bg-gray-100 rounded-2xl text-sm font-medium outline-none focus:ring-2 focus:ring-blue-500" 
+              readOnly={!initialData && status === 'draft' && !poNumber}
+              placeholder={!initialData && status === 'draft' ? 'Auto-assigned on confirm' : 'PO 26-001'}
+              className={cn(
+                'w-full p-4 rounded-2xl text-sm font-medium outline-none focus:ring-2 focus:ring-blue-500',
+                !initialData && status === 'draft' && !poNumber ? 'bg-gray-50 text-gray-400 cursor-not-allowed' : 'bg-gray-100'
+              )}
             />
           </div>
           <div className="space-y-1">
@@ -3158,9 +3203,15 @@ export const PurchaseOrderForm = ({ items, locations, uoms, profile, initialData
           <div className="space-y-1">
             <label className="text-xs font-bold text-gray-400 uppercase tracking-wider pl-1">Status</label>
             <div className="relative">
-              <select 
+              <select
                 value={status}
-                onChange={e => setStatus(e.target.value as any)}
+                onChange={e => {
+                  const newStatus = e.target.value as PurchaseOrder['status'];
+                  setStatus(newStatus);
+                  if (newStatus !== 'draft' && !poNumber) {
+                    setPoNumber(generatePONumber());
+                  }
+                }}
                 className="w-full p-4 bg-gray-100 rounded-2xl text-sm font-medium outline-none focus:ring-2 focus:ring-blue-500 appearance-none"
               >
                 <option value="draft">Draft</option>
@@ -3214,19 +3265,30 @@ export const PurchaseOrderForm = ({ items, locations, uoms, profile, initialData
 
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           <div className="space-y-1">
-            <label className="text-xs font-bold text-gray-400 uppercase tracking-wider pl-1">Project</label>
+            <label className="text-xs font-bold text-gray-400 uppercase tracking-wider pl-1">Ship To / Destination</label>
             <div className="relative">
-              <select 
-                value={project}
-                onChange={e => setProject(e.target.value)}
+              <select
+                value={destinationLocationId}
+                onChange={e => {
+                  const id = e.target.value;
+                  const loc = id ? locations.find(l => l.id === id) : null;
+                  setDestinationLocationId(id);
+                  setProject(loc?.name || '');
+                  setPoItems(prev => prev.map(pi => ({
+                    ...pi,
+                    ...(loc
+                      ? { assignedJobsiteId: loc.id, assignedJobsiteName: loc.name }
+                      : { assignedJobsiteId: undefined, assignedJobsiteName: undefined })
+                  })));
+                }}
                 className="w-full p-4 bg-gray-100 rounded-2xl text-sm font-medium outline-none focus:ring-2 focus:ring-blue-500 appearance-none"
               >
-                <option value="">Select Project...</option>
+                <option value="">Select Destination...</option>
                 {locations
                   .filter(l => l.type === 'jobsite' && l.isActive)
                   .sort((a, b) => a.name.localeCompare(b.name))
                   .map(l => (
-                    <option key={l.id} value={l.name}>{l.name}</option>
+                    <option key={l.id} value={l.id}>{l.name}</option>
                   ))}
               </select>
               <ChevronDown className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" size={18} />
@@ -3360,6 +3422,22 @@ export const PurchaseOrderForm = ({ items, locations, uoms, profile, initialData
                                 </div>
                               );
                             })}
+                          </div>
+                        )}
+
+                        {/* Custom Spec Input */}
+                        {item?.requireCustomSpec && (
+                          <div className="mt-2 px-1 space-y-1">
+                            <label className="text-[8px] font-black text-gray-400 uppercase tracking-widest pl-1">
+                              {item.customSpecLabel || 'Specification'} <span className="text-red-500">*</span>
+                            </label>
+                            <input
+                              type="text"
+                              value={poItem.customSpec || ''}
+                              onChange={e => updatePOItem(idx, { customSpec: e.target.value })}
+                              placeholder={`Enter ${item.customSpecLabel || 'specification'}...`}
+                              className="w-full p-2 bg-white border border-gray-200 rounded-xl text-[10px] font-bold outline-none focus:ring-2 focus:ring-blue-500"
+                            />
                           </div>
                         )}
 
@@ -3590,6 +3668,22 @@ export const PurchaseOrderForm = ({ items, locations, uoms, profile, initialData
 
       <div className="fixed bottom-16 left-0 right-0 p-4 bg-white/80 backdrop-blur-xl border-t border-gray-100 lg:bottom-0 lg:left-72 z-40">
         <div className="max-w-5xl mx-auto space-y-2">
+          {status === 'received' && poItems.some(pi => (pi.receivedQuantity || 0) < pi.quantity) && (
+            <div className="p-4 bg-amber-50 border border-amber-200 rounded-2xl text-xs font-bold text-amber-700 flex items-center gap-2">
+              <span>⚠</span>
+              <span>
+                {poItems.filter(pi => (pi.receivedQuantity || 0) < pi.quantity).length} item(s) have not been fully received. Double-check before saving as Received.
+              </span>
+            </div>
+          )}
+          {poItems.some(pi => pi.unitPrice === 0) && (
+            <div className="p-4 bg-amber-50 border border-amber-200 rounded-2xl text-xs font-bold text-amber-700 flex items-center gap-2">
+              <span>⚠</span>
+              <span>
+                {poItems.filter(pi => pi.unitPrice === 0).length} item(s) have a unit price of ₱0. Double-check before saving.
+              </span>
+            </div>
+          )}
           {errorMsg && (
             <div className="flex items-center justify-between p-3 bg-red-50 border border-red-200 rounded-2xl text-sm text-red-700">
               <span>{errorMsg}</span>

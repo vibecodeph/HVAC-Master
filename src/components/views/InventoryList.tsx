@@ -620,7 +620,7 @@ export const InventoryList = () => {
 
     const jobsiteInv = inventory.filter(inv => inv.locationId === selectedJobsiteId && inv.quantity !== 0);
 
-    type ExportRow = { itemName: string; variant: string; avgCost: number; qty: number; uomSymbol: string; totalCost: number; mainCatId: string; mainCatName: string };
+    type ExportRow = { itemName: string; variant: string; customSpec?: string; avgCost: number; qty: number; uomSymbol: string; totalCost: number; mainCatId: string; mainCatName: string };
     const rows: ExportRow[] = [];
     const mainCatSet = new Map<string, string>();
 
@@ -644,7 +644,7 @@ export const InventoryList = () => {
         if (variantConfig?.latestPrice !== undefined) avgCost = variantConfig.latestPrice;
       }
       const uomSymbol = uoms.find(u => u.id === item.uomId || u.symbol === item.uomId)?.symbol || item.uomId;
-      rows.push({ itemName: item.name, variant: variantLabel, avgCost, qty: inv.quantity, uomSymbol, totalCost: inv.quantity * avgCost, mainCatId, mainCatName });
+      rows.push({ itemName: item.name, variant: variantLabel, customSpec: inv.customSpec || '', avgCost, qty: inv.quantity, uomSymbol, totalCost: inv.quantity * avgCost, mainCatId, mainCatName });
     });
 
     rows.sort((a, b) => a.mainCatName.localeCompare(b.mainCatName) || a.itemName.localeCompare(b.itemName));
@@ -661,10 +661,11 @@ export const InventoryList = () => {
     const catLabel = exportCategoryId === 'all' ? 'All' : (exportMainCategories.find(c => c.id === exportCategoryId)?.name || 'All');
     const date = new Date().toISOString().slice(0, 10);
     const filename = `Inventory_${jobsite?.name || 'Site'}_${catLabel}_${date}.csv`.replace(/\s+/g, '_');
-    const header = ['Item', 'Variant', 'Avg Cost (₱)', 'Qty', 'UOM', 'Total Cost (₱)'];
+    const header = ['Item', 'Variant', 'Custom Spec', 'Avg Cost (₱)', 'Qty', 'UOM', 'Total Cost (₱)'];
     const csvRows = [header, ...filteredExportRows.map(r => [
       `"${r.itemName.replace(/"/g, '""')}"`,
       `"${r.variant.replace(/"/g, '""')}"`,
+      `"${(r.customSpec || '').replace(/"/g, '""')}"`,
       r.avgCost.toFixed(2),
       r.qty,
       r.uomSymbol,
@@ -692,10 +693,11 @@ export const InventoryList = () => {
     });
 
     const tableRows = Object.entries(grouped).map(([catName, rows]) => `
-      <tr class="cat-header"><td colspan="5">${catName}</td></tr>
+      <tr class="cat-header"><td colspan="6">${catName}</td></tr>
       ${rows.map(r => `<tr>
         <td>${r.itemName}</td>
         <td>${r.variant || '—'}</td>
+        <td>${r.customSpec || ''}</td>
         <td style="text-align:right">₱${r.avgCost.toFixed(2)}</td>
         <td style="text-align:right">${r.qty} ${r.uomSymbol}</td>
         <td style="text-align:right">₱${r.totalCost.toFixed(2)}</td>
@@ -709,7 +711,7 @@ export const InventoryList = () => {
       .meta { color: #666; margin-bottom: 16px; font-size: 11px; }
       table { width: 100%; border-collapse: collapse; }
       th { background: #111; color: #fff; padding: 6px 8px; text-align: left; font-size: 10px; text-transform: uppercase; letter-spacing: .05em; }
-      th:nth-child(3), th:nth-child(4), th:nth-child(5) { text-align: right; }
+      th:nth-child(4), th:nth-child(5), th:nth-child(6) { text-align: right; }
       td { padding: 5px 8px; border-bottom: 1px solid #eee; }
       tr.cat-header td { background: #f3f4f6; font-weight: bold; font-size: 10px; text-transform: uppercase; letter-spacing: .08em; padding: 6px 8px; border-bottom: none; }
       .footer { margin-top: 16px; font-size: 11px; color: #444; }
@@ -719,7 +721,7 @@ export const InventoryList = () => {
     <div class="meta">${catLabel} · ${date}</div>
     <table>
       <thead><tr>
-        <th>Item</th><th>Variant</th>
+        <th>Item</th><th>Variant</th><th>Custom Spec</th>
         <th style="text-align:right">Avg Cost</th>
         <th style="text-align:right">Qty</th>
         <th style="text-align:right">Total Cost</th>

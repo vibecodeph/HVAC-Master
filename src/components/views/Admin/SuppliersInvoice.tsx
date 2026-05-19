@@ -376,7 +376,7 @@ export const SuppliersInvoiceView = () => {
         const filled = itemDef.variantAttributes?.every(attr => fi.variant[attr.name]);
         if (!filled) { setFormError(`Row ${i + 1}: variant selection required`); return; }
       }
-      if (itemDef?.requireCustomSpec && !fi.customSpec.trim()) {
+      if (itemDef?.requireCustomSpec && itemDef?.customSpecRequired !== false && !fi.customSpec.trim()) {
         setFormError(`Row ${i + 1}: ${itemDef.customSpecLabel || 'specification'} is required`); return;
       }
     }
@@ -832,7 +832,7 @@ export const SuppliersInvoiceView = () => {
                     {itemDef?.requireCustomSpec && (
                       <div className="space-y-1">
                         <label className="text-[9px] font-bold text-gray-400 uppercase tracking-widest">
-                          {itemDef.customSpecLabel || 'Specification'} *
+                          {itemDef.customSpecLabel || 'Specification'}{itemDef.customSpecRequired !== false && ' *'}
                         </label>
                         <input
                           type="text"

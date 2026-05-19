@@ -18,7 +18,8 @@ import {
   PurchaseOrder, PurchaseOrderItem, POPayment
 } from '../types';
 import { useData } from '../App';
-import { Timestamp, serverTimestamp } from 'firebase/firestore';
+import { Timestamp, serverTimestamp, getDocs, collection, where, query as fsQuery } from 'firebase/firestore';
+import { db } from '../firebase';
 import { format } from 'date-fns';
 import { DollarSign, MinusCircle } from 'lucide-react';
 
@@ -157,15 +158,15 @@ export const RequestForm = ({
         {item.requireCustomSpec && (
           <div className="space-y-1">
             <label className="text-xs font-bold text-gray-400 uppercase tracking-wider pl-1 font-black underline decoration-blue-500/30">
-              {item.customSpecLabel || 'Specification'}
+              {item.customSpecLabel || 'Specification'}{item.customSpecRequired !== false && <span className="text-red-500 ml-0.5">*</span>}
             </label>
-            <input 
-              name="customSpec" 
-              type="text" 
-              required 
+            <input
+              name="customSpec"
+              type="text"
+              required={item.customSpecRequired !== false}
               defaultValue={initialCustomSpec}
               placeholder={`Enter ${item.customSpecLabel || 'detail'}...`}
-              className="w-full p-4 bg-gray-100 rounded-2xl text-sm font-medium outline-none focus:ring-2 focus:ring-blue-500" 
+              className="w-full p-4 bg-gray-100 rounded-2xl text-sm font-medium outline-none focus:ring-2 focus:ring-blue-500"
             />
           </div>
         )}
@@ -606,10 +607,10 @@ export const WorkerRequestForm = ({ items, locations, uoms, inventory, profile, 
             {selectedItem?.requireCustomSpec && (
               <div className="space-y-1 animate-in fade-in slide-in-from-top-2 duration-300">
                 <label className="text-xs font-bold text-gray-400 uppercase tracking-wider pl-1 font-black">
-                  {selectedItem.customSpecLabel || 'Specification'}
+                  {selectedItem.customSpecLabel || 'Specification'}{selectedItem.customSpecRequired !== false && <span className="text-red-500 ml-0.5">*</span>}
                 </label>
-                <input 
-                  required
+                <input
+                  required={selectedItem.customSpecRequired !== false}
                   type="text"
                   value={customSpec}
                   onChange={e => setCustomSpec(e.target.value)}
@@ -924,7 +925,12 @@ export const ItemForm = ({ uoms, categories, locations, items, initialData, isDu
   const [variantWarnShown, setVariantWarnShown] = useState(false);
   const [variantWarnAcknowledged, setVariantWarnAcknowledged] = useState(false);
   const [variantWarnChecking, setVariantWarnChecking] = useState(false);
+  const [variantValueWarnMsg, setVariantValueWarnMsg] = useState<string | null>(null);
+  const [variantValueWarnAcknowledged, setVariantValueWarnAcknowledged] = useState(false);
+  const [uomConvWarnMsg, setUomConvWarnMsg] = useState<string | null>(null);
+  const [uomConvWarnAcknowledged, setUomConvWarnAcknowledged] = useState(false);
   const [requireCustomSpec, setRequireCustomSpec] = useState(initialData?.requireCustomSpec || false);
+  const [customSpecRequired, setCustomSpecRequired] = useState(initialData?.customSpecRequired ?? true);
   const [customSpecLabel, setCustomSpecLabel] = useState(initialData?.customSpecLabel || '');
   
   // Resolve legacy category data
@@ -1019,6 +1025,12 @@ export const ItemForm = ({ uoms, categories, locations, items, initialData, isDu
     setAttributes(attributes.filter((_, i) => i !== idx));
   };
 
+  const renameAttribute = (attrIdx: number, newName: string) => {
+    const next = [...attributes];
+    next[attrIdx] = { ...next[attrIdx], name: newName };
+    setAttributes(next);
+  };
+
   const handleRequireVariantToggle = async () => {
     const next = !requireVariant;
     setRequireVariant(next);
@@ -1037,6 +1049,16 @@ export const ItemForm = ({ uoms, categories, locations, items, initialData, isDu
     }
   };
 
+  useEffect(() => {
+    setVariantValueWarnMsg(null);
+    setVariantValueWarnAcknowledged(false);
+  }, [attributes]);
+
+  useEffect(() => {
+    setUomConvWarnMsg(null);
+    setUomConvWarnAcknowledged(false);
+  }, [uomConversions]);
+
   return (
     <form className="space-y-6" onSubmit={async (e) => {
       e.preventDefault();
@@ -1050,6 +1072,99 @@ export const ItemForm = ({ uoms, categories, locations, items, initialData, isDu
       }
       setIsSubmitting(true);
       try {
+        // Guards 1–4: variant attribute and UOM conversion safety checks (existing items only)
+        if (initialData?.id && !isDuplicate) {
+          const itemId = initialData.id;
+          const initialAttrs = initialData.variantAttributes || [];
+
+          // Detect attribute names that existed before but are now missing (removed or renamed)
+          const initialAttrNames = initialAttrs.map(a => a.name);
+          const currentAttrNames = attributes.map(a => a.name);
+          const removedAttrNames = initialAttrNames.filter(n => !currentAttrNames.includes(n));
+
+          // Detect individual values removed from surviving attributes (for Guard 3)
+          const removedValues: Array<{ attr: string; value: string }> = [];
+          if (!variantValueWarnAcknowledged) {
+            for (const initAttr of initialAttrs) {
+              const currentAttr = attributes.find(a => a.name === initAttr.name);
+              if (!currentAttr) continue; // whole attribute gone — handled by Guards 1&2
+              for (const initVal of initAttr.values) {
+                if (!currentAttr.values.includes(initVal)) {
+                  removedValues.push({ attr: initAttr.name, value: initVal });
+                }
+              }
+            }
+          }
+
+          if (removedAttrNames.length > 0 || removedValues.length > 0) {
+            const invSnap = await getDocs(fsQuery(collection(db, 'inventory'), where('itemId', '==', itemId)));
+
+            // Guards 1 & 2: hard block — attribute name change/removal with existing inventory
+            for (const attrName of removedAttrNames) {
+              const hasInv = invSnap.docs.some(d => {
+                const v = d.data().variant;
+                return v && Object.prototype.hasOwnProperty.call(v, attrName) && (d.data().quantity || 0) > 0;
+              });
+              if (hasInv) {
+                setSaveError(`Cannot remove variant attribute "${attrName}" — existing inventory uses this attribute in its document path. Drain all inventory to zero before removing this attribute.`);
+                return;
+              }
+            }
+
+            // Guard 3: warn when removed values still have inventory
+            if (!variantValueWarnAcknowledged && removedValues.length > 0) {
+              const strandedValues: Array<{ attr: string; value: string }> = [];
+              for (const { attr, value } of removedValues) {
+                const hasInv = invSnap.docs.some(d => {
+                  const v = d.data().variant;
+                  return v && v[attr] === value && (d.data().quantity || 0) > 0;
+                });
+                if (hasInv) strandedValues.push({ attr, value });
+              }
+              if (strandedValues.length > 0) {
+                const pairs = strandedValues.map(sv => `"${sv.value}" from ${sv.attr}`).join(', ');
+                setVariantValueWarnMsg(`Removing ${pairs} — existing inventory with these values will become stranded. No new transactions can reach that stock. Consider transferring or consuming that stock first.`);
+                return;
+              }
+            }
+          }
+
+          // Guard 4: warn when a removed UOM conversion is used in open POs
+          if (!uomConvWarnAcknowledged) {
+            const initialConvUomIds = (initialData.uomConversions || []).map(c => c.uomId);
+            const currentConvUomIds = new Set(uomConversions.map(c => c.uomId));
+            const removedConvUomIds = initialConvUomIds.filter(id => !currentConvUomIds.has(id));
+
+            if (removedConvUomIds.length > 0) {
+              const posSnap = await getDocs(fsQuery(
+                collection(db, 'purchase_orders'),
+                where('status', 'not-in', ['received', 'cancelled'])
+              ));
+              const affectedPONums: string[] = [];
+              for (const poDoc of posSnap.docs) {
+                const poData = poDoc.data();
+                const poItems = poData.items || [];
+                const affected = poItems.some((pi: any) =>
+                  pi.itemId === itemId && removedConvUomIds.includes(pi.uomId)
+                );
+                if (affected) affectedPONums.push(poData.poNumber || poDoc.id);
+              }
+              if (affectedPONums.length > 0) {
+                const removedSymbols = removedConvUomIds
+                  .map(id => uoms.find(u => u.id === id)?.symbol || id)
+                  .join(', ');
+                setUomConvWarnMsg(
+                  `UOM "${removedSymbols}" is used in ${affectedPONums.length} open PO(s) ` +
+                  `(${affectedPONums.slice(0, 3).join(', ')}${affectedPONums.length > 3 ? '…' : ''}). ` +
+                  `Removing this conversion will cause those POs to receive with the wrong quantity (factor defaults to 1). ` +
+                  `Update or close those POs before removing this conversion.`
+                );
+                return;
+              }
+            }
+          }
+        }
+
         const formData = new FormData(e.currentTarget);
         const data = {
           name: formData.get('name') as string,
@@ -1063,6 +1178,7 @@ export const ItemForm = ({ uoms, categories, locations, items, initialData, isDu
           variantAttributes: attributes,
           requireVariant,
           requireCustomSpec,
+          customSpecRequired: requireCustomSpec ? customSpecRequired : undefined,
           customSpecLabel: customSpecLabel.trim() || null,
           tags: (formData.get('tags') as string || '').split(',').map(t => t.trim()).filter(Boolean),
           reorderLevel: Number(formData.get('reorderLevel')) || 0,
@@ -1279,9 +1395,13 @@ export const ItemForm = ({ uoms, categories, locations, items, initialData, isDu
             <p className="text-sm font-bold text-gray-900">Require Custom Spec?</p>
             <p className="text-[10px] text-gray-500 font-medium">Force users to input a specific detail (e.g. Size, Length)</p>
           </div>
-          <button 
+          <button
             type="button"
-            onClick={() => setRequireCustomSpec(!requireCustomSpec)}
+            onClick={() => {
+              const next = !requireCustomSpec;
+              setRequireCustomSpec(next);
+              if (next) setCustomSpecRequired(true);
+            }}
             className={cn(
               "w-12 h-6 rounded-full transition-colors relative",
               requireCustomSpec ? "bg-blue-600" : "bg-gray-300"
@@ -1295,15 +1415,36 @@ export const ItemForm = ({ uoms, categories, locations, items, initialData, isDu
         </div>
 
         {requireCustomSpec && (
-          <div className="space-y-1 animate-in fade-in slide-in-from-top-2 duration-200">
-            <label className="text-xs font-bold text-gray-400 uppercase tracking-wider pl-1">Custom Spec Label</label>
-            <input 
-              value={customSpecLabel}
-              onChange={(e) => setCustomSpecLabel(e.target.value)}
-              placeholder="e.g. Size, Length, Dimensions"
-              required={requireCustomSpec}
-              className="w-full p-4 bg-gray-100 rounded-2xl text-sm font-medium outline-none focus:ring-2 focus:ring-blue-500"
-            />
+          <div className="space-y-3 animate-in fade-in slide-in-from-top-2 duration-200">
+            <div className="space-y-1">
+              <label className="text-xs font-bold text-gray-400 uppercase tracking-wider pl-1">Custom Spec Label</label>
+              <input
+                value={customSpecLabel}
+                onChange={(e) => setCustomSpecLabel(e.target.value)}
+                placeholder="e.g. Size, Length, Dimensions"
+                required={requireCustomSpec}
+                className="w-full p-4 bg-gray-100 rounded-2xl text-sm font-medium outline-none focus:ring-2 focus:ring-blue-500"
+              />
+            </div>
+            <div className="flex items-center justify-between p-3 bg-white rounded-xl border border-gray-100">
+              <div>
+                <p className="text-xs font-bold text-gray-700">Make it required</p>
+                <p className="text-[10px] text-gray-400 font-medium">When off, field is shown but can be left blank</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setCustomSpecRequired(!customSpecRequired)}
+                className={cn(
+                  "w-12 h-6 rounded-full transition-colors relative",
+                  customSpecRequired ? "bg-blue-600" : "bg-gray-300"
+                )}
+              >
+                <div className={cn(
+                  "absolute top-1 w-4 h-4 bg-white rounded-full transition-all",
+                  customSpecRequired ? "left-7" : "left-1"
+                )} />
+              </button>
+            </div>
           </div>
         )}
 
@@ -1446,8 +1587,13 @@ export const ItemForm = ({ uoms, categories, locations, items, initialData, isDu
             {attributes.map((attr, attrIdx) => (
               <div key={attrIdx} className="p-4 bg-gray-50 rounded-2xl border border-gray-100 space-y-3">
                 <div className="flex items-center justify-between">
-                  <span className="text-xs font-bold text-gray-900 uppercase tracking-widest">{attr.name}</span>
-                  <button type="button" onClick={() => removeAttribute(attrIdx)} className="text-red-500"><X size={16} /></button>
+                  <input
+                    type="text"
+                    value={attr.name}
+                    onChange={e => renameAttribute(attrIdx, e.target.value)}
+                    className="text-xs font-bold text-gray-900 bg-transparent border-b border-transparent hover:border-gray-300 focus:border-blue-400 outline-none uppercase tracking-widest min-w-0 flex-1 mr-2"
+                  />
+                  <button type="button" onClick={() => removeAttribute(attrIdx)} className="text-red-500 flex-shrink-0"><X size={16} /></button>
                 </div>
                 <div className="flex flex-wrap gap-2">
                   {attr.values.map((val, valIdx) => (
@@ -1694,6 +1840,38 @@ export const ItemForm = ({ uoms, categories, locations, items, initialData, isDu
           </div>
         )}
       </div>
+
+      {variantValueWarnMsg && (
+        <div className="p-4 bg-amber-50 border border-amber-300 rounded-2xl space-y-3">
+          <p className="text-sm font-bold text-amber-900">&#9888; Variant value removal — stock will become stranded</p>
+          <p className="text-xs text-amber-800 leading-relaxed">{variantValueWarnMsg}</p>
+          <label className="flex items-center space-x-2 cursor-pointer pt-1">
+            <input
+              type="checkbox"
+              checked={variantValueWarnAcknowledged}
+              onChange={e => setVariantValueWarnAcknowledged(e.target.checked)}
+              className="w-4 h-4 accent-amber-600"
+            />
+            <span className="text-xs font-bold text-amber-900">I understand — proceed anyway</span>
+          </label>
+        </div>
+      )}
+
+      {uomConvWarnMsg && (
+        <div className="p-4 bg-amber-50 border border-amber-300 rounded-2xl space-y-3">
+          <p className="text-sm font-bold text-amber-900">&#9888; UOM conversion in use — open POs will be affected</p>
+          <p className="text-xs text-amber-800 leading-relaxed">{uomConvWarnMsg}</p>
+          <label className="flex items-center space-x-2 cursor-pointer pt-1">
+            <input
+              type="checkbox"
+              checked={uomConvWarnAcknowledged}
+              onChange={e => setUomConvWarnAcknowledged(e.target.checked)}
+              className="w-4 h-4 accent-amber-600"
+            />
+            <span className="text-xs font-bold text-amber-900">I understand — proceed anyway</span>
+          </label>
+        </div>
+      )}
 
       {saveError && (
         <div className="flex items-center justify-between p-3 bg-red-50 border border-red-200 rounded-2xl text-sm text-red-700">
@@ -2269,16 +2447,16 @@ export const TransactionForm = ({ items, locations, inventory, uoms, purchaseOrd
             {selectedItem?.requireCustomSpec && (
               <div className="space-y-1">
                 <label className="text-xs font-bold text-gray-400 uppercase tracking-wider pl-1">
-                  {selectedItem.customSpecLabel || 'Specification'} <span className="text-red-500">*</span>
+                  {selectedItem.customSpecLabel || 'Specification'}{selectedItem.customSpecRequired !== false && <span className="text-red-500 ml-0.5">*</span>}
                 </label>
-                <input 
-                  name="customSpec" 
-                  type="text" 
-                  required 
+                <input
+                  name="customSpec"
+                  type="text"
+                  required={selectedItem.customSpecRequired !== false}
                   value={customSpec}
                   onChange={(e) => setCustomSpec(e.target.value)}
                   placeholder={`Enter ${selectedItem.customSpecLabel || 'detail'}...`}
-                  className="w-full p-4 bg-gray-100 rounded-2xl text-sm font-medium outline-none focus:ring-2 focus:ring-blue-500" 
+                  className="w-full p-4 bg-gray-100 rounded-2xl text-sm font-medium outline-none focus:ring-2 focus:ring-blue-500"
                 />
               </div>
             )}
@@ -3084,7 +3262,7 @@ export const PurchaseOrderForm = ({ items, locations, uoms, profile, initialData
           }
         }
       }
-      if (item?.requireCustomSpec && !poItem.customSpec?.trim()) {
+      if (item?.requireCustomSpec && item?.customSpecRequired !== false && !poItem.customSpec?.trim()) {
         setErrorMsg(`${item.name} requires a ${item.customSpecLabel || 'specification'}`);
         return;
       }
@@ -3528,7 +3706,7 @@ export const PurchaseOrderForm = ({ items, locations, uoms, profile, initialData
                         {item?.requireCustomSpec && (
                           <div className="mt-2 px-1 space-y-1">
                             <label className="text-[8px] font-black text-gray-400 uppercase tracking-widest pl-1">
-                              {item.customSpecLabel || 'Specification'} <span className="text-red-500">*</span>
+                              {item.customSpecLabel || 'Specification'}{item.customSpecRequired !== false && <span className="text-red-500 ml-0.5">*</span>}
                             </label>
                             <input
                               type="text"

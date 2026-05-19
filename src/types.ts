@@ -92,7 +92,8 @@ export interface Item {
   requireVariant?: boolean; // If true, variant selection is mandatory for transactions
   variantConfigs?: VariantConfig[]; // Variant-specific reorder levels and costs
   components?: ItemComponent[]; // If present, this is a composite item (kit)
-  requireCustomSpec?: boolean; // If true, custom specification is mandatory
+  requireCustomSpec?: boolean; // If true, custom specification field is shown
+  customSpecRequired?: boolean; // If true (default), the field is mandatory; if false, it is shown but optional
   customSpecLabel?: string; // Label for the custom spec field (e.g., "Size", "Length")
   createdAt: Timestamp;
 }

@@ -2122,6 +2122,7 @@ export const recordBulkReceive = async (requestIds: string[], receiverId: string
 
     const requestDocs = await Promise.all(requestIds.map(id => getDoc(doc(db, 'requests', id))));
     const validRequests = requestDocs.filter(d => d.exists() && d.data()?.status === 'for delivery');
+    const skippedCount = validRequests.filter(d => !(d.data() as Request).deliveredQty || (d.data() as Request).deliveredQty === 0).length;
     
     // Pre-fetch BOQ IDs for the items in these requests
     const boqMap = new Map<string, string>(); // key: itemId_jobsiteId_variantHash, value: boqId
@@ -2257,6 +2258,7 @@ export const recordBulkReceive = async (requestIds: string[], receiverId: string
           return cUomId === targetUomId;
         })?.factor || 1);
         const baseQuantity = (deliveredQty || 0) * conversionFactor;
+        if (baseQuantity === 0) continue;
 
         requestData.push({
           requestId,
@@ -2410,6 +2412,7 @@ export const recordBulkReceive = async (requestIds: string[], receiverId: string
         }
       }
     });
+    return { skippedCount };
   } catch (error) {
     console.error("Bulk receive failed:", error);
     handleFirestoreError(error, OperationType.WRITE, 'bulk_receive');

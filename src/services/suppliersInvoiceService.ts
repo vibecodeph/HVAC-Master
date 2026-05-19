@@ -1,5 +1,5 @@
 import {
-  collection, doc, updateDoc, deleteDoc, getDocs,
+  collection, doc, getDoc, updateDoc, deleteDoc, getDocs,
   onSnapshot, query, orderBy, runTransaction, serverTimestamp,
   where, writeBatch, DocumentReference, Timestamp,
 } from 'firebase/firestore';
@@ -58,6 +58,69 @@ const cleanItem = (item: SuppliersInvoiceItem): SuppliersInvoiceItem => ({
 const fetchUomList = async (): Promise<UomEntry[]> => {
   const snap = await getDocs(collection(db, 'uoms'));
   return snap.docs.map(d => ({ id: d.id, symbol: d.data().symbol as string }));
+};
+
+export interface DeleteInconsistency {
+  itemName: string;
+  issue: 'not_found' | 'insufficient_qty';
+  available: number;
+  required: number;
+}
+
+export interface DeleteCheckResult {
+  hasInconsistencies: boolean;
+  inconsistencies: DeleteInconsistency[];
+}
+
+export const checkDeleteSuppliersInvoice = async (
+  invoice: SuppliersInvoice
+): Promise<DeleteCheckResult> => {
+  if (invoice.addToInventory === false) {
+    return { hasInconsistencies: false, inconsistencies: [] };
+  }
+
+  const uomList = await fetchUomList();
+
+  // Fetch item docs for convFactor resolution
+  const uniqueItemIds = [...new Set(invoice.items.map(i => i.itemId))];
+  const itemSnaps = new Map<string, any>();
+  await Promise.all(
+    uniqueItemIds.map(async id => {
+      itemSnaps.set(id, await getDoc(doc(db, 'items', id)));
+    })
+  );
+
+  // Accumulate required reversal qty per inventory ref (same logic as deleteSuppliersInvoice)
+  const pathMap = new Map<string, { ref: DocumentReference; qty: number; itemName: string }>();
+  invoice.items.forEach(item => {
+    const r = getInventoryRef(item.itemId, invoice.locationId, item.variant, undefined, undefined, item.customSpec);
+    const convFactor = getConvFactor(itemSnaps.get(item.itemId), item.uomId, uomList);
+    const qty = item.quantity * convFactor;
+    const existing = pathMap.get(r.path);
+    pathMap.set(r.path, {
+      ref: r,
+      qty: (existing?.qty ?? 0) + qty,
+      itemName: existing?.itemName ?? item.itemName,
+    });
+  });
+
+  // Check each inventory doc for existence and sufficient quantity
+  const inconsistencies: DeleteInconsistency[] = [];
+  await Promise.all(
+    [...pathMap.values()].map(async ({ ref, qty, itemName }) => {
+      const snap = await getDoc(ref);
+      if (!snap.exists()) {
+        inconsistencies.push({ itemName, issue: 'not_found', available: 0, required: qty });
+      } else {
+        const available = snap.data()?.quantity ?? 0;
+        if (available < qty) {
+          inconsistencies.push({ itemName, issue: 'insufficient_qty', available, required: qty });
+        }
+      }
+    })
+  );
+
+  return { hasInconsistencies: inconsistencies.length > 0, inconsistencies };
 };
 
 export const subscribeToSuppliersInvoices = (
@@ -657,8 +720,9 @@ export const updateSuppliersInvoice = async (
   }
 };
 
-export const deleteSuppliersInvoice = async (invoice: SuppliersInvoice): Promise<void> => {
+export const deleteSuppliersInvoice = async (invoice: SuppliersInvoice, options?: { force?: boolean }): Promise<void> => {
   const userId = auth.currentUser?.uid;
+  const force = options?.force ?? false;
   if (!userId) throw new Error('User not authenticated');
 
   try {
@@ -702,7 +766,8 @@ export const deleteSuppliersInvoice = async (invoice: SuppliersInvoice): Promise
           const ref = invRefMap.get(path)!;
           const snap = invSnaps.get(path);
           if (snap?.exists()) {
-            txn.update(ref, { quantity: (snap.data()?.quantity || 0) - qty });
+            const current = snap.data()?.quantity || 0;
+            txn.update(ref, { quantity: force ? Math.max(0, current - qty) : current - qty });
           }
         }
 

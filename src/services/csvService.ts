@@ -43,6 +43,7 @@ export interface CSVPOItemRow {
   'Date': string;
   'Supplier': string;
   'Project'?: string;
+  'Destination Location'?: string;
   'Terms'?: string;
   'Requested By'?: string;
   'Deliver To'?: string;
@@ -56,6 +57,7 @@ export interface CSVPOItemRow {
   'Notes'?: string;
   'Item Name': string;
   'Variant'?: string;
+  'Custom Spec'?: string;
   'Quantity': string;
   'UOM': string;
   'SRP'?: string;
@@ -111,11 +113,14 @@ export const exportPurchaseOrdersToCSV = (
       const uom = uoms.find(u => u.id === poItem.uomId);
       const variantStr = (poItem.variant && Object.keys(poItem.variant).length > 0) ? `[${Object.entries(poItem.variant).map(([k, v]) => `${k}:${v}`).join(', ')}]` : '';
 
+      const destLocation = locations.find(l => l.id === po.destinationLocationId);
+
       data.push({
         'PO Number': po.poNumber,
         'Date': dateStr,
         'Supplier': supplier?.name || po.supplierId,
         'Project': po.project || '',
+        'Destination Location': itemIndex === 0 ? (destLocation?.name || po.destinationLocationName || '') : '',
         'Terms': po.terms || '',
         'Requested By': po.requestedBy || '',
         'Deliver To': po.deliverTo || '',
@@ -129,6 +134,7 @@ export const exportPurchaseOrdersToCSV = (
         'Notes': po.notes || '',
         'Item Name': item?.name || poItem.itemId,
         'Variant': variantStr,
+        'Custom Spec': poItem.customSpec || '',
         'Quantity': poItem.quantity.toString(),
         'UOM': uom?.symbol || poItem.uomId,
         'SRP': (poItem.srp ?? '').toString(),
@@ -208,6 +214,12 @@ export const importPurchaseOrdersFromCSV = async (
               continue;
             }
 
+            // 1b. Resolve Destination Location (optional — silently skip if blank or unmatched)
+            const destLocationRaw = firstRow['Destination Location']?.trim().toLowerCase();
+            const destLoc = destLocationRaw
+              ? locations.find(l => l.name.toLowerCase().trim() === destLocationRaw)
+              : undefined;
+
             // 2. Parse Items
             const poItems: PurchaseOrderItem[] = [];
             let totalAmount = 0;
@@ -258,6 +270,7 @@ export const importPurchaseOrdersFromCSV = async (
               poItems.push({
                 itemId,
                 variant,
+                customSpec: row['Custom Spec']?.trim() || undefined,
                 quantity: qty,
                 uomId: uomId || '',
                 srp,
@@ -321,6 +334,7 @@ export const importPurchaseOrdersFromCSV = async (
               supplierId,
               date: poDate,
               project: firstRow['Project']?.trim() || '',
+              ...(destLoc && { destinationLocationId: destLoc.id, destinationLocationName: destLoc.name }),
               terms: firstRow['Terms']?.trim() || '',
               requestedBy: firstRow['Requested By']?.trim() || '',
               deliverTo: firstRow['Deliver To']?.trim() || '',

@@ -13,6 +13,8 @@ import {
   createSuppliersInvoice,
   updateSuppliersInvoice,
   deleteSuppliersInvoice,
+  checkDeleteSuppliersInvoice,
+  DeleteInconsistency,
 } from '../../../services/suppliersInvoiceService';
 import { getPOItems } from '../../../services/purchaseOrderService';
 
@@ -75,6 +77,10 @@ export const SuppliersInvoiceView = () => {
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [deleteCheckLoading, setDeleteCheckLoading] = useState(false);
+  const [deleteInconsistencies, setDeleteInconsistencies] = useState<DeleteInconsistency[] | null>(null);
+  const [pendingDeleteInvoice, setPendingDeleteInvoice] = useState<SuppliersInvoice | null>(null);
+  const [deletePartialDone, setDeletePartialDone] = useState(false);
 
   // Form — invoice details
   const [formSupplierName, setFormSupplierName] = useState('');
@@ -537,11 +543,55 @@ export const SuppliersInvoiceView = () => {
 
   // ─── Delete ───────────────────────────────────────────────────────────────
   const handleDelete = async (invoice: SuppliersInvoice) => {
+    setDeleteError(null);
+    setDeleteInconsistencies(null);
+    setDeletePartialDone(false);
+    setPendingDeleteInvoice(invoice);
+    if (invoice.addToInventory === false) {
+      setIsDeleting(true);
+      try {
+        await deleteSuppliersInvoice(invoice);
+        setConfirmDeleteId(null);
+        setPendingDeleteInvoice(null);
+      } catch (e: any) {
+        setDeleteError(e.message || 'Failed to delete invoice');
+      } finally {
+        setIsDeleting(false);
+      }
+      return;
+    }
+    setDeleteCheckLoading(true);
+    try {
+      const result = await checkDeleteSuppliersInvoice(invoice);
+      if (result.hasInconsistencies) {
+        setDeleteInconsistencies(result.inconsistencies);
+      } else {
+        setIsDeleting(true);
+        try {
+          await deleteSuppliersInvoice(invoice);
+          setConfirmDeleteId(null);
+          setPendingDeleteInvoice(null);
+        } catch (e: any) {
+          setDeleteError(e.message || 'Failed to delete invoice');
+        } finally {
+          setIsDeleting(false);
+        }
+      }
+    } catch (e: any) {
+      setDeleteError(e.message || 'Failed to check invoice');
+    } finally {
+      setDeleteCheckLoading(false);
+    }
+  };
+
+  const handleForceDelete = async () => {
+    if (!pendingDeleteInvoice) return;
     setIsDeleting(true);
     setDeleteError(null);
     try {
-      await deleteSuppliersInvoice(invoice);
-      setConfirmDeleteId(null);
+      await deleteSuppliersInvoice(pendingDeleteInvoice, { force: true });
+      setDeletePartialDone(true);
+      setDeleteInconsistencies(null);
     } catch (e: any) {
       setDeleteError(e.message || 'Failed to delete invoice');
     } finally {
@@ -1346,26 +1396,73 @@ export const SuppliersInvoiceView = () => {
                   )}
 
                   {isConfirmingDelete && (
-                    <div className="p-3 bg-red-50 rounded-xl border border-red-100 space-y-2">
-                      <p className="text-xs font-bold text-red-700">
-                        Delete this invoice?{inv.addToInventory !== false ? ' Items will be removed from inventory.' : ''}
-                      </p>
-                      <div className="flex space-x-2">
-                        <button
-                          onClick={() => handleDelete(inv)}
-                          disabled={isDeleting || !isOnline}
-                          title={!isOnline ? 'You are offline' : undefined}
-                          className="flex-1 py-2 bg-red-600 text-white rounded-xl text-xs font-black uppercase tracking-widest disabled:opacity-50 flex items-center justify-center gap-2"
-                        >
-                          {isDeleting ? <Loader2 className="animate-spin" size={12} /> : 'Delete'}
-                        </button>
-                        <button
-                          onClick={() => setConfirmDeleteId(null)}
-                          className="flex-1 py-2 bg-white text-gray-600 border border-gray-200 rounded-xl text-xs font-black uppercase tracking-widest"
-                        >
-                          Cancel
-                        </button>
-                      </div>
+                    <div className="space-y-2">
+                      {deletePartialDone && pendingDeleteInvoice?.id === inv.id ? (
+                        <div className="p-3 bg-green-50 rounded-xl border border-green-200 space-y-2">
+                          <p className="text-xs font-bold text-green-800">Invoice deleted. Inventory was partially reversed — some quantities were already consumed and could not be fully reversed.</p>
+                          <button
+                            onClick={() => { setConfirmDeleteId(null); setPendingDeleteInvoice(null); setDeletePartialDone(false); }}
+                            className="w-full py-2 bg-green-600 text-white rounded-xl text-xs font-black uppercase tracking-widest"
+                          >
+                            Done
+                          </button>
+                        </div>
+                      ) : deleteInconsistencies && pendingDeleteInvoice?.id === inv.id ? (
+                        <div className="p-3 bg-amber-50 rounded-xl border border-amber-300 space-y-3">
+                          <p className="text-xs font-bold text-amber-900">&#9888; Cannot fully reverse inventory</p>
+                          <p className="text-xs text-amber-800">Some stock from this invoice has already been consumed or transferred. Deleting will only reverse what remains.</p>
+                          <div className="space-y-1">
+                            {deleteInconsistencies.map((inc, idx) => (
+                              <div key={idx} className="text-xs text-amber-800 bg-amber-100 rounded-lg px-2 py-1">
+                                <span className="font-bold">{inc.itemName}</span>
+                                {inc.issue === 'not_found'
+                                  ? ' — stock record no longer exists'
+                                  : ` — only ${inc.available} available, ${inc.required} needed`}
+                              </div>
+                            ))}
+                          </div>
+                          {deleteError && <p className="text-xs font-bold text-red-700">{deleteError}</p>}
+                          <div className="flex space-x-2">
+                            <button
+                              onClick={handleForceDelete}
+                              disabled={isDeleting || !isOnline}
+                              title={!isOnline ? 'You are offline' : undefined}
+                              className="flex-1 py-2 bg-amber-600 text-white rounded-xl text-xs font-black uppercase tracking-widest disabled:opacity-50 flex items-center justify-center gap-2"
+                            >
+                              {isDeleting ? <Loader2 className="animate-spin" size={12} /> : 'Proceed Anyway'}
+                            </button>
+                            <button
+                              onClick={() => { setConfirmDeleteId(null); setDeleteInconsistencies(null); setPendingDeleteInvoice(null); }}
+                              className="flex-1 py-2 bg-white text-gray-600 border border-gray-200 rounded-xl text-xs font-black uppercase tracking-widest"
+                            >
+                              Cancel
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="p-3 bg-red-50 rounded-xl border border-red-100 space-y-2">
+                          <p className="text-xs font-bold text-red-700">
+                            Delete this invoice?{inv.addToInventory !== false ? ' Items will be removed from inventory.' : ''}
+                          </p>
+                          {deleteError && pendingDeleteInvoice?.id === inv.id && <p className="text-xs font-bold text-red-700">{deleteError}</p>}
+                          <div className="flex space-x-2">
+                            <button
+                              onClick={() => handleDelete(inv)}
+                              disabled={isDeleting || deleteCheckLoading || !isOnline}
+                              title={!isOnline ? 'You are offline' : undefined}
+                              className="flex-1 py-2 bg-red-600 text-white rounded-xl text-xs font-black uppercase tracking-widest disabled:opacity-50 flex items-center justify-center gap-2"
+                            >
+                              {(isDeleting || deleteCheckLoading) ? <Loader2 className="animate-spin" size={12} /> : 'Delete'}
+                            </button>
+                            <button
+                              onClick={() => { setConfirmDeleteId(null); setDeleteError(null); setPendingDeleteInvoice(null); }}
+                              className="flex-1 py-2 bg-white text-gray-600 border border-gray-200 rounded-xl text-xs font-black uppercase tracking-widest"
+                            >
+                              Cancel
+                            </button>
+                          </div>
+                        </div>
+                      )}
                     </div>
                   )}
                 </Card>

@@ -39,10 +39,12 @@ export const RequestForm = ({
   defaultJobsiteId, initialVariant, initialCustomSpec,
   onComplete
 }: RequestFormProps) => {
-  const { inventory } = useData();
+  const { inventory, requests } = useData();
   const { isOnline } = useAuth();
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [dupWarnMsg, setDupWarnMsg] = useState<string | null>(null);
+  const [dupWarnAcknowledged, setDupWarnAcknowledged] = useState(false);
   const [selectedVariant, setSelectedVariant] = useState<Record<string, string>>(initialVariant || {});
   const [selectedUomId, setSelectedUomId] = useState(() => {
     return uoms.find(u => u.id === item.uomId || u.symbol === item.uomId)?.id || item.uomId;
@@ -88,6 +90,25 @@ export const RequestForm = ({
       );
       if (assignedInv.length > 0 && !assignedInv.some(inv => inv.assignedJobsiteId === jobsiteId)) {
         throw new Error(`This item is assigned to ${assignedInv[0].assignedJobsiteName || 'another jobsite'} only.`);
+      }
+
+      // Duplicate request check
+      if (!dupWarnAcknowledged) {
+        const dupVariantKey = Object.keys(selectedVariant).length > 0 ? normalizeVariant(selectedVariant) : null;
+        const duplicate = requests.find(r =>
+          r.itemId === item.id &&
+          (dupVariantKey === null
+            ? (!r.variant || Object.keys(r.variant).length === 0)
+            : normalizeVariant(r.variant) === dupVariantKey) &&
+          r.jobsiteId === jobsiteId &&
+          (r.status === 'pending' || r.status === 'approved')
+        );
+        if (duplicate) {
+          const dupUomSymbol = uoms.find(u => u.id === duplicate.uomId || u.symbol === duplicate.uomId)?.symbol || duplicate.uomId;
+          const dupStatusLabel = duplicate.status === 'pending' ? 'Pending' : 'Approved';
+          setDupWarnMsg(`A request for "${item.name}" already exists for this jobsite (Status: ${dupStatusLabel}, Qty: ${duplicate.requestedQty} ${dupUomSymbol}). Are you sure you want to submit another?`);
+          return;
+        }
       }
 
       await addRequest({
@@ -238,6 +259,23 @@ export const RequestForm = ({
         </div>
       </div>
 
+      {dupWarnMsg && (
+        <div className="p-3 bg-amber-50 border border-amber-200 rounded-2xl space-y-3">
+          <div className="flex items-start gap-2">
+            <span className="text-amber-600 mt-0.5 font-bold">⚠</span>
+            <p className="text-xs font-bold text-amber-900">{dupWarnMsg}</p>
+          </div>
+          <label className="flex items-center gap-2 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={dupWarnAcknowledged}
+              onChange={e => setDupWarnAcknowledged(e.target.checked)}
+              className="rounded"
+            />
+            <span className="text-xs font-bold text-amber-800">Submit Anyway</span>
+          </label>
+        </div>
+      )}
       {errorMsg && (
         <div className="flex items-center justify-between p-3 bg-red-50 border border-red-200 rounded-2xl text-sm text-red-700">
           <span>{errorMsg}</span>
@@ -948,6 +986,11 @@ export const ItemForm = ({ uoms, categories, locations, items, initialData, isDu
   const [requireCustomSpec, setRequireCustomSpec] = useState(initialData?.requireCustomSpec || false);
   const [customSpecRequired, setCustomSpecRequired] = useState(initialData?.customSpecRequired ?? true);
   const [customSpecLabel, setCustomSpecLabel] = useState(initialData?.customSpecLabel || '');
+  const [customSpecWarnShown, setCustomSpecWarnShown] = useState(false);
+  const [customSpecWarnAcknowledged, setCustomSpecWarnAcknowledged] = useState(false);
+  const [customSpecWarnChecking, setCustomSpecWarnChecking] = useState(false);
+  const [newAttrWarnMsg, setNewAttrWarnMsg] = useState<string | null>(null);
+  const [newAttrWarnAcknowledged, setNewAttrWarnAcknowledged] = useState(false);
   
   // Resolve legacy category data
   const getInitialCategories = () => {
@@ -1065,9 +1108,35 @@ export const ItemForm = ({ uoms, categories, locations, items, initialData, isDu
     }
   };
 
+  const handleRequireCustomSpecToggle = async () => {
+    const next = !requireCustomSpec;
+    setRequireCustomSpec(next);
+    if (!next) {
+      setCustomSpecWarnShown(false);
+      setCustomSpecWarnAcknowledged(false);
+      if (next) setCustomSpecRequired(true);
+      return;
+    }
+    setCustomSpecRequired(true);
+    if (!initialData?.id || isDuplicate) return;
+    setCustomSpecWarnChecking(true);
+    try {
+      const snap = await getDocs(fsQuery(collection(db, 'inventory'), where('itemId', '==', initialData.id)));
+      const hasNoSpec = snap.docs.some(d => {
+        const data = d.data();
+        return !data.customSpec && (data.quantity || 0) > 0;
+      });
+      setCustomSpecWarnShown(hasNoSpec);
+    } finally {
+      setCustomSpecWarnChecking(false);
+    }
+  };
+
   useEffect(() => {
     setVariantValueWarnMsg(null);
     setVariantValueWarnAcknowledged(false);
+    setNewAttrWarnMsg(null);
+    setNewAttrWarnAcknowledged(false);
   }, [attributes]);
 
   useEffect(() => {
@@ -1080,6 +1149,14 @@ export const ItemForm = ({ uoms, categories, locations, items, initialData, isDu
       e.preventDefault();
       if (requireVariant && variantWarnShown && !variantWarnAcknowledged) {
         setSaveError('Please acknowledge the variant migration warning before saving.');
+        return;
+      }
+      if (customSpecWarnShown && !customSpecWarnAcknowledged) {
+        setSaveError('Please acknowledge the custom spec migration warning before saving.');
+        return;
+      }
+      if (newAttrWarnMsg && !newAttrWarnAcknowledged) {
+        setSaveError('Please acknowledge the new attribute warning before saving.');
         return;
       }
       if (uomChangedWithStock) {
@@ -1097,6 +1174,7 @@ export const ItemForm = ({ uoms, categories, locations, items, initialData, isDu
           const initialAttrNames = initialAttrs.map(a => a.name);
           const currentAttrNames = attributes.map(a => a.name);
           const removedAttrNames = initialAttrNames.filter(n => !currentAttrNames.includes(n));
+          const addedAttrNames = currentAttrNames.filter(n => !initialAttrNames.includes(n));
 
           // Detect individual values removed from surviving attributes (for Guard 3)
           const removedValues: Array<{ attr: string; value: string }> = [];
@@ -1112,7 +1190,7 @@ export const ItemForm = ({ uoms, categories, locations, items, initialData, isDu
             }
           }
 
-          if (removedAttrNames.length > 0 || removedValues.length > 0) {
+          if (removedAttrNames.length > 0 || removedValues.length > 0 || addedAttrNames.length > 0) {
             const invSnap = await getDocs(fsQuery(collection(db, 'inventory'), where('itemId', '==', itemId)));
 
             // Guards 1 & 2: hard block — attribute name change/removal with existing inventory
@@ -1140,6 +1218,23 @@ export const ItemForm = ({ uoms, categories, locations, items, initialData, isDu
               if (strandedValues.length > 0) {
                 const pairs = strandedValues.map(sv => `"${sv.value}" from ${sv.attr}`).join(', ');
                 setVariantValueWarnMsg(`Removing ${pairs} — existing inventory with these values will become stranded. No new transactions can reach that stock. Consider transferring or consuming that stock first.`);
+                return;
+              }
+            }
+
+            // Guard 8: warn when new attributes added and variant inventory exists
+            if (!newAttrWarnAcknowledged && addedAttrNames.length > 0) {
+              const hasVariantInv = invSnap.docs.some(d => {
+                const v = d.data().variant;
+                return v && Object.keys(v).length > 0 && (d.data().quantity || 0) > 0;
+              });
+              if (hasVariantInv) {
+                const names = addedAttrNames.map(n => `"${n}"`).join(', ');
+                setNewAttrWarnMsg(
+                  `Adding ${names} changes how inventory document paths are built — all existing variant stock ` +
+                  `will become unreachable by new transactions. Before saving, transfer or consume all existing ` +
+                  `variant inventory for this item, cancel any pending requests, and revise open POs before receiving.`
+                );
                 return;
               }
             }
@@ -1413,13 +1508,10 @@ export const ItemForm = ({ uoms, categories, locations, items, initialData, isDu
           </div>
           <button
             type="button"
-            onClick={() => {
-              const next = !requireCustomSpec;
-              setRequireCustomSpec(next);
-              if (next) setCustomSpecRequired(true);
-            }}
+            onClick={handleRequireCustomSpecToggle}
+            disabled={customSpecWarnChecking}
             className={cn(
-              "w-12 h-6 rounded-full transition-colors relative",
+              "w-12 h-6 rounded-full transition-colors relative disabled:opacity-60",
               requireCustomSpec ? "bg-blue-600" : "bg-gray-300"
             )}
           >
@@ -1461,6 +1553,30 @@ export const ItemForm = ({ uoms, categories, locations, items, initialData, isDu
                 )} />
               </button>
             </div>
+          </div>
+        )}
+
+        {customSpecWarnShown && (
+          <div className="p-4 bg-amber-50 border border-amber-300 rounded-2xl space-y-3">
+            <p className="text-sm font-bold text-amber-900">&#9888; Existing stock without custom spec detected</p>
+            <p className="text-xs text-amber-800 leading-relaxed">
+              This item has existing inventory without a custom spec value. Turning this ON will split your stock — existing unspec'd stock will remain on a separate record and won't be counted with spec'd stock.
+            </p>
+            <p className="text-xs font-semibold text-amber-900">Before saving, you should:</p>
+            <ol className="text-xs text-amber-800 space-y-1 list-decimal list-inside">
+              <li>Transfer or consume all existing unspec'd inventory for this item</li>
+              <li>Cancel and resubmit any pending requests without a custom spec</li>
+              <li>Revise any open POs for this item before receiving</li>
+            </ol>
+            <label className="flex items-center space-x-2 cursor-pointer pt-1">
+              <input
+                type="checkbox"
+                checked={customSpecWarnAcknowledged}
+                onChange={e => setCustomSpecWarnAcknowledged(e.target.checked)}
+                className="w-4 h-4 accent-amber-600"
+              />
+              <span className="text-xs font-bold text-amber-900">I understand — proceed anyway</span>
+            </label>
           </div>
         )}
 
@@ -1882,6 +1998,22 @@ export const ItemForm = ({ uoms, categories, locations, items, initialData, isDu
               type="checkbox"
               checked={uomConvWarnAcknowledged}
               onChange={e => setUomConvWarnAcknowledged(e.target.checked)}
+              className="w-4 h-4 accent-amber-600"
+            />
+            <span className="text-xs font-bold text-amber-900">I understand — proceed anyway</span>
+          </label>
+        </div>
+      )}
+
+      {newAttrWarnMsg && (
+        <div className="p-4 bg-amber-50 border border-amber-300 rounded-2xl space-y-3">
+          <p className="text-sm font-bold text-amber-900">&#9888; Adding attributes will orphan existing variant inventory</p>
+          <p className="text-xs text-amber-800 leading-relaxed">{newAttrWarnMsg}</p>
+          <label className="flex items-center space-x-2 cursor-pointer pt-1">
+            <input
+              type="checkbox"
+              checked={newAttrWarnAcknowledged}
+              onChange={e => setNewAttrWarnAcknowledged(e.target.checked)}
               className="w-4 h-4 accent-amber-600"
             />
             <span className="text-xs font-bold text-amber-900">I understand — proceed anyway</span>
@@ -2736,6 +2868,7 @@ export const PickingModal = ({ requests, items, locations, inventory, uoms, onDe
   const [foundDR, setFoundDR] = useState<string | null>(null);
   const [drLookupDone, setDrLookupDone] = useState(false);
   const [deliveryDate, setDeliveryDate] = useState(new Date().toISOString().split('T')[0]);
+  const [overDeliveryAck, setOverDeliveryAck] = useState(false);
 
   const jobsiteId = requests[0]?.jobsiteId;
 
@@ -2765,6 +2898,8 @@ export const PickingModal = ({ requests, items, locations, inventory, uoms, onDe
     });
     return initial;
   });
+
+  const overDeliveryItems = requests.filter(r => (selections[r.id]?.deliveredQty || 0) > (r.approvedQty || r.requestedQty));
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -2979,11 +3114,47 @@ export const PickingModal = ({ requests, items, locations, inventory, uoms, onDe
         })}
       </div>
 
+      {overDeliveryItems.length > 0 && (
+        <div className="p-3 bg-amber-50 border border-amber-200 rounded-2xl space-y-3">
+          <div className="flex items-start gap-2">
+            <span className="text-amber-600 font-bold">⚠</span>
+            <div>
+              <p className="text-[10px] font-black text-amber-900 uppercase tracking-widest">Over-Delivery Warning</p>
+              <p className="text-xs text-amber-700 mt-1">The following items will be delivered more than the approved quantity:</p>
+              <ul className="mt-1 space-y-0.5">
+                {overDeliveryItems.map(r => {
+                  const overItem = items.find(i => i.id === r.itemId);
+                  const approved = r.approvedQty || r.requestedQty;
+                  return (
+                    <li key={r.id} className="text-xs font-bold text-amber-800">
+                      • {overItem?.name}: Approved {approved}, Delivering {selections[r.id]?.deliveredQty}
+                    </li>
+                  );
+                })}
+              </ul>
+            </div>
+          </div>
+          <label className="flex items-center gap-2 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={overDeliveryAck}
+              onChange={e => setOverDeliveryAck(e.target.checked)}
+              className="rounded"
+            />
+            <span className="text-[10px] font-black text-amber-800 uppercase tracking-widest">Proceed Anyway</span>
+          </label>
+        </div>
+      )}
       <div className="flex space-x-3">
         <button type="button" onClick={onClose} className="flex-1 py-4 bg-gray-100 text-gray-900 rounded-2xl font-bold uppercase tracking-widest text-xs active:scale-95 transition-transform">
           Cancel
         </button>
-        <button type="submit" disabled={!isOnline} title={!isOnline ? 'You are offline' : undefined} className="flex-2 py-4 bg-blue-600 text-white rounded-2xl font-bold uppercase tracking-widest text-xs active:scale-95 transition-transform disabled:opacity-50">
+        <button
+          type="submit"
+          disabled={!isOnline || (overDeliveryItems.length > 0 && !overDeliveryAck)}
+          title={!isOnline ? 'You are offline' : (overDeliveryItems.length > 0 && !overDeliveryAck) ? 'Acknowledge the over-delivery warning above' : undefined}
+          className="flex-2 py-4 bg-blue-600 text-white rounded-2xl font-bold uppercase tracking-widest text-xs active:scale-95 transition-transform disabled:opacity-50"
+        >
           Schedule for Delivery
         </button>
       </div>
@@ -3179,6 +3350,8 @@ export const PurchaseOrderForm = ({ items, locations, uoms, profile, initialData
   const { isOnline } = useAuth();
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [invoiceAcknowledged, setInvoiceAcknowledged] = useState(false);
+  const isInvoiceLinked = initialData?.paymentStatus === 'with_invoice';
   const [isAddingNewItem, setIsAddingNewItem] = useState(false);
   const [pendingNewItemId, setPendingNewItemId] = useState<string | null>(null);
   const [supplierId, setSupplierId] = useState(initialData?.supplierId || '');
@@ -3473,6 +3646,26 @@ export const PurchaseOrderForm = ({ items, locations, uoms, profile, initialData
 
   return (
     <div className="space-y-6 pb-24">
+      {isInvoiceLinked && (
+        <div className="p-4 bg-amber-50 border border-amber-200 rounded-2xl space-y-3">
+          <div className="flex items-start gap-2">
+            <span className="text-amber-600 font-bold mt-0.5">⚠</span>
+            <div>
+              <p className="text-sm font-bold text-amber-900">This PO has a linked supplier invoice</p>
+              <p className="text-xs text-amber-700 mt-1">Editing line items, quantities, or prices may cause discrepancies with the recorded invoice amounts. Review the linked invoice after making changes to ensure they remain consistent.</p>
+            </div>
+          </div>
+          <label className="flex items-center gap-2 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={invoiceAcknowledged}
+              onChange={e => setInvoiceAcknowledged(e.target.checked)}
+              className="rounded"
+            />
+            <span className="text-xs font-bold text-amber-800">I understand</span>
+          </label>
+        </div>
+      )}
       <div className="space-y-4">
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           <div className="space-y-1">
@@ -4003,8 +4196,8 @@ export const PurchaseOrderForm = ({ items, locations, uoms, profile, initialData
             <button
               type="button"
               onClick={() => handleSubmit()}
-              disabled={isSubmitting || !isOnline}
-              title={!isOnline ? 'You are offline' : undefined}
+              disabled={isSubmitting || !isOnline || (isInvoiceLinked && !invoiceAcknowledged)}
+              title={!isOnline ? 'You are offline' : (isInvoiceLinked && !invoiceAcknowledged) ? 'Acknowledge the invoice warning above before saving' : undefined}
               className="flex-1 py-4 bg-blue-600 text-white rounded-2xl font-bold flex items-center justify-center space-x-2 shadow-lg shadow-blue-200 disabled:opacity-50"
             >
               {isSubmitting ? <Loader2 className="animate-spin" size={20} /> : <Check size={20} />}

@@ -58,7 +58,9 @@
       "Bash(node -e \"require\\('C:/Users/Edwin/Documents/PROJECTS/HVAC-Master/functions/node_modules/firebase-admin'\\)\")",
       "Bash(Remove-Item *)",
       "Bash(Get-ChildItem -Path \"C:\\\\Users\\\\Edwin\\\\Documents\\\\PROJECTS\\\\HVAC-Master\" -Recurse -Filter \"*.ts\" -Filter \"*.tsx\")",
-      "Bash(Select-Object FullName)"
+      "Bash(Select-Object FullName)",
+      "Bash(python -c \"import sys,json; d=json.load\\(sys.stdin\\); print\\('projectId:', d.get\\('projectId'\\)\\); print\\('firestoreDatabaseId:', d.get\\('firestoreDatabaseId'\\)\\)\")",
+      "Bash(node -e \"const d=require\\('./firebase-applet-config.json'\\); console.log\\('projectId:', d.projectId\\); console.log\\('firestoreDatabaseId:', d.firestoreDatabaseId\\);\")"
     ]
   }
 }

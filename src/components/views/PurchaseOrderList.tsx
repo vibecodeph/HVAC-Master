@@ -1,6 +1,7 @@
 import React, { useState, useMemo, useRef, useEffect } from 'react';
 import { Plus, Search, FileText, Calendar, User, ChevronRight, Filter, MoreVertical, Edit2, Trash2, ExternalLink, Package, Download, Upload, Loader2, AlertCircle, CheckCircle2, Printer, Settings, X } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
+import { useAuth } from '../../App';
 import { PurchaseOrder, Location, Item, UOM, UserProfile } from '../../types';
 import { deletePurchaseOrder, getAllPOPayments } from '../../services/inventoryService';
 import { POPayment } from '../../types';
@@ -21,6 +22,7 @@ interface PurchaseOrderListProps {
 
 export const PurchaseOrderList = ({ purchaseOrders, locations, items, uoms, profile, onAdd, onEdit }: PurchaseOrderListProps) => {
   const navigate = useNavigate();
+  const { isOnline } = useAuth();
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [isImporting, setIsImporting] = useState(false);
@@ -183,8 +185,9 @@ export const PurchaseOrderList = ({ purchaseOrders, locations, items, uoms, prof
               </button>
               <button
                 onClick={() => fileInputRef.current?.click()}
-                title="Import from CSV"
-                className="p-4 bg-white text-gray-600 rounded-2xl shadow-sm border border-gray-100 active:scale-95 transition-transform"
+                disabled={!isOnline}
+                title={!isOnline ? 'You are offline' : 'Import from CSV'}
+                className="p-4 bg-white text-gray-600 rounded-2xl shadow-sm border border-gray-100 active:scale-95 transition-transform disabled:opacity-50"
               >
                 <Upload size={24} />
               </button>
@@ -423,7 +426,9 @@ export const PurchaseOrderList = ({ purchaseOrders, locations, items, uoms, prof
                           <div className="flex items-center space-x-1 bg-red-50 p-1 rounded-xl">
                             <button
                               onClick={(e) => { e.stopPropagation(); handleDelete(po.id); }}
-                              className="px-2 py-1 bg-red-600 text-white text-[10px] font-black rounded-lg uppercase tracking-widest"
+                              disabled={!isOnline}
+                              title={!isOnline ? 'You are offline' : undefined}
+                              className="px-2 py-1 bg-red-600 text-white text-[10px] font-black rounded-lg uppercase tracking-widest disabled:opacity-50"
                             >
                               Confirm
                             </button>
@@ -480,7 +485,8 @@ export const PurchaseOrderList = ({ purchaseOrders, locations, items, uoms, prof
                 </span>
                 <button
                   onClick={handleBulkDelete}
-                  disabled={isBulkDeleting}
+                  disabled={isBulkDeleting || !isOnline}
+                  title={!isOnline ? 'You are offline' : undefined}
                   className="px-4 py-2 bg-red-600 text-white text-[10px] font-black rounded-2xl uppercase tracking-widest disabled:opacity-50 flex items-center space-x-1"
                 >
                   {isBulkDeleting && <Loader2 size={12} className="animate-spin" />}

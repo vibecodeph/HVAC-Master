@@ -98,7 +98,7 @@ const VariantDetailsModal = ({ item, uoms, onClose }: { item: Item, uoms: any[],
 };
 
 export const ItemManagementView = () => {
-  const { profile } = useAuth();
+  const { profile, isOnline } = useAuth();
   const { items, categories, uoms, locations, inventory, transactions, boqs, tags } = useData();
   const [searchTerm, setSearchTerm] = useState('');
   const debouncedSearchTerm = useDebounce(searchTerm, 300);
@@ -206,10 +206,16 @@ export const ItemManagementView = () => {
             <Download size={14} />
             <span>Export CSV</span>
           </button>
-          <label className="flex items-center justify-center space-x-2 py-3 bg-white border border-gray-100 rounded-2xl text-[10px] font-black uppercase tracking-widest text-gray-600 hover:bg-gray-50 transition-colors cursor-pointer">
+          <label
+            title={!isOnline ? 'You are offline' : undefined}
+            className={cn(
+              "flex items-center justify-center space-x-2 py-3 bg-white border border-gray-100 rounded-2xl text-[10px] font-black uppercase tracking-widest text-gray-600 hover:bg-gray-50 transition-colors cursor-pointer",
+              (!isOnline || isImporting) && "opacity-50 pointer-events-none"
+            )}
+          >
             {isImporting ? <Loader2 size={14} className="animate-spin" /> : <Upload size={14} />}
             <span>{isImporting ? 'Importing...' : 'Import CSV'}</span>
-            <input type="file" accept=".csv" onChange={handleImport} className="hidden" disabled={isImporting} />
+            <input type="file" accept=".csv" onChange={handleImport} className="hidden" disabled={isImporting || !isOnline} />
           </label>
         </div>
 
@@ -327,7 +333,7 @@ export const ItemManagementView = () => {
                   </div>
                 )}
                 <Swipeable
-                  canDelete={canDelete}
+                  canDelete={canDelete && isOnline}
                   canEdit={true}
                   canDuplicate={true}
                   onDelete={() => handleDelete(item.id)}

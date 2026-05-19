@@ -49,6 +49,7 @@ export const RequestsView = () => {
   const [editCustomSpec, setEditCustomSpec] = useState('');
   const [editQty, setEditQty] = useState(1);
   const [editNote, setEditNote] = useState('');
+  const [editUomId, setEditUomId] = useState('');
   const [editItemSearch, setEditItemSearch] = useState('');
   const [editShowItemSearch, setEditShowItemSearch] = useState(false);
   const [deletingRequest, setDeletingRequest] = useState<Request | null>(null);
@@ -293,6 +294,7 @@ export const RequestsView = () => {
     setEditVariant(r.variant ? { ...r.variant } : {});
     setEditCustomSpec(r.customSpec || '');
     setEditQty(r.requestedQty);
+    setEditUomId(r.uomId);
     setEditNote(r.workerNote || '');
     setEditItemSearch('');
     setEditShowItemSearch(false);
@@ -326,7 +328,7 @@ export const RequestsView = () => {
         variant: Object.keys(editVariant).length > 0 ? editVariant : undefined,
         customSpec: editCustomSpec || undefined,
         requestedQty: editQty,
-        uomId: editItem?.uomId || editRequestForm.uomId,
+        uomId: editUomId || editItem?.uomId || editRequestForm.uomId,
         workerNote: editNote || undefined,
       });
       closeEditModal();
@@ -910,6 +912,8 @@ export const RequestsView = () => {
                             setEditCustomSpec('');
                             setEditItemSearch('');
                             setEditShowItemSearch(false);
+                            const baseUomId = uoms.find(u => u.id === i.uomId || u.symbol === i.uomId)?.id || i.uomId;
+                            setEditUomId(baseUomId);
                           }}
                           className="w-full p-3 text-left text-sm font-medium hover:bg-gray-50 transition-colors"
                         >
@@ -962,19 +966,43 @@ export const RequestsView = () => {
                   />
                 </div>
               )}
-              <div className="space-y-1">
-                <label className="text-xs font-bold text-gray-400 uppercase tracking-wider">
-                  Quantity ({uoms.find(u => u.id === editItem?.uomId || u.symbol === editItem?.uomId)?.symbol || editItem?.uomId})
-                </label>
-                <input
-                  type="number"
-                  min="0.001"
-                  step="any"
-                  value={editQty}
-                  onChange={e => setEditQty(Number(e.target.value))}
-                  className="w-full p-2 bg-gray-100 rounded-xl text-sm outline-none focus:ring-2 focus:ring-blue-500"
-                />
-              </div>
+              {(() => {
+                const baseUom = uoms.find(u => u.id === editItem?.uomId || u.symbol === editItem?.uomId);
+                const validUomIds = new Set<string>();
+                if (baseUom) validUomIds.add(baseUom.id);
+                editItem?.uomConversions?.forEach(c => {
+                  const u = uoms.find(u => u.id === c.uomId || u.symbol === c.uomId);
+                  if (u) validUomIds.add(u.id);
+                });
+                const availableUoms = uoms.filter(u => (validUomIds.has(u.id) && u.isActive) || u.id === editUomId);
+                return (
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="space-y-1">
+                      <label className="text-xs font-bold text-gray-400 uppercase tracking-wider">UOM</label>
+                      <select
+                        value={editUomId}
+                        onChange={e => setEditUomId(e.target.value)}
+                        className="w-full p-2 bg-gray-100 rounded-xl text-sm outline-none focus:ring-2 focus:ring-blue-500"
+                      >
+                        {availableUoms.sort((a, b) => a.name.localeCompare(b.name)).map(u => (
+                          <option key={u.id} value={u.id}>{u.symbol} — {u.name}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-xs font-bold text-gray-400 uppercase tracking-wider">Quantity</label>
+                      <input
+                        type="number"
+                        min="0.001"
+                        step="any"
+                        value={editQty}
+                        onChange={e => setEditQty(Number(e.target.value))}
+                        className="w-full p-2 bg-gray-100 rounded-xl text-sm outline-none focus:ring-2 focus:ring-blue-500"
+                      />
+                    </div>
+                  </div>
+                );
+              })()}
               <div className="space-y-1">
                 <label className="text-xs font-bold text-gray-400 uppercase tracking-wider">Note (optional)</label>
                 <textarea

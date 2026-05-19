@@ -386,7 +386,10 @@ export const WorkerRequestForm = ({ items, locations, uoms, inventory, profile, 
       return;
     }
 
-    if (!selectedItemId || !quantity || !jobsiteId || !selectedUomId) return;
+    if (!selectedItemId) { setErrorMsg('Please select an item.'); return; }
+    if (!quantity || Number(quantity) <= 0) { setErrorMsg('Quantity must be greater than 0.'); return; }
+    if (!jobsiteId) { setErrorMsg('No jobsite selected.'); return; }
+    if (!selectedUomId) { setErrorMsg('Please select a unit of measure.'); return; }
     setIsSubmitting(true);
     try {
       const targetUom = uoms.find(u => u.id === selectedUomId);
@@ -1793,6 +1796,18 @@ export const TransactionForm = ({ items, locations, inventory, uoms, purchaseOrd
       setError('Please select at least one location (From or To).');
       return;
     }
+    if (fromLocationId && toLocationId && fromLocationId === toLocationId) {
+      setError('From and To locations cannot be the same.');
+      return;
+    }
+    if (!quantity || Number(quantity) <= 0) {
+      setError('Quantity must be greater than 0.');
+      return;
+    }
+    if (!selectedItemId) {
+      setError('Please select an item.');
+      return;
+    }
     setIsSubmitting(true);
     try {
       const formData = new FormData(e.currentTarget);
@@ -2770,11 +2785,18 @@ export const RequestApprovalModal = ({ request, items, uoms, onApprove, onClose 
         </div>
       </div>
 
+      {approvedQty > request.requestedQty && (
+        <div className="p-3 bg-amber-50 border border-amber-200 rounded-2xl text-xs font-bold text-amber-700 flex items-center gap-2">
+          <span>⚠</span>
+          <span>Approved qty ({approvedQty}) exceeds requested qty ({request.requestedQty}). Double-check before approving.</span>
+        </div>
+      )}
+
       <div className="flex space-x-3 pt-2">
         <button onClick={onClose} className="flex-1 py-4 bg-gray-100 text-gray-900 rounded-2xl font-bold uppercase tracking-widest text-xs active:scale-95 transition-transform">
           Cancel
         </button>
-        <button 
+        <button
           onClick={() => onApprove(request, approvedQty, note)}
           className="flex-2 py-4 bg-blue-600 text-white rounded-2xl font-bold uppercase tracking-widest text-xs active:scale-95 transition-transform"
         >
@@ -2972,9 +2994,13 @@ export const PurchaseOrderForm = ({ items, locations, uoms, profile, initialData
     if (!supplierId) { setErrorMsg('Please select a supplier'); return; }
     if (poItems.length === 0) { setErrorMsg('Please add at least one item'); return; }
 
-    // Check for required variants and custom spec
+    // Check for zero/missing quantity, required variants, and custom spec
     for (const poItem of poItems) {
       const item = items.find(i => i.id === poItem.itemId);
+      if (!poItem.quantity || poItem.quantity <= 0) {
+        setErrorMsg(`${item?.name || 'An item'} has a quantity of 0. Remove it or enter a valid quantity.`);
+        return;
+      }
       if (item?.requireVariant && item.variantAttributes) {
         const dimReqs = item.variantConfigs?.[0]?.dimensionRequirements;
         for (const attr of item.variantAttributes) {

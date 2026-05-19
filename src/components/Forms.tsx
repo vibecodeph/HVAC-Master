@@ -955,6 +955,8 @@ export const ItemForm = ({ uoms, categories, locations, items, initialData, isDu
   };
 
   const [uomId, setUomId] = useState(getInitialUomId());
+  const initialUomId = getInitialUomId(); // stable: initialData doesn't change while form is open
+  const uomChangedWithStock = !!initialData?.id && !isDuplicate && uomId !== initialUomId && (initialData?.totalQuantity ?? 0) > 0;
   const [uomConversions, setUomConversions] = useState<{ uomId: string; factor: number }[]>(initialData?.uomConversions || []);
   const [newConversionUomId, setNewConversionUomId] = useState('');
   const [newConversionFactor, setNewConversionFactor] = useState<number | ''>('');
@@ -1040,6 +1042,10 @@ export const ItemForm = ({ uoms, categories, locations, items, initialData, isDu
       e.preventDefault();
       if (requireVariant && variantWarnShown && !variantWarnAcknowledged) {
         setSaveError('Please acknowledge the variant migration warning before saving.');
+        return;
+      }
+      if (uomChangedWithStock) {
+        setSaveError('Base UOM cannot be changed while this item has existing inventory. Please drain all stock first.');
         return;
       }
       setIsSubmitting(true);
@@ -1156,6 +1162,22 @@ export const ItemForm = ({ uoms, categories, locations, items, initialData, isDu
             </select>
           </div>
         </div>
+
+        {uomChangedWithStock && (
+          <div className="p-4 bg-amber-50 border border-amber-300 rounded-2xl space-y-2">
+            <p className="text-sm font-bold text-amber-900">&#9888; Cannot change base UOM while item has stock</p>
+            <p className="text-xs text-amber-800 leading-relaxed">
+              This item currently has stock in inventory. Changing the base UOM will silently corrupt all quantities and cost calculations.
+            </p>
+            <p className="text-xs font-bold text-amber-900">To change the base UOM safely:</p>
+            <ol className="text-xs text-amber-800 space-y-1 list-decimal pl-4">
+              <li>Drain all inventory for this item to zero</li>
+              <li>Cancel or delete all open requests and POs for this item</li>
+              <li>Then change the base UOM and redefine all UOM conversions</li>
+              <li>Receive stock fresh under the new base UOM</li>
+            </ol>
+          </div>
+        )}
 
         {/* UOM Conversions Section */}
         <div className="space-y-3 p-4 bg-gray-50 rounded-2xl border border-gray-100">

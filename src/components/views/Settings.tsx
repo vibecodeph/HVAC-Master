@@ -4,7 +4,7 @@ import { ChevronRight, Package, Filter, MapPin, Box, Users, Shield, Trash2, Aler
 import { httpsCallable } from 'firebase/functions';
 import { useAuth, useData } from '../../App';
 import { functions } from '../../firebase';
-import { clearInventoryData, updateSystemConfig, migratePriceHistoryToCollection } from '../../services/inventoryService';
+import { clearInventoryData, updateSystemConfig } from '../../services/inventoryService';
 import { getActiveOperations, ActiveOperationDoc, ActiveOperationType } from '../../services/activeOperationService';
 import { downloadBackup, restoreFromBackup, validateBackup, backupUndeliveredRequests, restoreUndeliveredRequests, validateUndeliveredRequestsBackup, UndeliveredRequestsBackup } from '../../services/backupService';
 import { exportMetadata, importMetadata, validateMetadataExport, analyzeImport, METADATA_COLLECTIONS, COLLECTION_LABELS, MetadataCollection, MetadataExport, CollectionAnalysis } from '../../services/metadataService';
@@ -21,11 +21,6 @@ export const SettingsView = () => {
   const [includeBOQ, setIncludeBOQ] = useState(false);
   const [includePOs, setIncludePOs] = useState(false);
   const [statusMessage, setStatusMessage] = useState<{ type: 'success' | 'error', text: string } | null>(null);
-
-  // Price history migration state
-  const [isMigratingPH, setIsMigratingPH] = useState(false);
-  const [phMigrateMsg, setPhMigrateMsg] = useState<{ type: 'success' | 'error' | 'progress'; text: string } | null>(null);
-  const [phCopied, setPhCopied] = useState(false);
 
   // Backup & restore state
   const [isBackingUp, setIsBackingUp] = useState(false);
@@ -149,24 +144,6 @@ export const SettingsView = () => {
       setStatusMessage({ type: 'error', text: 'Failed to update auto-approve setting.' });
     } finally {
       setIsUpdatingConfig(false);
-    }
-  };
-
-  const handleMigratePriceHistory = async (phase: 'copy' | 'cleanup') => {
-    setIsMigratingPH(true);
-    setPhMigrateMsg({ type: 'progress', text: phase === 'copy' ? 'Copying price history to collection…' : 'Removing old arrays from item docs…' });
-    try {
-      const result = await migratePriceHistoryToCollection(phase);
-      if (phase === 'copy') {
-        setPhMigrateMsg({ type: 'success', text: `Done — ${result.written} price history entries copied to price_history collection.` });
-        setPhCopied(true);
-      } else {
-        setPhMigrateMsg({ type: 'success', text: `Done — ${result.updated} item docs cleaned up.` });
-      }
-    } catch (e: any) {
-      setPhMigrateMsg({ type: 'error', text: e.message || 'Migration failed.' });
-    } finally {
-      setIsMigratingPH(false);
     }
   };
 
@@ -724,65 +701,6 @@ export const SettingsView = () => {
                   {isImportingMeta ? <Loader2 size={16} className="animate-spin" /> : <Upload size={16} />}
                   {isImportingMeta ? 'Importing…' : 'Import File'}
                 </button>
-              </div>
-            </div>
-          </section>
-        )}
-
-        {profile?.role === 'admin' && (
-          <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm mb-8">
-            <div className="border-b border-slate-50 bg-slate-50/50 px-6 py-4">
-              <h3 className="font-bold text-slate-800">One-Time Migrations</h3>
-            </div>
-            <div className="p-6 space-y-4">
-              <div>
-                <h4 className="text-sm font-semibold uppercase tracking-wider text-slate-500 mb-1">Price History Collection</h4>
-                <p className="text-sm text-slate-500 mb-4 font-light leading-relaxed">
-                  Copy embedded <code className="text-xs bg-slate-100 px-1 rounded">priceHistory</code> arrays from item docs into the new
-                  separate <code className="text-xs bg-slate-100 px-1 rounded">price_history</code> collection.
-                  Run <strong>Step 1</strong> first, verify it looks correct in Firestore, then run <strong>Step 2</strong> to clean up the old arrays.
-                </p>
-
-                {phMigrateMsg && (
-                  <div className={cn(
-                    'mb-4 p-3 rounded-xl text-xs font-bold flex items-center gap-2',
-                    phMigrateMsg.type === 'success' && 'bg-green-100 text-green-700',
-                    phMigrateMsg.type === 'error'   && 'bg-red-100 text-red-700',
-                    phMigrateMsg.type === 'progress' && 'bg-blue-50 text-blue-700',
-                  )}>
-                    {phMigrateMsg.type === 'progress' && <Loader2 size={14} className="animate-spin shrink-0" />}
-                    {phMigrateMsg.type === 'success'  && <Check size={14} className="shrink-0" />}
-                    {phMigrateMsg.type === 'error'    && <AlertCircle size={14} className="shrink-0" />}
-                    <span>{phMigrateMsg.text}</span>
-                  </div>
-                )}
-
-                <div className="flex gap-3">
-                  <button
-                    onClick={() => handleMigratePriceHistory('copy')}
-                    disabled={isMigratingPH || !isOnline}
-                    title={!isOnline ? 'You are offline' : undefined}
-                    className={cn(
-                      'rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-blue-700 transition-colors shadow-sm flex items-center gap-1.5',
-                      (isMigratingPH || !isOnline) && 'opacity-60 cursor-not-allowed',
-                    )}
-                  >
-                    {isMigratingPH && !phCopied ? <Loader2 size={14} className="animate-spin" /> : <Database size={14} />}
-                    Step 1 — Copy to Collection
-                  </button>
-                  <button
-                    onClick={() => handleMigratePriceHistory('cleanup')}
-                    disabled={isMigratingPH || !phCopied || !isOnline}
-                    title={!isOnline ? 'You are offline' : undefined}
-                    className={cn(
-                      'rounded-lg border border-amber-200 bg-amber-50 px-4 py-2.5 text-sm font-semibold text-amber-700 hover:bg-amber-100 transition-colors flex items-center gap-1.5',
-                      (isMigratingPH || !phCopied || !isOnline) && 'opacity-50 cursor-not-allowed',
-                    )}
-                  >
-                    {isMigratingPH && phCopied ? <Loader2 size={14} className="animate-spin" /> : <Trash2 size={14} />}
-                    Step 2 — Remove Old Arrays
-                  </button>
-                </div>
               </div>
             </div>
           </section>

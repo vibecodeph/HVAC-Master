@@ -437,7 +437,9 @@ export const PurchaseOrderList = ({ purchaseOrders, locations, items, uoms, prof
                         ) : (
                           <button
                             onClick={(e) => { e.stopPropagation(); setDeletingId(po.id); }}
-                            className="p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-xl transition-colors"
+                            disabled={po.status !== 'draft' && po.status !== 'cancelled'}
+                            title={po.status !== 'draft' && po.status !== 'cancelled' ? 'Only draft or cancelled POs can be deleted' : 'Delete'}
+                            className="p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-xl transition-colors disabled:opacity-30 disabled:cursor-not-allowed disabled:hover:text-gray-400 disabled:hover:bg-transparent"
                           >
                             <Trash2 size={18} />
                           </button>

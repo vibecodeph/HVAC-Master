@@ -1,12 +1,13 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { Check, Loader2, Plus, X, Wrench, Box, Settings2, ChevronDown, ChevronUp, Search, Calendar, ChevronRight, Package, ArrowLeftRight, MapPin } from 'lucide-react';
-import { 
+import {
   addItem, updateItem,
   recordTransaction, updateTransaction,
   addRequest, recordBulkPullout,
   recordBulkReceivePO,
   addPOPayment,
-  getExistingDRForJobsite
+  getExistingDRForJobsite,
+  getNoVariantInventoryExists
 } from '../services/inventoryService';
 import { createPurchaseOrder, updatePurchaseOrder as updatePO } from '../services/purchaseOrderService';
 import { cn, normalizeVariant } from '../lib/utils';
@@ -920,6 +921,9 @@ export const ItemForm = ({ uoms, categories, locations, items, initialData, isDu
   const [saveError, setSaveError] = useState<string | null>(null);
   const [isTool, setIsTool] = useState(initialData?.isTool || false);
   const [requireVariant, setRequireVariant] = useState(initialData?.requireVariant || false);
+  const [variantWarnShown, setVariantWarnShown] = useState(false);
+  const [variantWarnAcknowledged, setVariantWarnAcknowledged] = useState(false);
+  const [variantWarnChecking, setVariantWarnChecking] = useState(false);
   const [requireCustomSpec, setRequireCustomSpec] = useState(initialData?.requireCustomSpec || false);
   const [customSpecLabel, setCustomSpecLabel] = useState(initialData?.customSpecLabel || '');
   
@@ -1013,9 +1017,31 @@ export const ItemForm = ({ uoms, categories, locations, items, initialData, isDu
     setAttributes(attributes.filter((_, i) => i !== idx));
   };
 
+  const handleRequireVariantToggle = async () => {
+    const next = !requireVariant;
+    setRequireVariant(next);
+    if (!next) {
+      setVariantWarnShown(false);
+      setVariantWarnAcknowledged(false);
+      return;
+    }
+    if (!initialData?.id || isDuplicate) return;
+    setVariantWarnChecking(true);
+    try {
+      const hasLegacy = await getNoVariantInventoryExists(initialData.id);
+      setVariantWarnShown(hasLegacy);
+    } finally {
+      setVariantWarnChecking(false);
+    }
+  };
+
   return (
     <form className="space-y-6" onSubmit={async (e) => {
       e.preventDefault();
+      if (requireVariant && variantWarnShown && !variantWarnAcknowledged) {
+        setSaveError('Please acknowledge the variant migration warning before saving.');
+        return;
+      }
       setIsSubmitting(true);
       try {
         const formData = new FormData(e.currentTarget);
@@ -1285,11 +1311,12 @@ export const ItemForm = ({ uoms, categories, locations, items, initialData, isDu
               <p className="text-sm font-bold text-blue-900">Require Variant?</p>
               <p className="text-[10px] text-blue-500 font-medium uppercase tracking-widest">Force users to select a variant for this item</p>
             </div>
-            <button 
+            <button
               type="button"
-              onClick={() => setRequireVariant(!requireVariant)}
+              onClick={handleRequireVariantToggle}
+              disabled={variantWarnChecking}
               className={cn(
-                "w-12 h-6 rounded-full transition-colors relative",
+                "w-12 h-6 rounded-full transition-colors relative disabled:opacity-60",
                 requireVariant ? "bg-blue-600" : "bg-gray-300"
               )}
             >
@@ -1298,6 +1325,30 @@ export const ItemForm = ({ uoms, categories, locations, items, initialData, isDu
                 requireVariant ? "left-7" : "left-1"
               )} />
             </button>
+          </div>
+        )}
+
+        {variantWarnShown && (
+          <div className="p-4 bg-amber-50 border border-amber-300 rounded-2xl space-y-3">
+            <p className="text-sm font-bold text-amber-900">&#9888; Existing stock without variant detected</p>
+            <p className="text-xs text-amber-800 leading-relaxed">
+              This item has existing inventory without a variant assigned. Setting <strong>Require Variant</strong> to ON will split your stock — old stock will remain on a separate record and won't be counted with variant stock.
+            </p>
+            <p className="text-xs font-semibold text-amber-900">Before saving, you should:</p>
+            <ol className="text-xs text-amber-800 space-y-1 list-decimal list-inside">
+              <li>Migrate existing stock by manually transferring quantities to the correct variant docs</li>
+              <li>Cancel and resubmit any pending requests for this item</li>
+              <li>Revise any open POs for this item before receiving</li>
+            </ol>
+            <label className="flex items-center space-x-2 cursor-pointer pt-1">
+              <input
+                type="checkbox"
+                checked={variantWarnAcknowledged}
+                onChange={e => setVariantWarnAcknowledged(e.target.checked)}
+                className="w-4 h-4 accent-amber-600"
+              />
+              <span className="text-xs font-bold text-amber-900">I understand — proceed anyway</span>
+            </label>
           </div>
         )}
 

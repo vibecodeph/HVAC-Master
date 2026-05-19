@@ -325,6 +325,9 @@ export const recordTransaction = async (transaction: Omit<Transaction, 'id' | 'u
       // Update source location inventory
       if (fromLocationId && fromInvRef && fromIsInternal) {
         const currentQty = (fromInvDoc?.exists() ? fromInvDoc.data()?.quantity : 0) || 0;
+        if (currentQty < baseQuantity) {
+          throw new Error(`Insufficient stock at source: ${currentQty} available, ${baseQuantity} requested.`);
+        }
         dbTransaction.set(fromInvRef, {
           itemId: itemId,
           locationId: fromLocationId,
@@ -506,6 +509,9 @@ export const deleteTransaction = async (transaction: Transaction) => {
       // Revert destination (subtract)
       if (toLocationId && toInvRef && toIsInternal) {
         const currentQty = (toInvDoc?.exists() ? toInvDoc.data()?.quantity : 0) || 0;
+        if (currentQty < baseQuantity) {
+          throw new Error(`Cannot reverse transaction: destination only has ${currentQty} in stock, but transaction moved ${baseQuantity}.`);
+        }
         dbTransaction.set(toInvRef, { quantity: currentQty - baseQuantity }, { merge: true });
       }
 
@@ -953,6 +959,15 @@ export const updatePurchaseOrder = async (id: string, po: Partial<PurchaseOrder>
 
 export const deletePurchaseOrder = async (id: string) => {
   try {
+    const poSnap = await getDoc(doc(db, 'purchase_orders', id));
+    if (!poSnap.exists()) throw new Error('Purchase order not found.');
+    const po = poSnap.data() as PurchaseOrder;
+    if (po.status !== 'draft' && po.status !== 'cancelled') {
+      throw new Error(`Cannot delete a PO with status "${po.status}". Only draft or cancelled POs can be deleted.`);
+    }
+    if (po.items?.some(item => (item.receivedQuantity || 0) > 0)) {
+      throw new Error('Cannot delete a PO that has received items. Cancel it instead.');
+    }
     await deleteDoc(doc(db, 'purchase_orders', id));
   } catch (error) {
     handleFirestoreError(error, OperationType.DELETE, `purchase_orders/${id}`);
@@ -1835,6 +1850,9 @@ export const recordBulkPick = async (
         } else {
           const invRef = getInventoryRef(itemId, sourceLocationId, effectiveVariant, undefined, customSpec);
           const invKey = invRef.path;
+          if (invCache[invKey].quantity < baseQuantity) {
+            throw new Error(`Insufficient stock for ${itemData.name}: ${invCache[invKey].quantity} available, ${baseQuantity} requested.`);
+          }
           invCache[invKey].quantity -= baseQuantity;
 
           // Record individual transaction (Pick)
@@ -2925,6 +2943,14 @@ export const subscribeToTransactions = (callback: (data: Transaction[]) => void,
   }, (error) => {
     handleFirestoreError(error, OperationType.LIST, 'transactions', false);
     callback([]);
+  });
+};
+
+export const getNoVariantInventoryExists = async (itemId: string): Promise<boolean> => {
+  const snap = await getDocs(query(collection(db, 'inventory'), where('itemId', '==', itemId)));
+  return snap.docs.some(d => {
+    const data = d.data();
+    return !data.variant && (data.quantity || 0) > 0;
   });
 };
 

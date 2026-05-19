@@ -488,8 +488,8 @@ export const SuppliersInvoiceView = () => {
       }
     }
 
-    if (!editingInvoice && addToInventory !== false) {
-      // For new invoices that add to inventory, ask whether to update latest price
+    if (addToInventory !== false) {
+      // Ask whether to update latest price for both new and edited invoices
       setPendingInvoiceData(formData);
       return;
     }
@@ -520,7 +520,11 @@ export const SuppliersInvoiceView = () => {
     setPendingInvoiceData(null);
     setFormSubmitting(true);
     try {
-      await createSuppliersInvoice(data);
+      if (editingInvoice) {
+        await updateSuppliersInvoice(editingInvoice, data);
+      } else {
+        await createSuppliersInvoice(data);
+      }
       resetForm();
       setView('list');
     } catch (e: any) {
@@ -1124,16 +1128,20 @@ export const SuppliersInvoiceView = () => {
 
           {/* Add to Inventory */}
           <Card className="p-4">
-            <label className="flex items-center gap-3 cursor-pointer">
+            <label className={cn('flex items-center gap-3', editingInvoice ? 'cursor-not-allowed opacity-60' : 'cursor-pointer')}>
               <input
                 type="checkbox"
                 checked={addToInventory}
                 onChange={e => setAddToInventory(e.target.checked)}
-                className="rounded accent-blue-600"
+                disabled={!!editingInvoice}
+                className="rounded accent-blue-600 disabled:cursor-not-allowed"
               />
               <span className="text-[10px] font-black text-gray-700 uppercase tracking-[0.2em]">Add items to inventory</span>
             </label>
-            {!addToInventory && (
+            {editingInvoice && (
+              <p className="text-[10px] text-blue-500 font-medium mt-2 ml-7">Inventory setting cannot be changed on edit. Delete and re-create to change.</p>
+            )}
+            {!editingInvoice && !addToInventory && (
               <p className="text-[10px] text-orange-500 font-medium mt-2 ml-7">Invoice will be recorded but items will not be added to inventory.</p>
             )}
           </Card>
